@@ -1,0 +1,25 @@
+# PlatformIO build output
+.pio/
+
+# ESP-IDF managed components (re-downloaded on build)
+managed_components/
+
+# ESP-IDF build directory (if idf.py is ever used directly)
+build/
+
+# sdkconfig runtime files (keep sdkconfig.defaults, ignore the generated ones)
+sdkconfig
+sdkconfig.old
+sdkconfig.*.old
+dependencies.lock
+
+# VS Code / PlatformIO IDE local settings
+.vscode/
+.pio/
+
+# OS / editor junk
+Thumbs.db
+Desktop.ini
+*.bak
+*~
+.DS_Store
