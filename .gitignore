@@ -13,4 +13,14 @@ firmware/build/
 firmware/managed_components/
 firmware/sdkconfig
 firmware/sdkconfig.old
+firmware/sdkconfig.*.old
+firmware/.pio/
+firmware/.vscode/
+*.kicad_prl
+*-backups/
+~*.lck
+*.bak
+*~
+Thumbs.db
+Desktop.ini
 .local/
