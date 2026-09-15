@@ -20,12 +20,9 @@ class Model:
         )
         self.model = model
 
-    def chat(self, message: str) -> str:
-        response = self.client.chat.completions.create(
+    def chat(self, messages: list, tools: list | None = None):
+        return self.client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "user", "content": message},
-            ],
+            messages=messages,
+            tools=tools,
         )
-
-        return response.choices[0].message.content or ""
