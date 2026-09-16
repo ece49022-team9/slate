@@ -414,15 +414,33 @@
         "filename": "ESP32_PRELIM_DESIGN.kicad_sch",
         "name": "Root",
         "uuid": "ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+      },
+      {
+        "filename": "power.kicad_sch",
+        "name": "power",
+        "uuid": "367b94e0-d2af-41e7-9adf-27a9965201d9"
+      },
+      {
+        "filename": "mic\\speaker.kicad_sch",
+        "name": "mic/speaker",
+        "uuid": "d9ad24c6-ad99-446b-a2c3-2570507c0d76"
       }
     ],
-    "used_designators": "",
+    "used_designators": "#FLG1-2,R4-12,J2-3,U3-6,C2-10,L1,BT1,#PWR14-38",
     "variants": []
   },
   "sheets": [
     [
       "ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb",
       "Root"
+    ],
+    [
+      "367b94e0-d2af-41e7-9adf-27a9965201d9",
+      "power"
+    ],
+    [
+      "d9ad24c6-ad99-446b-a2c3-2570507c0d76",
+      "mic/speaker"
     ]
   ],
   "text_variables": {},
