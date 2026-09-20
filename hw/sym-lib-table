@@ -2,4 +2,5 @@
 	(version 7)
 	(lib (name "TPS63020DSJR") (type "KiCad") (uri "C:/Users/praje/OneDrive/Desktop/RESEARCH/PCB/TPS63020DSJR.kicad_sym") (options "") (descr ""))
 	(lib (name "MP34DT01-M") (type "KiCad") (uri "C:/SENIOR_DESIGN/MP34DT01-M.kicad_sym") (options "") (descr ""))
+	(lib (name "MAX17048G_T10") (type "KiCad") (uri "C:/Users/praje/Downloads/MAX17048G_T10/MAX17048G_T10.kicad_sym") (options "") (descr ""))
 )

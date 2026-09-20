@@ -419,19 +419,9 @@
         "filename": "power.kicad_sch",
         "name": "power",
         "uuid": "367b94e0-d2af-41e7-9adf-27a9965201d9"
-      },
-      {
-        "filename": "ESP32_PRELIM_DESIGN.kicad_sch",
-        "name": "ESP32_PRELIM_DESIGN",
-        "uuid": "d9ad24c6-ad99-446b-a2c3-2570507c0d76"
-      },
-      {
-        "filename": "mic\\speaker.kicad_sch",
-        "name": "mic/speaker",
-        "uuid": "d1d6162e-d401-452f-a4c8-09b5521e0aa3"
       }
     ],
-    "used_designators": "MK1-2,#PWR36-43,C9-12",
+    "used_designators": "U6-10,L2,BT2,#PWR36-68,C9-18,R12-19,J4-5,#FLG3-4",
     "variants": []
   },
   "sheets": [
@@ -440,16 +430,8 @@
       "Root"
     ],
     [
-      "d9ad24c6-ad99-446b-a2c3-2570507c0d76",
-      "ESP32_PRELIM_DESIGN"
-    ],
-    [
       "367b94e0-d2af-41e7-9adf-27a9965201d9",
       "power"
-    ],
-    [
-      "d1d6162e-d401-452f-a4c8-09b5521e0aa3",
-      "mic/speaker"
     ]
   ],
   "text_variables": {},
