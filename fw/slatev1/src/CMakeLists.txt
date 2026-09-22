@@ -3,5 +3,5 @@
 
 FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
 
-idf_component_register(SRCS "main.cpp" "haptics.cpp" "display.cpp"
+idf_component_register(SRCS "main.cpp" "display.cpp"
                        INCLUDE_DIRS ".")

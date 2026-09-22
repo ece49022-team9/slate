@@ -6,6 +6,10 @@
 #include "freertos/task.h"
 #include "math.h"
 
+#include "HardwareSerial.h"
+
+
+
 
 // SPI + control pins for the ESP32-WROOM-32E test board
 #define SCLK_PIN 18
@@ -28,78 +32,90 @@
 #define YELLOW  0xFFE0
 #define WHITE   0xFFFF
 
+
+//STATES (CHANGES VIA API CALLS)
+#define IDLE 0
+#define SLATE_LISTEN 1
+#define SLATE_MUTE 2
+#define SLATE_TRANSCRIBE 3
+#define SLATE_RESPOND 4
+#define SLATE_ERROR 5
+
 Adafruit_SSD1351 oled(WIDTH, HEIGHT, &SPI, CS_PIN, DC_PIN, RST_PIN);
 int prev[WIDTH];
 
-extern "C" void app_main(void) {
-  initArduino();
-
+static void init_display() {
   SPI.begin(SCLK_PIN, MISO_PIN, MOSI_PIN, CS_PIN);
   oled.begin();
   oled.fillScreen(BLACK);
+}
 
-  float phase = 0.0f;
-  float speed = 0.1f;
-
-  // Draw initial waveform and record each column's y
+static void init_wave()
+{
   for (int i = 0; i < WIDTH; i++) {
     int j = round(63.5 + 32 * sin(2 * M_PI * i / 64));
     prev[i] = j;
     oled.drawPixel(i, j, RED);
   }
+}
 
+static void drawWaveFrame(uint16_t color, float speed) {
+  static float phase = 0.0f;
+  static uint16_t lastColor = BLACK;
+  bool colorChanged = (color != lastColor);
+  
+  for (int i = 0; i < WIDTH; i++) {
+    int j = round(63.5 + 32 * sin((2 * M_PI * i / 64) - phase));
+    if (j != prev[i] || colorChanged) {
+      oled.drawPixel(i, prev[i], BLACK);  // erase old
+      oled.drawPixel(i, j, color);        // draw new
+      prev[i] = j;
+    }
+  }
+
+  lastColor = color;
+  phase += speed;
+  if (phase >= 2 * M_PI) phase -= 2 * M_PI;
+}
+
+volatile int currentState = IDLE;   //API callbacks can write this
+
+static void Slate_Task(void *pvParameters) {
   while (true) {
-    for (int i = 0; i < WIDTH; i++) {
-      int j = round(63.5 + 32 * sin((2 * M_PI * i / 64) - phase));
-      if (j != prev[i]) {
-        oled.drawPixel(i, prev[i], BLACK);  // erase old
-        oled.drawPixel(i, j, RED);          // draw new
-        prev[i] = j;
+    // poll serial EVERY frame
+    if (Serial.available()) {
+      char c = Serial.read();
+      Serial.printf("got: %c\n", c);   //echo
+      switch (c) {
+        case '0': currentState = IDLE;             break;
+        case '1': currentState = SLATE_LISTEN;     break;
+        case '2': currentState = SLATE_MUTE;       break;
+        case '3': currentState = SLATE_TRANSCRIBE; break;
+        case '4': currentState = SLATE_RESPOND;    break;
+        case '5': currentState = SLATE_ERROR;      break;
       }
     }
+    //delete polling once API callbacks are implemented to change currentState
 
-    phase += speed;
-    if (phase >= 2 * M_PI) phase -= 2 * M_PI;
-
+    switch (currentState) {
+      case IDLE:             drawWaveFrame(WHITE,   0.1f); break;
+      case SLATE_LISTEN:     drawWaveFrame(GREEN,   0.1f); break;
+      case SLATE_MUTE:       drawWaveFrame(BLACK,   0.1f); break;
+      case SLATE_TRANSCRIBE: drawWaveFrame(BLUE,    0.1f); break;
+      case SLATE_RESPOND:    drawWaveFrame(YELLOW,  0.1f); break;
+      case SLATE_ERROR:      drawWaveFrame(MAGENTA, 0.1f); break;
+      default: break;
+    }
     vTaskDelay(pdMS_TO_TICKS(30));
   }
 }
-// extern "C" void app_main(void) {
-//   initArduino();
 
-//   SPI.begin(SCLK_PIN, MISO_PIN, MOSI_PIN, CS_PIN);
-//   oled.begin();
-//   oled.fillScreen(BLACK);
-//   //Draw intial Waveform across the screen
-//   for(int i = 0; i< WIDTH; i++)
-//   {
-//     int j = round(63.5 + 32 * sin(2 * M_PI * i / 64));
-//     oled.drawPixel(i, j, RED);
-//   }
-
-//   // float phase = 0.0;
-//   // float speed = 0.1;
-//   // vTaskDelay(pdMS_TO_TICKS(5000));
-//   // oled.fillScreen(BLACK);
-  
-//   // while (true) {
-//   //   //vTaskDelay(pdMS_TO_TICKS(1000)); // Delay for 1 second
-    
-//   //   for(int i = 0; i< WIDTH; i++)
-//   //   {
-//   //     int j = round(63.5 + 32 * sin((2 * M_PI * i / 64)  - phase));
-//   //     oled.drawPixel(i, j, RED);
-//   //   }
-
-//   //   phase += speed;
-//   //   if(phase >= 2 * M_PI)
-//   //   {
-//   //     phase -= 2 * M_PI;
-//   //   }
-//   //   vTaskDelay(pdMS_TO_TICKS(30));
-    
-
-//   // }
-
-  
-//}
+extern "C" void app_main(void) {
+  initArduino();
+  Serial.begin(115200);
+  delay(1500);
+  Serial.println("boot ok"); 
+  init_display();
+  init_wave();
+  xTaskCreate(Slate_Task, "Slate_Task", 4096, NULL, 5, NULL);
+}
