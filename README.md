@@ -37,14 +37,15 @@ Open [localhost:5173](http://127.0.0.1:5173). [API docs](http://127.0.0.1:8000/a
 
 ## Firmware
 
-With [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/get-started/index.html) loaded:
+The target is ESP32-S3. Install ESP-IDF 5.5.5 and Espressif's QEMU, then build and boot it headlessly:
 
 ```sh
-cd firmware
-idf.py set-target esp32s3
-idf.py build
+make firmware-setup
+make firmware-check
 ```
 
-After setting the target, you can use `make firmware` from the root. PlatformIO still needs a `platformio.ini` before `pio run` will work.
+`make firmware` builds. `make firmware-sim` leaves the serial console open. Exit with Ctrl-A, then X. The setup uses `~/esp/esp-idf-v5.5.5` and `~/.espressif`, with Python packages managed by uv.
+
+QEMU checks firmware startup. It does not test the board's microphone, speaker, display, or Wi-Fi. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later audio connection. PlatformIO still needs a `platformio.ini`.
 
 [Proposal](https://docs.google.com/document/d/1dz02PJORUFB1m--cltmt9tKI_VPXVcO9dAPNODxkFbo/edit) · [Work split](https://notes.granola.ai/t/a576ba7f-ef74-42ac-b631-dfefc260f884-008umkv4)
