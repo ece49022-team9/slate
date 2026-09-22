@@ -34,19 +34,15 @@ class FileTokenStorage(TokenStorage):
             return
 
         try:
-            with open(self.path, "r") as f:
+            with open(self.path) as f:
                 data = json.load(f)
 
             if data.get("tokens"):
-                self.tokens = OAuthToken.model_validate(
-                    data["tokens"]
-                )
+                self.tokens = OAuthToken.model_validate(data["tokens"])
 
             if data.get("client_info"):
-                self.client_info = (
-                    OAuthClientInformationFull.model_validate(
-                        data["client_info"]
-                    )
+                self.client_info = OAuthClientInformationFull.model_validate(
+                    data["client_info"]
                 )
 
         except Exception:
@@ -60,15 +56,9 @@ class FileTokenStorage(TokenStorage):
         )
 
         data = {
-            "tokens": (
-                self.tokens.model_dump()
-                if self.tokens
-                else None
-            ),
+            "tokens": (self.tokens.model_dump() if self.tokens else None),
             "client_info": (
-                self.client_info.model_dump()
-                if self.client_info
-                else None
+                self.client_info.model_dump() if self.client_info else None
             ),
         }
 
@@ -117,9 +107,7 @@ class OAuthCallbackServer:
                 params = parse_qs(parsed.query)
 
                 if "code" in params:
-                    callback_data["code"] = params[
-                        "code"
-                    ][0]
+                    callback_data["code"] = params["code"][0]
 
                     callback_data["state"] = params.get(
                         "state",
@@ -150,9 +138,7 @@ class OAuthCallbackServer:
                     )
 
                 elif "error" in params:
-                    callback_data["error"] = params[
-                        "error"
-                    ][0]
+                    callback_data["error"] = params["error"][0]
 
                     self.send_response(400)
                     self.end_headers()
@@ -181,9 +167,7 @@ class OAuthCallbackServer:
 
         while time() - start < timeout:
             if self.data["error"]:
-                raise RuntimeError(
-                    f"OAuth error: {self.data['error']}"
-                )
+                raise RuntimeError(f"OAuth error: {self.data['error']}")
 
             if self.data["code"]:
                 return AuthorizationCodeResult(
@@ -194,9 +178,7 @@ class OAuthCallbackServer:
 
             sleep(0.1)
 
-        raise TimeoutError(
-            "Timed out waiting for OAuth callback."
-        )
+        raise TimeoutError("Timed out waiting for OAuth callback.")
 
     def stop(self):
         if self.server:
@@ -228,9 +210,7 @@ class MCPManager:
 
         client = Client(server)
 
-        await self.exit_stack.enter_async_context(
-            client
-        )
+        await self.exit_stack.enter_async_context(client)
 
         self.clients[name] = client
 
@@ -246,9 +226,7 @@ class MCPManager:
     ):
         client = Client(url)
 
-        await self.exit_stack.enter_async_context(
-            client
-        )
+        await self.exit_stack.enter_async_context(client)
 
         self.clients[name] = client
 
@@ -268,13 +246,9 @@ class MCPManager:
             f"{name}.json",
         )
 
-        storage = FileTokenStorage(
-            token_path
-        )
+        storage = FileTokenStorage(token_path)
 
-        callback_server = OAuthCallbackServer(
-            port=3030
-        )
+        callback_server = OAuthCallbackServer(port=3030)
 
         callback_server.start()
 
@@ -282,21 +256,13 @@ class MCPManager:
             authorization_url: str,
         ):
             print()
-            print(
-                f"[MCP] Authorizing {name}..."
-            )
-            print(
-                "[MCP] Opening browser..."
-            )
+            print(f"[MCP] Authorizing {name}...")
+            print("[MCP] Opening browser...")
 
-            webbrowser.open(
-                authorization_url
-            )
+            webbrowser.open(authorization_url)
 
         async def callback_handler():
-            print(
-                "[MCP] Waiting for OAuth callback..."
-            )
+            print("[MCP] Waiting for OAuth callback...")
 
             try:
                 return callback_server.wait()
@@ -305,9 +271,7 @@ class MCPManager:
 
         metadata = OAuthClientMetadata(
             client_name="Slate",
-            redirect_uris=[
-                "http://localhost:3030/callback"
-            ],
+            redirect_uris=["http://localhost:3030/callback"],
             grant_types=[
                 "authorization_code",
                 "refresh_token",
@@ -323,9 +287,7 @@ class MCPManager:
             callback_handler=callback_handler,
         )
 
-        custom_client = httpx2.AsyncClient(
-            auth=oauth
-        )
+        custom_client = httpx2.AsyncClient(auth=oauth)
 
         try:
             from mcp.client.streamable_http import (
@@ -348,9 +310,7 @@ class MCPManager:
                 write_stream,
             )
 
-            await self.exit_stack.enter_async_context(
-                session
-            )
+            await self.exit_stack.enter_async_context(session)
 
             await session.initialize()
 
@@ -373,9 +333,7 @@ class MCPManager:
         result = await client.list_tools()
 
         for tool in result.tools:
-            exposed_name = (
-                f"{name}_{tool.name}"
-            )
+            exposed_name = f"{name}_{tool.name}"
 
             self.tools[exposed_name] = {
                 "server": name,
@@ -383,10 +341,7 @@ class MCPManager:
                 "tool": tool,
             }
 
-        print(
-            f"[MCP] {name}: "
-            f"{len(result.tools)} tools available"
-        )
+        print(f"[MCP] {name}: {len(result.tools)} tools available")
 
     def get_tool_definitions(self):
         definitions = []
@@ -399,12 +354,8 @@ class MCPManager:
                     "type": "function",
                     "function": {
                         "name": exposed_name,
-                        "description": (
-                            tool.description or ""
-                        ),
-                        "parameters": (
-                            tool.inputSchema
-                        ),
+                        "description": (tool.description or ""),
+                        "parameters": (tool.inputSchema),
                     },
                 }
             )
@@ -417,27 +368,18 @@ class MCPManager:
         arguments: dict,
     ):
         if exposed_name not in self.tools:
-            raise ValueError(
-                f"MCP tool not found: "
-                f"{exposed_name}"
-            )
+            raise ValueError(f"MCP tool not found: {exposed_name}")
 
-        info = self.tools[
-            exposed_name
-        ]
+        info = self.tools[exposed_name]
 
-        client = self.clients[
-            info["server"]
-        ]
+        client = self.clients[info["server"]]
 
         result = await client.call_tool(
             info["name"],
             arguments=arguments,
         )
 
-        return self._format_result(
-            result
-        )
+        return self._format_result(result)
 
     def _format_result(self, result):
         output = []
@@ -445,13 +387,9 @@ class MCPManager:
         if result.content:
             for item in result.content:
                 if hasattr(item, "text"):
-                    output.append(
-                        item.text
-                    )
+                    output.append(item.text)
                 else:
-                    output.append(
-                        str(item)
-                    )
+                    output.append(str(item))
 
         if result.structuredContent:
             output.append(

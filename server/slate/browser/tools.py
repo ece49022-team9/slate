@@ -1,13 +1,10 @@
 from slate.browser.session import BrowserSession
 
-
 browser = BrowserSession()
 
 
 def browser_open(args):
-    return browser.open(
-        args["url"]
-    )
+    return browser.open(args["url"])
 
 
 def browser_observe(args):

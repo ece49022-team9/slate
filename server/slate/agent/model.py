@@ -5,8 +5,9 @@ from openai import OpenAI
 
 load_dotenv()
 
+
 # using /free right now, can customize specific free models
-#50 requests per day for free acounts
+# 50 requests per day for free acounts
 class Model:
     def __init__(self, model: str):
         api_key = os.getenv("OPENROUTER_API_KEY")

@@ -1,11 +1,11 @@
 from datetime import datetime
 
 from slate.browser.tools import (
-    browser_open,
-    browser_observe,
     browser_act,
     browser_activity,
     browser_clear_activity,
+    browser_observe,
+    browser_open,
 )
 
 
@@ -56,7 +56,10 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "browser_observe",
-            "description": "Inspect the current browser page and return its URL, title, visible text, and interactive elements.",
+            "description": (
+                "Inspect the current browser page and return its URL, "
+                "title, visible text, and interactive elements."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -67,7 +70,10 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "browser_act",
-            "description": "Interact with the current webpage. Use this for clicking, typing, pressing keys, scrolling, going back, or going forward.",
+            "description": (
+                "Interact with the current webpage. Use this for clicking, "
+                "typing, pressing keys, scrolling, going back, or going forward."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -84,7 +90,10 @@ TOOL_DEFINITIONS = [
                     },
                     "element_id": {
                         "type": "integer",
-                        "description": "The interactive element ID from browser_observe. Required for click and type.",
+                        "description": (
+                            "The interactive element ID from browser_observe. "
+                            "Required for click and type."
+                        ),
                     },
                     "text": {
                         "type": "string",

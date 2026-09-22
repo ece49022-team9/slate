@@ -1,18 +1,16 @@
 import json
 
-from slate.agent.model import Model
 from slate.agent.mcp_client import MCPManager
+from slate.agent.model import Model
 from slate.agent.tools import (
-    TOOLS,
     TOOL_DEFINITIONS,
+    TOOLS,
 )
 
 
 class Agent:
     def __init__(self):
-        self.model = Model(
-            "openrouter/free"
-        )
+        self.model = Model("openrouter/free")
 
         self.mcp = MCPManager()
 
@@ -21,14 +19,8 @@ class Agent:
 
     async def _connect_mcp_servers(self):
         servers = {
-            "gmail": (
-                "https://gmailmcp.googleapis.com/"
-                "mcp/v1"
-            ),
-            "calendar": (
-                "https://calendarmcp.googleapis.com/"
-                "mcp/v1"
-            ),
+            "gmail": ("https://gmailmcp.googleapis.com/mcp/v1"),
+            "calendar": ("https://calendarmcp.googleapis.com/mcp/v1"),
         }
         for name, url in servers.items():
             try:
@@ -37,23 +29,16 @@ class Agent:
                     url,
                 )
             except Exception as e:
-                print(
-                    f"[MCP] Could not connect "
-                    f"to {name}: {e}"
-                )
+                print(f"[MCP] Could not connect to {name}: {e}")
+
     async def run(
         self,
         message: str,
     ) -> str:
 
-        mcp_tools = (
-            self.mcp.get_tool_definitions()
-        )
+        mcp_tools = self.mcp.get_tool_definitions()
 
-        all_tools = (
-            TOOL_DEFINITIONS
-            + mcp_tools
-        )
+        all_tools = TOOL_DEFINITIONS + mcp_tools
 
         messages = [
             {
@@ -70,63 +55,35 @@ class Agent:
 
             choice = response.choices[0]
 
-            assistant_message = (
-                choice.message
-            )
+            assistant_message = choice.message
 
             if not assistant_message.tool_calls:
-                return (
-                    assistant_message.content
-                    or ""
-                )
+                return assistant_message.content or ""
 
-            messages.append(
-                assistant_message
-            )
+            messages.append(assistant_message)
 
-            for tool_call in (
-                assistant_message.tool_calls
-            ):
-                tool_name = (
-                    tool_call.function.name
-                )
+            for tool_call in assistant_message.tool_calls:
+                tool_name = tool_call.function.name
 
-                arguments = json.loads(
-                    tool_call.function.arguments
-                    or "{}"
-                )
+                arguments = json.loads(tool_call.function.arguments or "{}")
 
                 if tool_name in TOOLS:
-                    result = TOOLS[
-                        tool_name
-                    ](arguments)
+                    result = TOOLS[tool_name](arguments)
 
-                elif (
-                    tool_name
-                    in self.mcp.tools
-                ):
-                    result = (
-                        await self.mcp.call_tool(
-                            tool_name,
-                            arguments,
-                        )
+                elif tool_name in self.mcp.tools:
+                    result = await self.mcp.call_tool(
+                        tool_name,
+                        arguments,
                     )
 
                 else:
-                    result = (
-                        f"Unknown tool: "
-                        f"{tool_name}"
-                    )
+                    result = f"Unknown tool: {tool_name}"
 
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": (
-                            tool_call.id
-                        ),
-                        "content": str(
-                            result
-                        ),
+                        "tool_call_id": (tool_call.id),
+                        "content": str(result),
                     }
                 )
 
