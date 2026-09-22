@@ -33,7 +33,28 @@ make web
 
 Open [localhost:5173](http://127.0.0.1:5173). [API docs](http://127.0.0.1:8000/api/docs) and [OpenAPI](http://127.0.0.1:8000/api/openapi.json) come from the backend.
 
-`make check` runs lint, formatting and the web build. CI also checks that the backend starts and responds.
+`make check` runs lint, formatting, audio tests and the web build. CI also checks that the backend starts and responds.
+
+## Speech
+
+[Kyutai STT](https://modal.com/docs/examples/streaming_kyutai_stt) and [Sesame CSM 1B](https://huggingface.co/docs/transformers/model_doc/csm) run in separate Modal apps, `slate-stt` and `slate-tts`. Both cache their weights and scale to zero when idle.
+
+Use the `sudarshan-1` Modal profile. CSM needs a Modal secret named `slate-huggingface` containing `HF_TOKEN`, with access to `sesame/csm-1b`.
+
+```sh
+make voice-deploy
+make voice-check
+```
+
+The check generates speech, saves `.local/voice-check.wav`, and transcribes it. To use each model:
+
+```sh
+export MODAL_PROFILE=sudarshan-1
+uv run --group voice python -m slate.voice tts "Slate is ready."
+uv run --group voice python -m slate.voice stt .local/speech.wav
+```
+
+STT accepts mono 24 kHz, 16-bit PCM WAV files up to 120 seconds. TTS returns the same format, with a 15-second default limit (`--max-seconds`, up to 30). CSM has no reference voice yet. Calls use Modal authentication; the ESP32 audio connection is still separate.
 
 ## Firmware
 
