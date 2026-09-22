@@ -54,7 +54,7 @@ uv run --group voice python -m slate.voice tts "Slate is ready."
 uv run --group voice python -m slate.voice stt .local/speech.wav
 ```
 
-STT accepts mono 24 kHz, 16-bit PCM WAV files up to 120 seconds. TTS returns the same format, with a 15-second default limit (`--max-seconds`, up to 30). CSM has no reference voice yet. Calls use Modal authentication; the ESP32 audio connection is still separate.
+STT accepts mono 24 kHz, 16-bit PCM WAV files up to 120 seconds. TTS returns the same format and errors if it cannot finish within `--max-seconds` (default 15, max 30). CSM has no reference voice yet. Calls use Modal authentication; the ESP32 audio connection is still separate.
 
 ## Firmware
 

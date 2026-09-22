@@ -65,13 +65,24 @@ class TextToSpeech:
                 "cuda"
             )
             with torch.inference_mode():
-                audio = self.model.generate(
+                result = self.model.generate(
                     **inputs,
                     output_audio=True,
+                    return_dict_in_generate=True,
                     max_new_tokens=int(max_seconds * 12.5),
                     do_sample=False,
+                    depth_decoder_do_sample=False,
+                    temperature=1.0,
+                    depth_decoder_temperature=1.0,
                 )
-            samples = audio[0].detach().float().cpu().numpy().reshape(-1)
+            finished = (
+                result.sequences[0, -1, :-1] == self.model.config.codebook_eos_token_id
+            ).all()
+            if not finished.item():
+                raise RuntimeError(
+                    "slate.tts: speech reached max_seconds before ending"
+                )
+            samples = result.audio[0].detach().float().cpu().numpy().reshape(-1)
             if samples.size == 0 or not np.isfinite(samples).all():
                 raise RuntimeError("slate.tts: model returned invalid audio")
             pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
