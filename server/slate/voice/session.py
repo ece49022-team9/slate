@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Coroutine
+from contextlib import aclosing
 from typing import Any
 from uuid import uuid4
 
@@ -175,9 +176,10 @@ class VoiceSession:
     async def transcribe(self, turn: Turn) -> None:
         text = ""
         try:
-            async for piece in transcribe_stream(turn.chunks()):
-                text += piece
-                await self.publish(turn, text=text.strip(), final=False)
+            async with aclosing(transcribe_stream(turn.chunks())) as stream:
+                async for piece in stream:
+                    text += piece
+                    await self.publish(turn, text=text.strip(), final=False)
             if self.turn is turn:
                 self.turn = None
             await self.publish(turn, text=text.strip(), final=True)

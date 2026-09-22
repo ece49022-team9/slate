@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterable, AsyncIterator
+from contextlib import aclosing
 
 import modal
 
@@ -17,8 +18,9 @@ async def transcribe(pcm: bytes) -> AsyncIterator[str]:
         for start in range(0, len(pcm), 3840):
             yield pcm[start : start + 3840]
 
-    async for piece in transcribe_stream(chunks()):
-        yield piece
+    async with aclosing(transcribe_stream(chunks())) as stream:
+        async for piece in stream:
+            yield piece
 
 
 async def transcribe_stream(audio: AsyncIterable[bytes]) -> AsyncIterator[str]:
@@ -31,15 +33,23 @@ async def transcribe_stream(audio: AsyncIterable[bytes]) -> AsyncIterator[str]:
             nonlocal completed
             await call.get.aio()
             completed = True
-            await outgoing.put.aio(None)
 
+        async def exchange() -> None:
+            try:
+                async with asyncio.TaskGroup() as tasks:
+                    tasks.create_task(send_audio(incoming, audio))
+                    tasks.create_task(wait_for_result())
+            finally:
+                await outgoing.put.aio(None)
+
+        transfer = asyncio.create_task(exchange())
         try:
-            async with asyncio.TaskGroup() as tasks:
-                tasks.create_task(send_audio(incoming, audio))
-                tasks.create_task(wait_for_result())
-                while (piece := await outgoing.get.aio()) is not None:
-                    yield piece
+            while (piece := await outgoing.get.aio()) is not None:
+                yield piece
+            await transfer
         finally:
+            transfer.cancel()
+            await asyncio.gather(transfer, return_exceptions=True)
             if not completed:
                 await call.cancel.aio()
 
