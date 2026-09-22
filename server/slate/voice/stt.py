@@ -77,8 +77,12 @@ class SpeechToText:
                 if token not in (0, 3):
                     yield self.tokenizer.id_to_piece(token).replace("▁", " ")
 
-    @modal.method(is_generator=True)
-    def transcribe(self, audio: modal.Queue) -> Iterator[str]:
+    @modal.method()
+    def transcribe(self, audio: modal.Queue, text: modal.Queue) -> None:
+        for piece in self.decode(audio):
+            text.put(piece)
+
+    def decode(self, audio: modal.Queue) -> Iterator[str]:
         pending = bytearray(self.prefix_samples * SAMPLE_BYTES)
         frame_bytes = self.frame_samples * SAMPLE_BYTES
         received = 0

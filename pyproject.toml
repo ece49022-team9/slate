@@ -3,12 +3,18 @@ name = "slate-server"
 version = "0.1.0"
 description = "Slate voice companion backend"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.141.1,<0.142", "uvicorn>=0.52.4,<0.53"]
+dependencies = [
+    "fastapi>=0.141.1,<0.142",
+    "livekit==1.1.18",
+    "livekit-api==1.2.1",
+    "modal==1.5.5",
+    "uvicorn>=0.52.4,<0.53",
+]
 
 [dependency-groups]
-dev = ["ruff>=0.15,<0.16"]
-voice = [
-    "modal==1.5.5",
+dev = [
+    "httpx>=0.28,<0.29",
+    "ruff>=0.15,<0.16",
 ]
 
 [build-system]

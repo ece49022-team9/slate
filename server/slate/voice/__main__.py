@@ -6,6 +6,7 @@ from pathlib import Path
 
 from slate.voice.audio import read_wav
 from slate.voice.client import speak, transcribe
+from slate.voice.device import simulate
 
 SMOKE_TEXT = "Slate is ready. The voice system is working."
 
@@ -24,6 +25,8 @@ async def run(args: argparse.Namespace) -> None:
         print()
     elif args.command == "tts":
         save_audio(args.output, await speak(args.text, args.max_seconds))
+    elif args.command == "simulate":
+        print(await simulate(args.input, args.api_url, args.sample_rate))
     else:
         audio = await speak(SMOKE_TEXT)
         save_audio(args.output, audio)
@@ -51,6 +54,14 @@ def main() -> None:
     tts.add_argument("--max-seconds", type=int, default=15)
     check = commands.add_parser("check", help="Generate speech and transcribe it")
     check.add_argument("--output", type=Path, default=Path(".local/voice-check.wav"))
+    device = commands.add_parser(
+        "simulate", help="Send a WAV through LiveKit as a device"
+    )
+    device.add_argument("input", type=Path)
+    device.add_argument("--api-url", default="http://127.0.0.1:8000")
+    device.add_argument(
+        "--sample-rate", type=int, choices=[16000, 24000, 48000], default=16000
+    )
     asyncio.run(run(parser.parse_args()))
 
 
