@@ -6,8 +6,11 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1,<0.142",
     "openai>=3.14.0",
+    "playwright>=1.63.0",
     "python-dotenv>=1.2.3",
     "uvicorn>=0.52.4,<0.53",
+    "mcp[cli]>=1.0.0", 
+    "httpx2>=0.1.0", 
 ]
 
 [dependency-groups]
