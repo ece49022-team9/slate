@@ -1,5 +1,5 @@
 #pragma once
-#include <Adafruit_SSD1351.h>
+#include "slate_state.h"
 
-void drawGrid(Adafruit_SSD1351 &oled);
-void drawLabels(Adafruit_SSD1351 &oled);
+void display_start();                  // init OLED + start the display task
+void display_set_state(SlateState s);  // called by main when state changes

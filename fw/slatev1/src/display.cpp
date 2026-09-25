@@ -4,12 +4,9 @@
 #include <SPI.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "math.h"
+#include <math.h>
 
-#include "HardwareSerial.h"
-
-
-
+#include "display.h"
 
 // SPI + control pins for the ESP32-WROOM-32E test board
 #define SCLK_PIN 18
@@ -32,17 +29,12 @@
 #define YELLOW  0xFFE0
 #define WHITE   0xFFFF
 
+// States now come from slate_state.h (don't #define them here)
 
-//STATES (CHANGES VIA API CALLS)
-#define IDLE 0
-#define SLATE_LISTEN 1
-#define SLATE_MUTE 2
-#define SLATE_TRANSCRIBE 3
-#define SLATE_RESPOND 4
-#define SLATE_ERROR 5
-
-Adafruit_SSD1351 oled(WIDTH, HEIGHT, &SPI, CS_PIN, DC_PIN, RST_PIN);
-int prev[WIDTH];
+//static Adafruit_SSD1351 oled(WIDTH, HEIGHT, &SPI, CS_PIN, DC_PIN, RST_PIN);
+static Adafruit_SSD1351 oled(WIDTH, HEIGHT, CS_PIN, DC_PIN, MOSI_PIN, SCLK_PIN, RST_PIN);
+static int prev[WIDTH];
+static volatile SlateState dispState = IDLE;   // written by main via display_set_state()
 
 static void init_display() {
   SPI.begin(SCLK_PIN, MISO_PIN, MOSI_PIN, CS_PIN);
@@ -50,8 +42,7 @@ static void init_display() {
   oled.fillScreen(BLACK);
 }
 
-static void init_wave()
-{
+static void init_wave() {
   for (int i = 0; i < WIDTH; i++) {
     int j = round(63.5 + 32 * sin(2 * M_PI * i / 64));
     prev[i] = j;
@@ -63,7 +54,7 @@ static void drawWaveFrame(uint16_t color, float speed) {
   static float phase = 0.0f;
   static uint16_t lastColor = BLACK;
   bool colorChanged = (color != lastColor);
-  
+
   for (int i = 0; i < WIDTH; i++) {
     int j = round(63.5 + 32 * sin((2 * M_PI * i / 64) - phase));
     if (j != prev[i] || colorChanged) {
@@ -78,26 +69,9 @@ static void drawWaveFrame(uint16_t color, float speed) {
   if (phase >= 2 * M_PI) phase -= 2 * M_PI;
 }
 
-volatile int currentState = IDLE;   //API callbacks can write this
-
-static void Slate_Task(void *pvParameters) {
+static void Display_Task(void *pvParameters) {
   while (true) {
-    // poll serial EVERY frame
-    if (Serial.available()) {
-      char c = Serial.read();
-      Serial.printf("got: %c\n", c);   //echo
-      switch (c) {
-        case '0': currentState = IDLE;             break;
-        case '1': currentState = SLATE_LISTEN;     break;
-        case '2': currentState = SLATE_MUTE;       break;
-        case '3': currentState = SLATE_TRANSCRIBE; break;
-        case '4': currentState = SLATE_RESPOND;    break;
-        case '5': currentState = SLATE_ERROR;      break;
-      }
-    }
-    //delete polling once API callbacks are implemented to change currentState
-
-    switch (currentState) {
+    switch (dispState) {
       case IDLE:             drawWaveFrame(WHITE,   0.1f); break;
       case SLATE_LISTEN:     drawWaveFrame(GREEN,   0.1f); break;
       case SLATE_MUTE:       drawWaveFrame(BLACK,   0.1f); break;
@@ -110,12 +84,21 @@ static void Slate_Task(void *pvParameters) {
   }
 }
 
-extern "C" void app_main(void) {
-  initArduino();
-  Serial.begin(115200);
-  delay(1500);
-  Serial.println("boot ok"); 
+// ---------------------------------------------------------------------------
+//  Public API
+// ---------------------------------------------------------------------------
+void display_set_state(SlateState s) { dispState = s; }
+
+void display_start() {
+  Serial.println("[display] init");
   init_display();
+  Serial.println("[display] begin done");
+
+  oled.fillScreen(RED);        // solid red flash = SPI + panel working
+  delay(500);
+  oled.fillScreen(BLACK);
+
   init_wave();
-  xTaskCreate(Slate_Task, "Slate_Task", 4096, NULL, 5, NULL);
+  BaseType_t ok = xTaskCreate(Display_Task, "Display_Task", 4096, NULL, 5, NULL);
+  Serial.printf("[display] task %s\n", ok == pdPASS ? "started" : "FAILED");
 }
