@@ -7,6 +7,7 @@ from pathlib import Path
 from slate.voice.audio import read_wav
 from slate.voice.client import speak, transcribe
 from slate.voice.device import simulate
+from slate.voice.firmware import simulate_firmware
 
 SMOKE_TEXT = "Slate is ready. The voice system is working."
 
@@ -27,6 +28,8 @@ async def run(args: argparse.Namespace) -> None:
         save_audio(args.output, await speak(args.text, args.max_seconds))
     elif args.command == "simulate":
         print(await simulate(args.input, args.api_url, args.sample_rate))
+    elif args.command == "firmware":
+        print(await simulate_firmware(args.input, args.api_url, args.channel))
     else:
         audio = await speak(SMOKE_TEXT)
         save_audio(args.output, audio)
@@ -62,6 +65,12 @@ def main() -> None:
     device.add_argument(
         "--sample-rate", type=int, choices=[16000, 24000, 48000], default=16000
     )
+    firmware = commands.add_parser(
+        "firmware", help="Send a WAV through the QEMU mic buffer and LiveKit"
+    )
+    firmware.add_argument("input", type=Path)
+    firmware.add_argument("--api-url", default="http://127.0.0.1:8000")
+    firmware.add_argument("--channel", choices=["left", "right", "mix"], default="left")
     asyncio.run(run(parser.parse_args()))
 
 

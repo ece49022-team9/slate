@@ -85,6 +85,21 @@ make firmware-check
 
 `make firmware` builds. `make firmware-sim` leaves the serial console open. Exit with Ctrl-A, then X. The setup uses `~/esp/esp-idf-v5.5.5` and `~/.espressif`, with Python packages managed by uv.
 
-QEMU runs the same FreeRTOS state controller as the board build. It checks state transitions, display updates, microphone LISTEN gating, and invalid/duplicate requests using simulated peripherals. It does not test PDM audio, physical peripherals, or Wi-Fi. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later audio connection. `make firmware-hardware` compiles the ESP32-S3 Arduino peripheral code with pinned PlatformIO dependencies. Physical peripherals stay disabled at startup until the S3 wiring is confirmed; the existing driver pin constants came from the older test board and must be replaced before enabling them. Serial keys 0–5 exercise the shared controller. Mic capture and LiveKit transport are still unfinished.
+QEMU runs the same FreeRTOS state controller, channel selection, DC filter, and microphone buffer as the board build. `make firmware-check` checks capture gating, left/right/mix selection, overflow rejection, and buffer reset. `make firmware-mic-check` uses Hypothesis to generate 60 stereo audio cases, replay them with different chunk boundaries, and compare the firmware output against an independent PCM calculation. Failures are shrunk and saved for replay.
+
+The microphone schematic contains two MP34DT01-M parts: MK1 has L/R grounded and MK2 has L/R tied high. They share PDM clock/data. The S3 driver uses I2S0 to convert both PDM slots to interleaved 16 kHz PCM. The shared pipeline selects left, right, or an equal-weight mono mix, removes DC, and queues up to one second of audio. Overflow rejects a whole frame; mute/cancel clears queued samples and filter history, while finishing a turn preserves buffered audio for draining. Gain is unity; the old fixed 4x amplification is removed to avoid clipping recorded speech.
+
+To send simulated microphone audio through the firmware and the real transcription service, start `make livekit` and `make server`, then run:
+
+```sh
+MODAL_PROFILE=sudarshan-1 uv run python -m slate.voice firmware .local/voice-check.wav
+```
+
+Use a 16-bit WAV at 16, 24, or 48 kHz, up to 119 seconds. Stereo WAVs represent the two microphone slots; mono WAVs populate only the left slot. `--channel left` is the default; `--channel right` selects the other mic and `--channel mix` averages both. For a mono WAV, mix therefore halves the signal level and right produces silence.
+
+The command builds and boots QEMU, injects stereo PCM at the boundary after hardware PDM conversion, reads processed mono audio from the firmware buffer through UART1, and publishes it as a LiveKit microphone track. The existing start/end-turn RPCs and transcription service handle the recording. A host bridge runs WebRTC; this does not implement on-device LiveKit networking or emulate PDM clock edges, DMA, or physical microphones. QEMU has no I2S/PDM emulation.
+
+`make firmware-hardware` compiles the S3 PDM adapter and peripheral drivers with pinned PlatformIO dependencies. Physical capture remains disabled without confirmed S3 GPIO assignments. Defining both `SLATE_PDM_CLK` and `SLATE_PDM_DATA` enables the adapter for board bring-up; a physical transport consumer still needs to drain the audio buffer. The older display/haptic pin assignments must also be replaced before those peripherals are enabled. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
+
 
 [Proposal](https://docs.google.com/document/d/1dz02PJORUFB1m--cltmt9tKI_VPXVcO9dAPNODxkFbo/edit) · [Work split](https://notes.granola.ai/t/a576ba7f-ef74-42ac-b631-dfefc260f884-008umkv4)

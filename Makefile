@@ -1,4 +1,4 @@
-.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware voice-deploy voice-check livekit
+.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware firmware-mic-check voice-deploy voice-check livekit
 
 MODAL_PROFILE ?= sudarshan-1
 
@@ -43,3 +43,6 @@ livekit:
 
 firmware-hardware:
 	uv tool run --from platformio==6.2.0 pio run -d firmware
+
+firmware-mic-check:
+	uv run python scripts/check_mic.py
