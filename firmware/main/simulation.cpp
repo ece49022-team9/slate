@@ -1,4 +1,3 @@
-#include <atomic>
 #include <initializer_list>
 #include "driver/uart.h"
 #include "esp_log.h"
@@ -11,14 +10,6 @@
 #if !CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE
 #error "The controller simulation requires assertions enabled"
 #endif
-
-static std::atomic<SlateState> display_state{SLATE_ERROR};
-static std::atomic<unsigned> updates{0};
-
-void display_set_state(SlateState state) {
-  display_state.store(state);
-  updates.fetch_add(1);
-}
 
 static void set_state(SlateState state) {
   configASSERT(slate_request_state(state));
@@ -33,7 +24,7 @@ static void check_pipeline() {
   configASSERT(!slate_request_state(SLATE_LISTEN));
   mic_start();
   slate_start();
-  configASSERT(display_state.load() == IDLE);
+  configASSERT(display_get_state() == IDLE);
   configASSERT(!slate_request_state(static_cast<SlateState>(255)));
   static int16_t stereo[MIC_FRAME_SAMPLES * 2] = {1000, -2000};
   static int16_t mono[MIC_FRAME_SAMPLES];
@@ -43,8 +34,8 @@ static void check_pipeline() {
   unsigned expected_updates = 1;
   for (SlateState state : sequence) {
     set_state(state);
-    configASSERT(display_state.load() == state);
-    configASSERT(updates.load() == ++expected_updates);
+    configASSERT(display_get_state() == state);
+    configASSERT(display_revision() == ++expected_updates);
     configASSERT(mic_submit(stereo, 1));
     size_t count = mic_read(mono, MIC_FRAME_SAMPLES);
     configASSERT(count == (state == SLATE_LISTEN ? 1 : 0));
@@ -52,7 +43,7 @@ static void check_pipeline() {
   }
   set_state(IDLE);
   vTaskDelay(pdMS_TO_TICKS(50));
-  configASSERT(updates.load() == expected_updates);
+  configASSERT(display_revision() == expected_updates);
   for (MicChannel channel : {MicChannel::LEFT, MicChannel::RIGHT, MicChannel::MIX}) {
     configASSERT(mic_configure(channel));
     set_state(SLATE_LISTEN);
@@ -91,11 +82,38 @@ static bool read_exact(void* destination, size_t size) {
   return true;
 }
 
-static void reply(uint8_t status, const int16_t* samples = nullptr, size_t count = 0) {
-  size_t size = count * sizeof(int16_t);
+static void reply_bytes(uint8_t status, const void* data, size_t size) {
   uint8_t header[] = {status, uint8_t(size), uint8_t(size >> 8)};
   uart_write_bytes(UART_NUM_1, header, sizeof(header));
-  if (size) uart_write_bytes(UART_NUM_1, samples, size);
+  if (size) uart_write_bytes(UART_NUM_1, data, size);
+}
+
+static void reply(uint8_t status, const int16_t* samples = nullptr, size_t count = 0) {
+  reply_bytes(status, samples, count * sizeof(int16_t));
+}
+
+static void send_display(const uint8_t* payload, size_t size) {
+  uint32_t frame = xTaskGetTickCount() / pdMS_TO_TICKS(30);
+  if (size == 4) {
+    frame = uint32_t(payload[0]) | (uint32_t(payload[1]) << 8)
+          | (uint32_t(payload[2]) << 16) | (uint32_t(payload[3]) << 24);
+  }
+  struct Frame {
+    uint16_t width;
+    uint16_t height;
+    uint32_t state;
+    uint32_t number;
+    uint16_t pixels[DISPLAY_PIXELS];
+  };
+  static Frame output;
+  static_assert(sizeof(Frame) == 12 + DISPLAY_PIXELS * 2);
+  SlateState state = display_get_state();
+  output.width = DISPLAY_WIDTH;
+  output.height = DISPLAY_HEIGHT;
+  output.state = state;
+  output.number = frame;
+  display_render(state, frame, output.pixels);
+  reply_bytes(0, &output, sizeof(output));
 }
 
 extern "C" void app_main() {
@@ -143,6 +161,11 @@ extern "C" void app_main() {
       reply(0, mono, mic_read(mono, MIC_FRAME_SAMPLES));
     } else if (header[0] == 4 && bytes == 0) {
       set_state(IDLE);
+      reply(0);
+    } else if (header[0] == 5 && (bytes == 0 || bytes == 4)) {
+      send_display(payload, bytes);
+    } else if (header[0] == 6 && bytes == 1 && payload[0] <= SLATE_ERROR) {
+      set_state(static_cast<SlateState>(payload[0]));
       reply(0);
     } else {
       reply(1);

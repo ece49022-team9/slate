@@ -1,97 +1,27 @@
+#include <algorithm>
 #include <atomic>
-#include "Arduino.h"
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1351.h>
-#include <SPI.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include <math.h>
-
+#include <cmath>
 #include "display.h"
 
-#define SCLK_PIN 18
-#define MISO_PIN 19
-#define MOSI_PIN 23
-#define CS_PIN    5
-#define DC_PIN   16
-#define RST_PIN  17
+static std::atomic<SlateState> current_state{SLATE_ERROR};
+static std::atomic<unsigned> revision{0};
 
-#define WIDTH  128
-#define HEIGHT 128
-
-#define BLACK   0x0000
-#define RED     0xF800
-#define GREEN   0x07E0
-#define BLUE    0x001F
-#define CYAN    0x07FF
-#define MAGENTA 0xF81F
-#define YELLOW  0xFFE0
-#define WHITE   0xFFFF
-
-static Adafruit_SSD1351 oled(WIDTH, HEIGHT, CS_PIN, DC_PIN, MOSI_PIN, SCLK_PIN, RST_PIN);
-static int prev[WIDTH];
-static std::atomic<SlateState> dispState{IDLE};
-
-static void init_display() {
-  SPI.begin(SCLK_PIN, MISO_PIN, MOSI_PIN, CS_PIN);
-  oled.begin();
-  oled.fillScreen(BLACK);
+void display_set_state(SlateState state) {
+  current_state.store(state);
+  revision.fetch_add(1);
 }
 
-static void init_wave() {
-  for (int i = 0; i < WIDTH; i++) {
-    int j = round(63.5 + 32 * sin(2 * M_PI * i / 64));
-    prev[i] = j;
-    oled.drawPixel(i, j, RED);
+SlateState display_get_state() { return current_state.load(); }
+unsigned display_revision() { return revision.load(); }
+
+void display_render(SlateState state, uint32_t frame, uint16_t* pixels) {
+  constexpr uint16_t colors[] = {0xffff, 0x07e0, 0x0000, 0x001f, 0xffe0, 0xf81f};
+  std::fill_n(pixels, DISPLAY_PIXELS, uint16_t{0});
+  if (state > SLATE_ERROR || state == SLATE_MUTE) return;
+  constexpr double tau = 6.283185307179586;
+  double phase = std::fmod(double(frame) * 0.1, tau);
+  for (unsigned x = 0; x < DISPLAY_WIDTH; ++x) {
+    unsigned y = std::lround(63.5 + 32 * std::sin(tau * x / 64 - phase));
+    pixels[y * DISPLAY_WIDTH + x] = colors[state];
   }
-}
-
-static void drawWaveFrame(uint16_t color, float speed) {
-  static float phase = 0.0f;
-  static uint16_t lastColor = BLACK;
-  bool colorChanged = (color != lastColor);
-
-  for (int i = 0; i < WIDTH; i++) {
-    int j = round(63.5 + 32 * sin((2 * M_PI * i / 64) - phase));
-    if (j != prev[i] || colorChanged) {
-      oled.drawPixel(i, prev[i], BLACK);
-      oled.drawPixel(i, j, color);
-      prev[i] = j;
-    }
-  }
-
-  lastColor = color;
-  phase += speed;
-  if (phase >= 2 * M_PI) phase -= 2 * M_PI;
-}
-
-static void Display_Task(void *pvParameters) {
-  while (true) {
-    switch (dispState.load()) {
-      case IDLE:             drawWaveFrame(WHITE,   0.1f); break;
-      case SLATE_LISTEN:     drawWaveFrame(GREEN,   0.1f); break;
-      case SLATE_MUTE:       drawWaveFrame(BLACK,   0.1f); break;
-      case SLATE_TRANSCRIBE: drawWaveFrame(BLUE,    0.1f); break;
-      case SLATE_RESPOND:    drawWaveFrame(YELLOW,  0.1f); break;
-      case SLATE_ERROR:      drawWaveFrame(MAGENTA, 0.1f); break;
-      default: break;
-    }
-    vTaskDelay(pdMS_TO_TICKS(30));
-  }
-}
-
-void display_set_state(SlateState s) { dispState = s; }
-
-void display_start() {
-  Serial.println("[display] init");
-  init_display();
-  Serial.println("[display] begin done");
-
-  oled.fillScreen(RED);
-  delay(500);
-  oled.fillScreen(BLACK);
-
-  init_wave();
-  BaseType_t ok = xTaskCreate(Display_Task, "Display_Task", 4096, NULL, 5, NULL);
-  Serial.printf("[display] task %s\n", ok == pdPASS ? "started" : "FAILED");
 }

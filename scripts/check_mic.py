@@ -5,7 +5,8 @@ from ctypes import c_float
 
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
-from slate.voice.firmware import CHANNELS, ROOT, Firmware, capture, qemu
+from slate.simulator import ROOT, Firmware, qemu
+from slate.voice.firmware import CHANNELS, capture
 
 
 def reference(samples: list[tuple[int, int]], channel: str) -> list[int]:
