@@ -1,3 +1,4 @@
+#include <atomic>
 #include "Arduino.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1351.h>
@@ -8,7 +9,6 @@
 
 #include "display.h"
 
-// SPI + control pins for the ESP32-WROOM-32E test board
 #define SCLK_PIN 18
 #define MISO_PIN 19
 #define MOSI_PIN 23
@@ -19,7 +19,6 @@
 #define WIDTH  128
 #define HEIGHT 128
 
-// 16-bit RGB565 colors
 #define BLACK   0x0000
 #define RED     0xF800
 #define GREEN   0x07E0
@@ -29,12 +28,9 @@
 #define YELLOW  0xFFE0
 #define WHITE   0xFFFF
 
-// States now come from slate_state.h (don't #define them here)
-
-//static Adafruit_SSD1351 oled(WIDTH, HEIGHT, &SPI, CS_PIN, DC_PIN, RST_PIN);
 static Adafruit_SSD1351 oled(WIDTH, HEIGHT, CS_PIN, DC_PIN, MOSI_PIN, SCLK_PIN, RST_PIN);
 static int prev[WIDTH];
-static volatile SlateState dispState = IDLE;   // written by main via display_set_state()
+static std::atomic<SlateState> dispState{IDLE};
 
 static void init_display() {
   SPI.begin(SCLK_PIN, MISO_PIN, MOSI_PIN, CS_PIN);
@@ -58,8 +54,8 @@ static void drawWaveFrame(uint16_t color, float speed) {
   for (int i = 0; i < WIDTH; i++) {
     int j = round(63.5 + 32 * sin((2 * M_PI * i / 64) - phase));
     if (j != prev[i] || colorChanged) {
-      oled.drawPixel(i, prev[i], BLACK);  // erase old
-      oled.drawPixel(i, j, color);        // draw new
+      oled.drawPixel(i, prev[i], BLACK);
+      oled.drawPixel(i, j, color);
       prev[i] = j;
     }
   }
@@ -71,7 +67,7 @@ static void drawWaveFrame(uint16_t color, float speed) {
 
 static void Display_Task(void *pvParameters) {
   while (true) {
-    switch (dispState) {
+    switch (dispState.load()) {
       case IDLE:             drawWaveFrame(WHITE,   0.1f); break;
       case SLATE_LISTEN:     drawWaveFrame(GREEN,   0.1f); break;
       case SLATE_MUTE:       drawWaveFrame(BLACK,   0.1f); break;
@@ -84,9 +80,6 @@ static void Display_Task(void *pvParameters) {
   }
 }
 
-// ---------------------------------------------------------------------------
-//  Public API
-// ---------------------------------------------------------------------------
 void display_set_state(SlateState s) { dispState = s; }
 
 void display_start() {
@@ -94,7 +87,7 @@ void display_start() {
   init_display();
   Serial.println("[display] begin done");
 
-  oled.fillScreen(RED);        // solid red flash = SPI + panel working
+  oled.fillScreen(RED);
   delay(500);
   oled.fillScreen(BLACK);
 

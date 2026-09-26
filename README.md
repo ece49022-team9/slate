@@ -85,6 +85,6 @@ make firmware-check
 
 `make firmware` builds. `make firmware-sim` leaves the serial console open. Exit with Ctrl-A, then X. The setup uses `~/esp/esp-idf-v5.5.5` and `~/.espressif`, with Python packages managed by uv.
 
-QEMU checks firmware startup. It does not test the board's microphone, speaker, display, or Wi-Fi. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later audio connection. PlatformIO still needs a `platformio.ini`.
+QEMU runs the same FreeRTOS state controller as the board build. It checks state transitions, display updates, microphone LISTEN gating, and invalid/duplicate requests using simulated peripherals. It does not test PDM audio, physical peripherals, or Wi-Fi. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later audio connection. `make firmware-hardware` compiles the ESP32-S3 Arduino peripheral code with pinned PlatformIO dependencies. Physical peripherals stay disabled at startup until the S3 wiring is confirmed; the existing driver pin constants came from the older test board and must be replaced before enabling them. Serial keys 0–5 exercise the shared controller. Mic capture and LiveKit transport are still unfinished.
 
 [Proposal](https://docs.google.com/document/d/1dz02PJORUFB1m--cltmt9tKI_VPXVcO9dAPNODxkFbo/edit) · [Work split](https://notes.granola.ai/t/a576ba7f-ef74-42ac-b631-dfefc260f884-008umkv4)
