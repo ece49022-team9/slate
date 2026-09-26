@@ -99,7 +99,22 @@ Use a 16-bit WAV at 16, 24, or 48 kHz, up to 119 seconds. Stereo WAVs represent 
 
 The command builds and boots QEMU, injects stereo PCM at the boundary after hardware PDM conversion, reads processed mono audio from the firmware buffer through UART1, and publishes it as a LiveKit microphone track. The existing start/end-turn RPCs and transcription service handle the recording. A host bridge runs WebRTC; this does not implement on-device LiveKit networking or emulate PDM clock edges, DMA, or physical microphones. QEMU has no I2S/PDM emulation.
 
-`make firmware-hardware` compiles the S3 PDM adapter and peripheral drivers with pinned PlatformIO dependencies. Physical capture remains disabled without confirmed S3 GPIO assignments. Defining both `SLATE_PDM_CLK` and `SLATE_PDM_DATA` enables the adapter for board bring-up; a physical transport consumer still needs to drain the audio buffer. The older display/haptic pin assignments must also be replaced before those peripherals are enabled. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
+`make firmware-hardware` compiles the S3 PDM adapter and peripheral drivers with pinned PlatformIO dependencies. Physical capture remains disabled without confirmed S3 GPIO assignments. Defining both `SLATE_PDM_CLK` and `SLATE_PDM_DATA` enables the adapter for board bring-up; a physical transport consumer still needs to drain the audio buffer. The older haptic pin assignments must also be replaced before haptics are enabled. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
+
+
+### Display preview
+
+The display is Adafruit product 1431: a 128×128 RGB565 OLED with an SSD1351 controller. Run:
+
+```sh
+make firmware-display
+```
+
+Open [localhost:8010](http://127.0.0.1:8010). The preview reads pixel frames from the firmware running in QEMU. Its buttons request real controller state changes: idle is white, listen green, mute black, transcribe blue, respond yellow, and error magenta. The wave remains a state animation rather than a microphone level meter.
+
+`display.cpp` renders the same RGB565 pixel buffer in both builds. The board's `oled.cpp` sends it through Adafruit's SSD1351 library; QEMU returns it over the simulator connection for the browser to display. The Arduino library's SPI commands and the panel electronics are not emulated. Physical display startup requires all five confirmed S3 pin definitions: `SLATE_OLED_CLK`, `SLATE_OLED_DATA`, `SLATE_OLED_CS`, `SLATE_OLED_DC`, and `SLATE_OLED_RESET`.
+
+`make firmware-display-check` checks all six state colors, blanking, animation geometry, and 30 generated frame/state combinations. It saves an actual QEMU frame to `.local/display-listen.png`. Each simulator command starts its own QEMU instance; stop the preview before running the audio or display checks, since they use the same flash image. The preview controls its own simulated device and does not mirror a separate microphone simulator process.
 
 
 [Proposal](https://docs.google.com/document/d/1dz02PJORUFB1m--cltmt9tKI_VPXVcO9dAPNODxkFbo/edit) · [Work split](https://notes.granola.ai/t/a576ba7f-ef74-42ac-b631-dfefc260f884-008umkv4)

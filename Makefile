@@ -1,4 +1,4 @@
-.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware firmware-mic-check voice-deploy voice-check livekit
+.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware firmware-mic-check firmware-display firmware-display-check voice-deploy voice-check livekit
 
 MODAL_PROFILE ?= sudarshan-1
 
@@ -46,3 +46,9 @@ firmware-hardware:
 
 firmware-mic-check:
 	uv run python scripts/check_mic.py
+
+firmware-display:
+	uv run python -m slate.display
+
+firmware-display-check:
+	uv run python scripts/check_display.py
