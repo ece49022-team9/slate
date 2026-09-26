@@ -1,110 +1,88 @@
-#include <atomic>
-#include "Arduino.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
-#include "driver/i2s_pdm.h"
-#include <math.h>
-
 #include "mic.h"
 
-#define PDM_CLK_PIN  GPIO_NUM_26
-#define PDM_DATA_PIN GPIO_NUM_32
-
-#define MIC_SAMPLE_RATE   16000
-#define MIC_FRAME_SAMPLES 320
-#define MIC_GAIN          4
-#define MIC_STREAM_BYTES  (MIC_SAMPLE_RATE * 2 * 1)
-
-#define MIC_METER 1
-
-static i2s_chan_handle_t    rx_chan      = NULL;
-static StreamBufferHandle_t mic_stream   = NULL;
-static std::atomic<bool> micStreaming{false};
-
-static void mic_init() {
-  i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-  chan_cfg.dma_desc_num  = 6;
-  chan_cfg.dma_frame_num = 240;
-  ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, NULL, &rx_chan));
-
-  i2s_pdm_rx_config_t pdm_cfg = {};
-  pdm_cfg.clk_cfg  = I2S_PDM_RX_CLK_DEFAULT_CONFIG(MIC_SAMPLE_RATE);
-  pdm_cfg.slot_cfg = I2S_PDM_RX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO);
-
-  pdm_cfg.slot_cfg.slot_mask = I2S_PDM_SLOT_LEFT;
-
-  pdm_cfg.gpio_cfg.clk = PDM_CLK_PIN;
-  pdm_cfg.gpio_cfg.din = PDM_DATA_PIN;
-  pdm_cfg.gpio_cfg.invert_flags.clk_inv = false;
-
-  ESP_ERROR_CHECK(i2s_channel_init_pdm_rx_mode(rx_chan, &pdm_cfg));
-  ESP_ERROR_CHECK(i2s_channel_enable(rx_chan));
-
-  mic_stream = xStreamBufferCreate(MIC_STREAM_BYTES, MIC_FRAME_SAMPLES * sizeof(int16_t));
-  configASSERT(mic_stream);
-}
-
-static void mic_process(int16_t *buf, size_t n, float &rms, int &peak) {
-  static float x_prev = 0.0f, y_prev = 0.0f;
-  const float R = 0.995f;
-  double sumSq = 0.0;
-  peak = 0;
-
-  for (size_t i = 0; i < n; i++) {
-    float x = (float)buf[i];
-    float y = x - x_prev + R * y_prev;
-    x_prev = x;
-    y_prev = y;
-
-    int32_t s = (int32_t)(y * MIC_GAIN);
-    if (s >  32767) s =  32767;
-    if (s < -32768) s = -32768;
-    buf[i] = (int16_t)s;
-
-    sumSq += (double)s * s;
-    int a = abs(s);
-    if (a > peak) peak = a;
-  }
-  rms = sqrtf(sumSq / n);
-}
-
-static void Mic_Task(void *pvParameters) {
-  static int16_t buf[MIC_FRAME_SAMPLES];
-  size_t bytes_read = 0;
-  uint32_t lastPrint = 0;
-
-  while (true) {
-    if (i2s_channel_read(rx_chan, buf, sizeof(buf), &bytes_read, portMAX_DELAY) != ESP_OK) {
-      continue;
-    }
-    size_t n = bytes_read / sizeof(int16_t);
-
-    float rms; int peak;
-    mic_process(buf, n, rms, peak);
-
-    if (micStreaming) {
-      xStreamBufferSend(mic_stream, buf, n * sizeof(int16_t), 0);
-    }
-
-#if MIC_METER
-    if (micStreaming && millis() - lastPrint > 250) {
-      lastPrint = millis();
-      float dbfs = (rms > 0) ? 20.0f * log10f(rms / 32768.0f) : -96.0f;
-      int bars = constrain((int)((dbfs + 60.0f) / 2.0f), 0, 30);
-      Serial.printf("rms=%6.0f peak=%5d %6.1f dBFS |", rms, peak, dbfs);
-      for (int i = 0; i < bars; i++) Serial.print('#');
-      Serial.println();
-    }
-#endif
-  }
-}
+static SemaphoreHandle_t lock;
+static StreamBufferHandle_t buffer;
+static MicChannel selected = MicChannel::LEFT;
+static bool listening;
+static float previous_input;
+static float previous_output;
 
 void mic_start() {
-  mic_init();
-  xTaskCreate(Mic_Task, "Mic_Task", 4096, NULL, 6, NULL);
+  configASSERT(!buffer);
+  lock = xSemaphoreCreateMutex();
+  buffer = xStreamBufferCreate(MIC_BUFFER_SAMPLES * sizeof(int16_t), 1);
+  configASSERT(lock && buffer);
 }
 
-void mic_set_state(SlateState s) { micStreaming = (s == SLATE_LISTEN); }
+bool mic_configure(MicChannel channel) {
+  if (channel > MicChannel::MIX) return false;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  bool accepted = !listening;
+  if (accepted) selected = channel;
+  xSemaphoreGive(lock);
+  return accepted;
+}
 
-StreamBufferHandle_t mic_get_stream() { return mic_stream; }
+void mic_set_state(SlateState state) {
+  xSemaphoreTake(lock, portMAX_DELAY);
+  bool next = state == SLATE_LISTEN;
+  if ((next && !listening) || (!next && state != SLATE_TRANSCRIBE)) {
+    xStreamBufferReset(buffer);
+    previous_input = 0;
+    previous_output = 0;
+  }
+  listening = next;
+  xSemaphoreGive(lock);
+}
+
+bool mic_submit(const int16_t* stereo, size_t frames) {
+  if (!stereo || frames == 0 || frames > MIC_FRAME_SAMPLES) return false;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  if (!listening) {
+    xSemaphoreGive(lock);
+    return true;
+  }
+  size_t bytes = frames * sizeof(int16_t);
+  if (xStreamBufferSpacesAvailable(buffer) < bytes) {
+    xSemaphoreGive(lock);
+    ESP_LOGE("slate.mic", "Capture buffer full; rejected %u samples", unsigned(frames));
+    return false;
+  }
+  int16_t mono[MIC_FRAME_SAMPLES];
+  for (size_t i = 0; i < frames; ++i) {
+    float input;
+    if (selected == MicChannel::MIX) {
+      input = (int32_t(stereo[2 * i]) + int32_t(stereo[2 * i + 1])) / 2.0f;
+    } else {
+      input = stereo[2 * i + (selected == MicChannel::RIGHT)];
+    }
+    float output = input - previous_input + 0.995f * previous_output;
+    previous_input = input;
+    previous_output = output;
+    if (output > 32767) output = 32767;
+    if (output < -32768) output = -32768;
+    mono[i] = static_cast<int16_t>(output);
+  }
+  size_t sent = xStreamBufferSend(buffer, mono, bytes, 0);
+  configASSERT(sent == bytes);
+  xSemaphoreGive(lock);
+  return sent == bytes;
+}
+
+size_t mic_read(int16_t* mono, size_t capacity) {
+  xSemaphoreTake(lock, portMAX_DELAY);
+  size_t received = xStreamBufferReceive(buffer, mono, capacity * sizeof(int16_t), 0);
+  xSemaphoreGive(lock);
+  return received / sizeof(int16_t);
+}
+
+size_t mic_buffered() {
+  xSemaphoreTake(lock, portMAX_DELAY);
+  size_t samples = xStreamBufferBytesAvailable(buffer) / sizeof(int16_t);
+  xSemaphoreGive(lock);
+  return samples;
+}

@@ -24,9 +24,18 @@ def main() -> None:
             while time.monotonic() < deadline:
                 output.seek(0)
                 log = output.read()
+                if any(
+                    failure in log
+                    for failure in (
+                        "assert failed:",
+                        "stack overflow",
+                        "Guru Meditation",
+                    )
+                ):
+                    raise RuntimeError(f"slate.firmware: firmware crashed\n{log}")
                 if (
-                    "slate.sim: PASS: state transitions, display fan-out, "
-                    "listen gating, invalid and duplicate requests" in log
+                    "slate.sim: PASS: controller, mic channels, capture gating, "
+                    "buffer overflow and turn reset" in log
                 ):
                     print(log, end="")
                     print("slate.firmware: ESP32-S3 controller simulation passed")

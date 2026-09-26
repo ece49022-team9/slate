@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "controller.cpp" "simulation.cpp"
+    SRCS "controller.cpp" "simulation.cpp" "mic.cpp"
     INCLUDE_DIRS "."
-    REQUIRES log freertos
+    REQUIRES log freertos esp_driver_uart
 )

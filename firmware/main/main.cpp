@@ -1,10 +1,17 @@
 #include <Arduino.h>
 #include "slate_state.h"
+#include "mic.h"
+#include "pdm.h"
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("slate.boot: ESP32-S3; physical peripherals disabled pending pin mapping");
+  mic_start();
   slate_start();
+#if defined(SLATE_PDM_CLK) && defined(SLATE_PDM_DATA)
+  pdm_start(SLATE_PDM_CLK, SLATE_PDM_DATA);
+#else
+  Serial.println("slate.boot: Physical PDM capture disabled pending S3 pin mapping");
+#endif
 }
 
 void loop() {
