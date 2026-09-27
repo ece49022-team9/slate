@@ -110,7 +110,7 @@ The display is Adafruit product 1431: a 128×128 RGB565 OLED with an SSD1351 con
 make firmware-display
 ```
 
-Open [localhost:8010](http://127.0.0.1:8010). The preview reads pixel frames from the firmware running in QEMU. Its buttons request real controller state changes: idle is white, listen green, mute black, transcribe blue, respond yellow, and error magenta. The wave remains a state animation rather than a microphone level meter.
+Open [localhost:8010](http://127.0.0.1:8010). The preview reads pixel frames from the firmware running in QEMU. Its buttons request real controller state changes: idle is white, listen green, mute black, transcribe blue, respond yellow, and error magenta. A centered orb glows with a soft halo and expands/contracts sinusoidally over a 120-frame cycle (3.6 seconds on the firmware clock). The animation is independent of microphone input; voice responsiveness is not enabled.
 
 `display.cpp` renders the same RGB565 pixel buffer in both builds. The board's `oled.cpp` sends it through Adafruit's SSD1351 library; QEMU returns it over the simulator connection for the browser to display. The Arduino library's SPI commands and the panel electronics are not emulated. Physical display startup requires all five confirmed S3 pin definitions: `SLATE_OLED_CLK`, `SLATE_OLED_DATA`, `SLATE_OLED_CS`, `SLATE_OLED_DC`, and `SLATE_OLED_RESET`.
 
