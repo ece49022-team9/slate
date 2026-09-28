@@ -102,12 +102,11 @@ The command builds and boots QEMU, injects stereo PCM at the boundary after hard
 `make firmware-hardware` compiles the ESP32-WROOM-32 PDM adapter and peripheral drivers with pinned PlatformIO dependencies. To flash the dev board over USB, list ports and use the one that appears when it is connected:
 
 ```sh
-make firmware-ports
-make firmware-flash PORT=/dev/cu.usbserial-0001
-make firmware-monitor PORT=/dev/cu.usbserial-0001
+make flash
+make monitor
 ```
 
-Replace the example port with the actual device path. The monitor runs at 115200 baud; send `0` through `5` to request idle, listen, mute, transcribe, respond, or error and inspect the `slate.state` logs. The original PR #3 WROOM-32 test firmware assigns PDM clock to GPIO26 and shared PDM data to GPIO32; the board build now uses those pins. Send `1` to start capture and read the half-second `slate.mic` sample count, RMS, and peak reports. Return to idle with `0`, then send `l`, `r`, or `m` to select the left mic, right mic, or mix before listening again. The microphones are not yet connected to the dev board, so physical audio capture is unverified. The serial meter drains audio for this board test; the firmware does not yet send physical microphone audio to LiveKit. Haptics are not started until their pin mapping is verified. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
+`make flash` and `make monitor` select the board automatically when exactly one matching USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>` explicitly. The monitor runs at 115200 baud; send `0` through `5` to request idle, listen, mute, transcribe, respond, or error and inspect the `slate.state` logs. PDM clock is GPIO26 and shared PDM data is GPIO36. GPIO39 is input-only on the original ESP32 and cannot drive the PDM clock; move the clock wire from GPIO39 to GPIO26 before testing capture. Send `1` to start capture and read the half-second `slate.mic` sample count, RMS, and peak reports. Return to idle with `0`, then send `l`, `r`, or `m` to select the left mic, right mic, or mix before listening again. The serial meter drains audio for this board test; the firmware does not yet send physical microphone audio to LiveKit. Haptics are not started until their pin mapping is verified. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
 
 
 ### Display preview

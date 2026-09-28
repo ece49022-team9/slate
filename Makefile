@@ -1,6 +1,8 @@
-.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware firmware-flash firmware-monitor firmware-ports firmware-mic-check firmware-display firmware-display-check voice-deploy voice-check livekit
+.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware flash monitor ports firmware-mic-check firmware-display firmware-display-check voice-deploy voice-check livekit
 
 MODAL_PROFILE ?= sudarshan-1
+ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
+PORT ?= $(if $(filter 1,$(words $(ESP32_PORTS))),$(firstword $(ESP32_PORTS)))
 
 setup:
 	uv sync --locked
@@ -44,15 +46,15 @@ livekit:
 firmware-hardware:
 	uv tool run --from platformio==6.2.0 pio run -d firmware
 
-firmware-ports:
+ports:
 	uv tool run --from platformio==6.2.0 pio device list
 
-firmware-flash:
-	@test -n "$(PORT)" || (printf 'Set PORT to the dev board serial port, for example: make firmware-flash PORT=/dev/cu.usbserial-0001\n' >&2; exit 1)
+flash:
+	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make flash PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
 	uv tool run --from platformio==6.2.0 pio run -d firmware -t upload --upload-port "$(PORT)"
 
-firmware-monitor:
-	@test -n "$(PORT)" || (printf 'Set PORT to the dev board serial port, for example: make firmware-monitor PORT=/dev/cu.usbserial-0001\n' >&2; exit 1)
+monitor:
+	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make monitor PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
 	uv tool run --from platformio==6.2.0 pio device monitor -d firmware -p "$(PORT)" -b 115200
 
 firmware-mic-check:
