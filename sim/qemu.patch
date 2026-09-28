@@ -92,17 +92,255 @@ index 4fea1f5..cb27407 100644
  }
  
  static Property esp32_gpio_properties[] = {
+diff --git a/hw/misc/esp32_i2s.c b/hw/misc/esp32_i2s.c
+new file mode 100644
+index 0000000..3b78d5b
+--- /dev/null
++++ b/hw/misc/esp32_i2s.c
+@@ -0,0 +1,231 @@
++/*
++ * ESP32 I2S receive with DMA, enough for the ESP-IDF PDM RX driver.
++ *
++ * Received PCM comes from an optional character device as interleaved
++ * 16-bit left/right samples. Without one, the microphone slots read silence.
++ * Samples are delivered at the "sample-rate" property, in virtual time.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qapi/error.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "hw/qdev-properties-system.h"
++#include "exec/address-spaces.h"
++#include "hw/misc/esp32_i2s.h"
++
++#define R_CONF (0x08 / 4)
++#define R_INT_RAW (0x0c / 4)
++#define R_INT_ST (0x10 / 4)
++#define R_INT_ENA (0x14 / 4)
++#define R_INT_CLR (0x18 / 4)
++#define R_RXEOF_NUM (0x24 / 4)
++#define R_IN_LINK (0x34 / 4)
++#define R_IN_EOF_DES_ADDR (0x3c / 4)
++#define R_LC_CONF (0x60 / 4)
++#define R_STATE (0xbc / 4)
++
++#define CONF_RX_RESET BIT(1)
++#define CONF_RX_START BIT(5)
++#define IN_LINK_ADDR 0xfffff
++#define IN_LINK_STOP BIT(28)
++#define IN_LINK_START BIT(29)
++#define LC_IN_RST BIT(0)
++#define INT_IN_DONE BIT(8)
++#define INT_IN_SUC_EOF BIT(9)
++#define DMA_BASE 0x3ff00000
++#define AUDIO_BYTES 65536
++
++static void esp32_i2s_update_irq(Esp32I2sState *s)
++{
++    qemu_set_irq(s->irq, (s->regs[R_INT_RAW] & s->regs[R_INT_ENA]) != 0);
++}
++
++static uint32_t esp32_i2s_eof_bytes(Esp32I2sState *s)
++{
++    return MAX(s->regs[R_RXEOF_NUM], 1) * 4;
++}
++
++static void esp32_i2s_schedule(Esp32I2sState *s)
++{
++    bool running = s->linked && (s->regs[R_CONF] & CONF_RX_START);
++    if (!running) {
++        timer_del(&s->timer);
++        return;
++    }
++    if (!timer_pending(&s->timer)) {
++        int64_t ns = (int64_t) esp32_i2s_eof_bytes(s) * NANOSECONDS_PER_SECOND
++                     / ((int64_t) s->sample_rate * 4);
++        timer_mod(&s->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + ns);
++    }
++}
++
++static void esp32_i2s_receive_block(void *opaque)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    uint32_t remaining = esp32_i2s_eof_bytes(s);
++    uint32_t last = s->descriptor;
++    while (remaining && s->descriptor) {
++        uint32_t desc[3];
++        address_space_read(&address_space_memory, s->descriptor,
++                           MEMTXATTRS_UNSPECIFIED, desc, sizeof(desc));
++        uint32_t size = desc[0] & 0xfff;
++        uint32_t length = MIN(size, remaining);
++        g_autofree uint8_t *data = g_malloc0(length);
++        uint32_t copied = 0;
++        while (copied < length && !fifo8_is_empty(&s->audio)) {
++            copied += fifo8_pop_buf(&s->audio, data + copied, length - copied);
++        }
++        address_space_write(&address_space_memory, desc[1],
++                            MEMTXATTRS_UNSPECIFIED, data, length);
++        remaining -= length;
++        desc[0] = (desc[0] & ~(0xfffu << 12) & ~BIT(31)) | (length << 12);
++        if (!remaining) {
++            desc[0] |= BIT(30);
++        }
++        address_space_write(&address_space_memory, s->descriptor,
++                            MEMTXATTRS_UNSPECIFIED, desc, 4);
++        last = s->descriptor;
++        s->descriptor = desc[2];
++    }
++    s->regs[R_IN_EOF_DES_ADDR] = last;
++    s->regs[R_INT_RAW] |= INT_IN_DONE | INT_IN_SUC_EOF;
++    esp32_i2s_update_irq(s);
++    qemu_chr_fe_accept_input(&s->chr);
++    esp32_i2s_schedule(s);
++}
++
++static uint64_t esp32_i2s_read(void *opaque, hwaddr addr, unsigned int size)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    unsigned reg = addr / 4;
++    if (reg == R_INT_ST) {
++        return s->regs[R_INT_RAW] & s->regs[R_INT_ENA];
++    }
++    return reg < ARRAY_SIZE(s->regs) ? s->regs[reg] : 0;
++}
++
++static void esp32_i2s_write(void *opaque, hwaddr addr, uint64_t value,
++                            unsigned int size)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    unsigned reg = addr / 4;
++    if (reg >= ARRAY_SIZE(s->regs)) {
++        return;
++    }
++    switch (reg) {
++    case R_INT_CLR:
++        s->regs[R_INT_RAW] &= ~value;
++        esp32_i2s_update_irq(s);
++        return;
++    case R_INT_ENA:
++        s->regs[reg] = value;
++        esp32_i2s_update_irq(s);
++        return;
++    case R_IN_LINK:
++        if (value & IN_LINK_STOP) {
++            s->linked = false;
++        }
++        if (value & IN_LINK_START) {
++            s->descriptor = DMA_BASE | (value & IN_LINK_ADDR);
++            s->linked = true;
++        }
++        s->regs[reg] = value & ~(IN_LINK_START | IN_LINK_STOP);
++        break;
++    case R_CONF:
++        if (value & CONF_RX_RESET) {
++            fifo8_reset(&s->audio);
++        }
++        s->regs[reg] = value;
++        break;
++    case R_LC_CONF:
++        if (value & LC_IN_RST) {
++            s->linked = false;
++        }
++        s->regs[reg] = value;
++        break;
++    default:
++        s->regs[reg] = value;
++    }
++    esp32_i2s_schedule(s);
++}
++
++static int esp32_i2s_can_receive(void *opaque)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    return fifo8_num_free(&s->audio);
++}
++
++static void esp32_i2s_receive(void *opaque, const uint8_t *buf, int size)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    fifo8_push_all(&s->audio, buf, size);
++}
++
++static const MemoryRegionOps esp32_i2s_ops = {
++    .read = esp32_i2s_read,
++    .write = esp32_i2s_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++};
++
++static void esp32_i2s_reset_hold(Object *obj, ResetType type)
++{
++    Esp32I2sState *s = ESP32_I2S(obj);
++    memset(s->regs, 0, sizeof(s->regs));
++    s->linked = false;
++    s->descriptor = 0;
++    timer_del(&s->timer);
++    fifo8_reset(&s->audio);
++}
++
++static void esp32_i2s_realize(DeviceState *dev, Error **errp)
++{
++    Esp32I2sState *s = ESP32_I2S(dev);
++    if (!s->sample_rate) {
++        error_setg(errp, "esp32.i2s needs a nonzero sample-rate");
++        return;
++    }
++    qemu_chr_fe_set_handlers(&s->chr, esp32_i2s_can_receive, esp32_i2s_receive,
++                             NULL, NULL, s, NULL, true);
++}
++
++static void esp32_i2s_init(Object *obj)
++{
++    Esp32I2sState *s = ESP32_I2S(obj);
++    memory_region_init_io(&s->iomem, obj, &esp32_i2s_ops, s, TYPE_ESP32_I2S, 0x1000);
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->iomem);
++    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq);
++    fifo8_create(&s->audio, AUDIO_BYTES);
++    timer_init_ns(&s->timer, QEMU_CLOCK_VIRTUAL, esp32_i2s_receive_block, s);
++}
++
++static Property esp32_i2s_properties[] = {
++    DEFINE_PROP_CHR("chardev", Esp32I2sState, chr),
++    DEFINE_PROP_UINT32("sample-rate", Esp32I2sState, sample_rate, 16000),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void esp32_i2s_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++    rc->phases.hold = esp32_i2s_reset_hold;
++    dc->realize = esp32_i2s_realize;
++    device_class_set_props(dc, esp32_i2s_properties);
++}
++
++static const TypeInfo esp32_i2s_info = {
++    .name = TYPE_ESP32_I2S,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(Esp32I2sState),
++    .instance_init = esp32_i2s_init,
++    .class_init = esp32_i2s_class_init,
++};
++
++static void esp32_i2s_register_types(void)
++{
++    type_register_static(&esp32_i2s_info);
++}
++
++type_init(esp32_i2s_register_types)
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 4c2b5b3..207a0ba 100644
+index 4c2b5b3..9406866 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -145,7 +145,8 @@ system_ss.add(when: 'CONFIG_XTENSA_ESP32', if_true: files(
+@@ -145,7 +145,9 @@ system_ss.add(when: 'CONFIG_XTENSA_ESP32', if_true: files(
    'esp32_aes.c',
    'esp32_ledc.c',
    'esp32_flash_enc.c',
 -  'ssi_psram.c'
 +  'ssi_psram.c',
-+  'slate_board.c'
++  'slate_board.c',
++  'esp32_i2s.c'
  ))
  
  system_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
@@ -226,7 +464,7 @@ index f47bfca..4d0d12f 100644
              t.cmd_bytes = bitlen_to_bytes(FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_BITLEN));
          } else {
 diff --git a/hw/xtensa/esp32.c b/hw/xtensa/esp32.c
-index e000470..863d3a5 100644
+index e000470..733b315 100644
 --- a/hw/xtensa/esp32.c
 +++ b/hw/xtensa/esp32.c
 @@ -37,6 +37,8 @@
@@ -238,7 +476,39 @@ index e000470..863d3a5 100644
  
  #define TYPE_ESP32_SOC "xtensa.esp32"
  #define ESP32_SOC(obj) OBJECT_CHECK(Esp32SocState, (obj), TYPE_ESP32_SOC)
-@@ -754,6 +756,22 @@ static void esp32_machine_init_i2c(Esp32SocState *s)
+@@ -415,6 +417,15 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
+     qdev_realize(DEVICE(&s->gpio), &s->periph_bus, &error_fatal);
+     esp32_soc_add_periph_device(sys_mem, &s->gpio, DR_REG_GPIO_BASE);
+ 
++    Chardev *audio = qemu_chr_find("slate-audio");
++    if (audio) {
++        qdev_prop_set_chr(DEVICE(&s->i2s0), "chardev", audio);
++    }
++    qdev_realize(DEVICE(&s->i2s0), &s->periph_bus, &error_fatal);
++    esp32_soc_add_periph_device(sys_mem, &s->i2s0, DR_REG_I2S_BASE);
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2s0), 0,
++                       qdev_get_gpio_in(intmatrix_dev, ETS_I2S0_INTR_SOURCE));
++
+     for (int i = 0; i < ESP32_UART_COUNT; ++i) {
+         const hwaddr uart_base[] = {DR_REG_UART_BASE, DR_REG_UART1_BASE, DR_REG_UART2_BASE};
+         qdev_realize(DEVICE(&s->uart[i]), &s->periph_bus, &error_fatal);
+@@ -524,7 +535,6 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
+     esp32_soc_add_unimp_device(sys_mem, "esp32.slc", DR_REG_SLC_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.slchost", DR_REG_SLCHOST_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.apbctrl", DR_REG_APB_CTRL_BASE, 0x1000);
+-    esp32_soc_add_unimp_device(sys_mem, "esp32.i2s0", DR_REG_I2S_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.i2s1", DR_REG_I2S1_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.rmt", DR_REG_RMT_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.pcnt", DR_REG_PCNT_BASE, 0x1000);
+@@ -597,6 +607,7 @@ static void esp32_soc_init(Object *obj)
+     object_property_add_alias(obj, "serial2", OBJECT(&s->uart[2]), "chardev");
+ 
+     object_initialize_child(obj, "gpio", &s->gpio, TYPE_ESP32_GPIO);
++    object_initialize_child(obj, "i2s0", &s->i2s0, TYPE_ESP32_I2S);
+ 
+     object_initialize_child(obj, "dport", &s->dport, TYPE_ESP32_DPORT);
+ 
+@@ -754,6 +765,22 @@ static void esp32_machine_init_i2c(Esp32SocState *s)
      object_property_set_int(OBJECT(tmp105), "temperature", 25 * 1000, &error_fatal);
  }
  
@@ -261,7 +531,7 @@ index e000470..863d3a5 100644
  static void esp32_machine_init_openeth(Esp32SocState *ss)
  {
      SysBusDevice *sbd;
-@@ -827,6 +845,7 @@ static void esp32_machine_init(MachineState *machine)
+@@ -827,6 +854,7 @@ static void esp32_machine_init(MachineState *machine)
      }
  
      esp32_machine_init_i2c(ss);
@@ -311,6 +581,34 @@ index 163b41a..ce50394 100644
  } Esp32GpioState;
  
  typedef struct Esp32GpioClass {
+diff --git a/include/hw/misc/esp32_i2s.h b/include/hw/misc/esp32_i2s.h
+new file mode 100644
+index 0000000..2fcc646
+--- /dev/null
++++ b/include/hw/misc/esp32_i2s.h
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include "hw/sysbus.h"
++#include "chardev/char-fe.h"
++#include "qemu/fifo8.h"
++#include "qemu/timer.h"
++
++#define TYPE_ESP32_I2S "esp32.i2s"
++OBJECT_DECLARE_SIMPLE_TYPE(Esp32I2sState, ESP32_I2S)
++
++struct Esp32I2sState {
++    SysBusDevice parent_obj;
++    MemoryRegion iomem;
++    qemu_irq irq;
++    CharBackend chr;
++    Fifo8 audio;
++    QEMUTimer timer;
++    uint32_t sample_rate;
++    uint32_t regs[0x100 / 4];
++    uint32_t descriptor;
++    bool linked;
++};
 diff --git a/include/hw/misc/slate_board.h b/include/hw/misc/slate_board.h
 new file mode 100644
 index 0000000..40c1603
@@ -335,3 +633,23 @@ index 0000000..40c1603
 +    uint16_t spi_len;
 +    int64_t spi_ns;
 +};
+diff --git a/include/hw/xtensa/esp32.h b/include/hw/xtensa/esp32.h
+index fc1f927..06dc006 100644
+--- a/include/hw/xtensa/esp32.h
++++ b/include/hw/xtensa/esp32.h
+@@ -6,6 +6,7 @@
+ #include "hw/misc/esp32_reg.h"
+ #include "hw/char/esp32_uart.h"
+ #include "hw/gpio/esp32_gpio.h"
++#include "hw/misc/esp32_i2s.h"
+ #include "hw/misc/esp32_dport.h"
+ #include "hw/misc/esp32_rtc_cntl.h"
+ #include "hw/misc/esp32_rng.h"
+@@ -37,6 +38,7 @@ typedef struct Esp32SocState {
+     Esp32TWAIState twai;
+     ESP32UARTState uart[ESP32_UART_COUNT];
+     Esp32GpioState gpio;
++    Esp32I2sState i2s0;
+     Esp32RngState rng;
+     Esp32RtcCntlState rtc_cntl;
+     Esp32FrcTimerState frc_timer[ESP32_FRC_COUNT];

@@ -9,4 +9,5 @@ spi_hz = 16_000_000
 [device.mic]
 part = "mp34dt01"
 pins = { clk = 26, data = 36 }
+slot = "left"
 sample_hz = 16_000
