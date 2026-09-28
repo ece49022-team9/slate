@@ -1,11 +1,11 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "board.h"
 #include "slate_state.h"
 
 constexpr size_t MIC_FRAME_SAMPLES = 320;
 constexpr size_t MIC_BUFFER_SAMPLES = 16000;
-constexpr unsigned MIC_SAMPLE_RATE = 16000;
 
 enum class MicChannel : uint8_t { LEFT, RIGHT, MIX };
 

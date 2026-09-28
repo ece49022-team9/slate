@@ -1,0 +1,59 @@
+# Inventory counts come from the ECE 49022 lab inventory sheet.
+
+[mcu.esp32-wroom-32]
+name = "ESP32-WROOM-32 DevKit"
+inventory = 3
+gpio = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39]
+input_only = [34, 35, 36, 39]
+reserved = { 1 = "USB serial TX", 3 = "USB serial RX", 6 = "SPI flash", 7 = "SPI flash", 8 = "SPI flash", 9 = "SPI flash", 10 = "SPI flash", 11 = "SPI flash" }
+strapping = { 0 = "must be high at boot or the chip enters download mode", 2 = "must be low or floating at boot to flash over USB", 5 = "sets flash timing at boot; keep it high during reset", 12 = "sets flash voltage at boot; pulling it high stops the module from booting", 15 = "silences boot messages when low" }
+
+[mcu.esp32-wroom-32d]
+name = "ESP32-WROOM-32D DevKit"
+inventory = 1
+gpio = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39]
+input_only = [34, 35, 36, 39]
+reserved = { 1 = "USB serial TX", 3 = "USB serial RX", 6 = "SPI flash", 7 = "SPI flash", 8 = "SPI flash", 9 = "SPI flash", 10 = "SPI flash", 11 = "SPI flash" }
+strapping = { 0 = "must be high at boot or the chip enters download mode", 2 = "must be low or floating at boot to flash over USB", 5 = "sets flash timing at boot; keep it high during reset", 12 = "sets flash voltage at boot; pulling it high stops the module from booting", 15 = "silences boot messages when low" }
+
+[mcu.esp32-wrover-e]
+name = "ESP32-WROVER-E DevKit"
+inventory = 5
+gpio = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39]
+input_only = [34, 35, 36, 39]
+reserved = { 1 = "USB serial TX", 3 = "USB serial RX", 6 = "SPI flash", 7 = "SPI flash", 8 = "SPI flash", 9 = "SPI flash", 10 = "SPI flash", 11 = "SPI flash", 16 = "PSRAM", 17 = "PSRAM" }
+strapping = { 0 = "must be high at boot or the chip enters download mode", 2 = "must be low or floating at boot to flash over USB", 5 = "sets flash timing at boot; keep it high during reset", 12 = "sets flash voltage at boot; pulling it high stops the module from booting", 15 = "silences boot messages when low" }
+
+[mcu.esp32-s3-devkitc-1]
+name = "ESP32-S3-DevKitC-1"
+inventory = 19
+gpio = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]
+input_only = []
+reserved = { 19 = "USB D-", 20 = "USB D+", 43 = "USB serial TX", 44 = "USB serial RX" }
+strapping = { 0 = "must be high at boot or the chip enters download mode", 3 = "selects the JTAG source at boot", 35 = "used by octal PSRAM on R8 modules", 36 = "used by octal PSRAM on R8 modules", 37 = "used by octal PSRAM on R8 modules", 45 = "sets flash voltage at boot; keep it low", 46 = "must be low at boot to flash over USB" }
+
+[part.ssd1351]
+name = "Adafruit 1431 1.5 in SSD1351 OLED"
+inventory = 2
+supply_v = [3.0, 5.0]
+pins = { clk = "in", data = "in", cs = "in", dc = "in", reset = "in" }
+spi_max_hz = 4_500_000
+
+[part.mp34dt01]
+name = "MP34DT01-M PDM microphone"
+inventory = 2
+supply_v = [1.64, 3.6]
+pins = { clk = "in", data = "out" }
+clock_hz = [1_000_000, 3_250_000]
+
+[part.max98357a]
+name = "MAX98357A I2S speaker amplifier"
+inventory = 15
+supply_v = [2.5, 5.5]
+pins = { bclk = "in", lrclk = "in", din = "in" }
+
+[part.drv2605]
+name = "DRV2605L haptic driver"
+inventory = 0
+supply_v = [2.0, 5.2]
+pins = { sda = "io", scl = "in" }

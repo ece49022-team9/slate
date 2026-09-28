@@ -1,4 +1,4 @@
-.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware flash monitor ports firmware-mic-check firmware-display firmware-display-check voice-deploy voice-check livekit
+.PHONY: setup server web check board firmware firmware-setup firmware-sim firmware-check firmware-hardware flash monitor ports firmware-mic-check firmware-display firmware-display-check voice-deploy voice-check livekit
 
 MODAL_PROFILE ?= sudarshan-1
 ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
@@ -15,13 +15,17 @@ web:
 	npm --prefix web run dev
 
 check:
+	uv run python -m slate.board --check
 	uv run ruff check server scripts tests
 	uv run ruff format --check server scripts tests
 	uv run python -m unittest discover -s tests
 	npm --prefix web run lint
 	npm --prefix web run build
 
-firmware:
+board:
+	uv run python -m slate.board
+
+firmware: board
 	bash scripts/esp-idf.sh build
 
 firmware-setup:
@@ -43,13 +47,13 @@ voice-check:
 livekit:
 	livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1
 
-firmware-hardware:
+firmware-hardware: board
 	uv tool run --from platformio==6.2.0 pio run -d firmware
 
 ports:
 	uv tool run --from platformio==6.2.0 pio device list
 
-flash:
+flash: board
 	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make flash PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
 	uv tool run --from platformio==6.2.0 pio run -d firmware -t upload --upload-port "$(PORT)"
 

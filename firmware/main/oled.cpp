@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_SSD1351.h>
 #include <SPI.h>
+#include "board.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -33,19 +34,12 @@ static void draw(void*) {
   }
 }
 
-void oled_start(int clock_pin, int data_pin, int cs_pin, int dc_pin, int reset_pin) {
-  int pins[] = {clock_pin, data_pin, cs_pin, dc_pin, reset_pin};
-  for (unsigned i = 0; i < 5; ++i) {
-    ESP_ERROR_CHECK(GPIO_IS_VALID_OUTPUT_GPIO(pins[i]) ? ESP_OK : ESP_ERR_INVALID_ARG);
-    for (unsigned j = 0; j < i; ++j) {
-      ESP_ERROR_CHECK(pins[i] != pins[j] ? ESP_OK : ESP_ERR_INVALID_ARG);
-    }
-  }
-  SPI.begin(clock_pin, -1, data_pin, cs_pin);
+void oled_start() {
+  SPI.begin(OLED_CLK, -1, OLED_DATA, OLED_CS);
   static Adafruit_SSD1351 panel(DISPLAY_WIDTH, DISPLAY_HEIGHT, &SPI,
-                                cs_pin, dc_pin, reset_pin);
+                                OLED_CS, OLED_DC, OLED_RESET);
   oled = &panel;
-  oled->begin(16000000);
+  oled->begin(OLED_SPI_HZ);
   oled->setRotation(0);
   oled->fillScreen(0);
   BaseType_t created = xTaskCreate(draw, "OLED", 4096, nullptr, 5, nullptr);
