@@ -1,0 +1,337 @@
+diff --git a/hw/gpio/esp32_gpio.c b/hw/gpio/esp32_gpio.c
+index 4fea1f5..cb27407 100644
+--- a/hw/gpio/esp32_gpio.c
++++ b/hw/gpio/esp32_gpio.c
+@@ -24,21 +24,70 @@
+ static uint64_t esp32_gpio_read(void *opaque, hwaddr addr, unsigned int size)
+ {
+     Esp32GpioState *s = ESP32_GPIO(opaque);
++    uint64_t level = (s->in & ~s->enable) | (s->out & s->enable);
+     uint64_t r = 0;
+     switch (addr) {
+     case A_GPIO_STRAP:
+         r = s->strap_mode;
+         break;
+-
++    case A_GPIO_OUT:
++        r = (uint32_t) s->out;
++        break;
++    case A_GPIO_OUT1:
++        r = s->out >> 32;
++        break;
++    case A_GPIO_ENABLE:
++        r = (uint32_t) s->enable;
++        break;
++    case A_GPIO_ENABLE1:
++        r = s->enable >> 32;
++        break;
++    case A_GPIO_IN:
++        r = (uint32_t) level;
++        break;
++    case A_GPIO_IN1:
++        r = level >> 32;
++        break;
+     default:
+         break;
+     }
+     return r;
+ }
+ 
++static uint64_t esp32_gpio_apply(uint64_t current, hwaddr offset, uint64_t value)
++{
++    switch (offset) {
++    case 0x0:
++        return value;
++    case 0x4:
++        return current | value;
++    default:
++        return current & ~value;
++    }
++}
++
+ static void esp32_gpio_write(void *opaque, hwaddr addr,
+                        uint64_t value, unsigned int size)
+ {
++    Esp32GpioState *s = ESP32_GPIO(opaque);
++    uint64_t before = s->out;
++    if (addr >= A_GPIO_OUT && addr <= A_GPIO_OUT_W1TC) {
++        uint64_t low = esp32_gpio_apply((uint32_t) s->out, addr - A_GPIO_OUT, value);
++        s->out = (s->out & ~0xffffffffULL) | (uint32_t) low;
++    } else if (addr >= A_GPIO_OUT1 && addr <= A_GPIO_OUT1_W1TC) {
++        uint64_t high = esp32_gpio_apply(s->out >> 32, addr - A_GPIO_OUT1, value);
++        s->out = (s->out & 0xffffffffULL) | (high << 32);
++    } else if (addr >= A_GPIO_ENABLE && addr <= A_GPIO_ENABLE_W1TC) {
++        uint64_t low = esp32_gpio_apply((uint32_t) s->enable, addr - A_GPIO_ENABLE, value);
++        s->enable = (s->enable & ~0xffffffffULL) | (uint32_t) low;
++    } else if (addr >= A_GPIO_ENABLE1 && addr <= A_GPIO_ENABLE1_W1TC) {
++        uint64_t high = esp32_gpio_apply(s->enable >> 32, addr - A_GPIO_ENABLE1, value);
++        s->enable = (s->enable & 0xffffffffULL) | (high << 32);
++    }
++    for (uint64_t changed = before ^ s->out; changed; changed &= changed - 1) {
++        int pin = ctz64(changed);
++        qemu_set_irq(s->pins[pin], (s->out >> pin) & 1);
++    }
+ }
+ 
+ static const MemoryRegionOps uart_ops = {
+@@ -49,6 +98,9 @@ static const MemoryRegionOps uart_ops = {
+ 
+ static void esp32_gpio_reset_hold(Object *obj, ResetType type)
+ {
++    Esp32GpioState *s = ESP32_GPIO(obj);
++    s->out = 0;
++    s->enable = 0;
+ }
+ 
+ static void esp32_gpio_realize(DeviceState *dev, Error **errp)
+@@ -67,6 +119,7 @@ static void esp32_gpio_init(Object *obj)
+                           TYPE_ESP32_GPIO, 0x1000);
+     sysbus_init_mmio(sbd, &s->iomem);
+     sysbus_init_irq(sbd, &s->irq);
++    qdev_init_gpio_out_named(DEVICE(obj), s->pins, ESP32_GPIO_OUT, ESP32_GPIO_PINS);
+ }
+ 
+ static Property esp32_gpio_properties[] = {
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index 4c2b5b3..207a0ba 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -145,7 +145,8 @@ system_ss.add(when: 'CONFIG_XTENSA_ESP32', if_true: files(
+   'esp32_aes.c',
+   'esp32_ledc.c',
+   'esp32_flash_enc.c',
+-  'ssi_psram.c'
++  'ssi_psram.c',
++  'slate_board.c'
+ ))
+ 
+ system_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
+diff --git a/hw/misc/slate_board.c b/hw/misc/slate_board.c
+new file mode 100644
+index 0000000..cbf02ec
+--- /dev/null
++++ b/hw/misc/slate_board.c
+@@ -0,0 +1,100 @@
++/*
++ * Slate breadboard bridge: reports GPIO output levels and SPI bytes to the
++ * Slate part models over a character device.
++ *
++ * Each message is: kind (1 byte), virtual time in ns (8 bytes, little endian),
++ * payload length (2 bytes, little endian), payload.
++ *   'G' payload: pin, level
++ *   'S' payload: bytes written on the SPI bus since the previous message
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/timer.h"
++#include "qemu/error-report.h"
++#include "qapi/error.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "hw/qdev-properties-system.h"
++#include "hw/misc/slate_board.h"
++
++static void slate_board_send(SlateBoardState *s, uint8_t kind, int64_t ns,
++                             const uint8_t *payload, uint16_t len)
++{
++    uint8_t header[11];
++    header[0] = kind;
++    stq_le_p(header + 1, ns);
++    stw_le_p(header + 9, len);
++    if (qemu_chr_fe_write_all(&s->chr, header, sizeof(header)) != sizeof(header) ||
++        qemu_chr_fe_write_all(&s->chr, payload, len) != len) {
++        error_report("slate.board: lost connection to the part models");
++        exit(1);
++    }
++}
++
++static void slate_board_flush(SlateBoardState *s)
++{
++    if (s->spi_len) {
++        slate_board_send(s, 'S', s->spi_ns, s->spi, s->spi_len);
++        s->spi_len = 0;
++    }
++}
++
++static uint32_t slate_board_transfer(SSIPeripheral *dev, uint32_t value)
++{
++    SlateBoardState *s = SLATE_BOARD(dev);
++    if (s->spi_len == 0) {
++        s->spi_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    }
++    s->spi[s->spi_len++] = value;
++    if (s->spi_len == SLATE_BOARD_SPI_BUFFER) {
++        slate_board_flush(s);
++    }
++    return 0;
++}
++
++static void slate_board_pin(void *opaque, int pin, int level)
++{
++    SlateBoardState *s = SLATE_BOARD(opaque);
++    uint8_t payload[] = { pin, level != 0 };
++    slate_board_flush(s);
++    slate_board_send(s, 'G', qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), payload, 2);
++}
++
++static void slate_board_realize(SSIPeripheral *dev, Error **errp)
++{
++    SlateBoardState *s = SLATE_BOARD(dev);
++    if (!qemu_chr_fe_backend_connected(&s->chr)) {
++        error_setg(errp, "slate.board needs a chardev");
++        return;
++    }
++    qdev_init_gpio_in_named(DEVICE(dev), slate_board_pin, "pin", SLATE_BOARD_PINS);
++}
++
++static Property slate_board_properties[] = {
++    DEFINE_PROP_CHR("chardev", SlateBoardState, chr),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void slate_board_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    SSIPeripheralClass *k = SSI_PERIPHERAL_CLASS(klass);
++    k->realize = slate_board_realize;
++    k->transfer = slate_board_transfer;
++    k->cs_polarity = SSI_CS_NONE;
++    device_class_set_props(dc, slate_board_properties);
++}
++
++static const TypeInfo slate_board_info = {
++    .name = TYPE_SLATE_BOARD,
++    .parent = TYPE_SSI_PERIPHERAL,
++    .instance_size = sizeof(SlateBoardState),
++    .class_init = slate_board_class_init,
++};
++
++static void slate_board_register_types(void)
++{
++    type_register_static(&slate_board_info);
++}
++
++type_init(slate_board_register_types)
+diff --git a/hw/ssi/esp32_spi.c b/hw/ssi/esp32_spi.c
+index f47bfca..4d0d12f 100644
+--- a/hw/ssi/esp32_spi.c
++++ b/hw/ssi/esp32_spi.c
+@@ -275,7 +275,7 @@ static void esp32_spi_do_command(Esp32SpiState* s, uint32_t cmd_reg)
+ 
+     case R_SPI_CMD_USR_MASK:
+         maybe_encrypt_data(s);
+-        if (FIELD_EX32(s->user_reg, SPI_USER, COMMAND) || FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_BITLEN)) {
++        if (FIELD_EX32(s->user_reg, SPI_USER, COMMAND)) {
+             t.cmd = FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_VALUE);
+             t.cmd_bytes = bitlen_to_bytes(FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_BITLEN));
+         } else {
+diff --git a/hw/xtensa/esp32.c b/hw/xtensa/esp32.c
+index e000470..863d3a5 100644
+--- a/hw/xtensa/esp32.c
++++ b/hw/xtensa/esp32.c
+@@ -37,6 +37,8 @@
+ #include "exec/exec-all.h"
+ #include "net/net.h"
+ #include "elf.h"
++#include "chardev/char.h"
++#include "hw/misc/slate_board.h"
+ 
+ #define TYPE_ESP32_SOC "xtensa.esp32"
+ #define ESP32_SOC(obj) OBJECT_CHECK(Esp32SocState, (obj), TYPE_ESP32_SOC)
+@@ -754,6 +756,22 @@ static void esp32_machine_init_i2c(Esp32SocState *s)
+     object_property_set_int(OBJECT(tmp105), "temperature", 25 * 1000, &error_fatal);
+ }
+ 
++static void esp32_machine_init_slate(Esp32SocState *ss)
++{
++    Chardev *chr = qemu_chr_find("slate");
++    if (!chr) {
++        return;
++    }
++    BusState *vspi = qdev_get_child_bus(DEVICE(&ss->spi[3]), "spi");
++    DeviceState *board = qdev_new(TYPE_SLATE_BOARD);
++    qdev_prop_set_chr(board, "chardev", chr);
++    qdev_realize_and_unref(board, vspi, &error_fatal);
++    for (int pin = 0; pin < ESP32_GPIO_PINS; ++pin) {
++        qdev_connect_gpio_out_named(DEVICE(&ss->gpio), ESP32_GPIO_OUT, pin,
++                                    qdev_get_gpio_in_named(board, "pin", pin));
++    }
++}
++
+ static void esp32_machine_init_openeth(Esp32SocState *ss)
+ {
+     SysBusDevice *sbd;
+@@ -827,6 +845,7 @@ static void esp32_machine_init(MachineState *machine)
+     }
+ 
+     esp32_machine_init_i2c(ss);
++    esp32_machine_init_slate(ss);
+ 
+     esp32_machine_init_openeth(ss);
+ 
+diff --git a/include/hw/gpio/esp32_gpio.h b/include/hw/gpio/esp32_gpio.h
+index 163b41a..ce50394 100644
+--- a/include/hw/gpio/esp32_gpio.h
++++ b/include/hw/gpio/esp32_gpio.h
+@@ -9,10 +9,26 @@
+ #define ESP32_GPIO_GET_CLASS(obj)   OBJECT_GET_CLASS(Esp32GpioClass, obj, TYPE_ESP32_GPIO)
+ #define ESP32_GPIO_CLASS(klass)     OBJECT_CLASS_CHECK(Esp32GpioClass, klass, TYPE_ESP32_GPIO)
+ 
++REG32(GPIO_OUT, 0x0004)
++REG32(GPIO_OUT_W1TS, 0x0008)
++REG32(GPIO_OUT_W1TC, 0x000C)
++REG32(GPIO_OUT1, 0x0010)
++REG32(GPIO_OUT1_W1TS, 0x0014)
++REG32(GPIO_OUT1_W1TC, 0x0018)
++REG32(GPIO_ENABLE, 0x0020)
++REG32(GPIO_ENABLE_W1TS, 0x0024)
++REG32(GPIO_ENABLE_W1TC, 0x0028)
++REG32(GPIO_ENABLE1, 0x002C)
++REG32(GPIO_ENABLE1_W1TS, 0x0030)
++REG32(GPIO_ENABLE1_W1TC, 0x0034)
+ REG32(GPIO_STRAP, 0x0038)
++REG32(GPIO_IN, 0x003C)
++REG32(GPIO_IN1, 0x0040)
+ 
+ #define ESP32_STRAP_MODE_FLASH_BOOT 0x12
+ #define ESP32_STRAP_MODE_UART_BOOT  0x0f
++#define ESP32_GPIO_PINS 64
++#define ESP32_GPIO_OUT "gpio-out"
+ 
+ typedef struct Esp32GpioState {
+     SysBusDevice parent_obj;
+@@ -20,6 +36,10 @@ typedef struct Esp32GpioState {
+     MemoryRegion iomem;
+     qemu_irq irq;
+     uint32_t strap_mode;
++    uint64_t out;
++    uint64_t enable;
++    uint64_t in;
++    qemu_irq pins[ESP32_GPIO_PINS];
+ } Esp32GpioState;
+ 
+ typedef struct Esp32GpioClass {
+diff --git a/include/hw/misc/slate_board.h b/include/hw/misc/slate_board.h
+new file mode 100644
+index 0000000..40c1603
+--- /dev/null
++++ b/include/hw/misc/slate_board.h
+@@ -0,0 +1,18 @@
++#pragma once
++
++#include "hw/ssi/ssi.h"
++#include "chardev/char-fe.h"
++
++#define TYPE_SLATE_BOARD "slate.board"
++OBJECT_DECLARE_SIMPLE_TYPE(SlateBoardState, SLATE_BOARD)
++
++#define SLATE_BOARD_PINS 64
++#define SLATE_BOARD_SPI_BUFFER 4096
++
++struct SlateBoardState {
++    SSIPeripheral parent_obj;
++    CharBackend chr;
++    uint8_t spi[SLATE_BOARD_SPI_BUFFER];
++    uint16_t spi_len;
++    int64_t spi_ns;
++};
