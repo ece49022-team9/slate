@@ -1,12 +1,12 @@
 # Slate
 
-A portable voice assistant for everyday tasks. The ESP32-S3 handles audio and device feedback. Python handles speech, model calls, and browser tasks. React handles setup and approvals.
+A portable voice assistant for everyday tasks. The ESP32 handles audio and device feedback. Python handles speech, model calls, and browser tasks. React handles setup and approvals.
 
 ## Code
 
 | Path | Work |
 | --- | --- |
-| `firmware/` | ESP32-S3 firmware |
+| `firmware/` | ESP32 firmware |
 | `server/slate/voice/` | Audio streaming, speech recognition and generation |
 | `server/slate/agent/` | Model calls and task execution |
 | `server/slate/browser/` | Browser sessions, tools and result checks |
@@ -76,7 +76,7 @@ STT accepts mono 24 kHz, 16-bit PCM WAV files up to 120 seconds. TTS returns the
 
 ## Firmware
 
-The target is ESP32-S3. Install ESP-IDF 5.5.5 and Espressif's QEMU, then build and boot it headlessly:
+The target is the original ESP32, using the `esp32dev` profile for an ESP32-WROOM-32 dev board. Install ESP-IDF 5.5.5 and Espressif's QEMU, then build and boot it headlessly:
 
 ```sh
 make firmware-setup
@@ -87,7 +87,7 @@ make firmware-check
 
 QEMU runs the same FreeRTOS state controller, channel selection, DC filter, and microphone buffer as the board build. `make firmware-check` checks capture gating, left/right/mix selection, overflow rejection, and buffer reset. `make firmware-mic-check` uses Hypothesis to generate 60 stereo audio cases, replay them with different chunk boundaries, and compare the firmware output against an independent PCM calculation. Failures are shrunk and saved for replay.
 
-The microphone schematic contains two MP34DT01-M parts: MK1 has L/R grounded and MK2 has L/R tied high. They share PDM clock/data. The S3 driver uses I2S0 to convert both PDM slots to interleaved 16 kHz PCM. The shared pipeline selects left, right, or an equal-weight mono mix, removes DC, and queues up to one second of audio. Overflow rejects a whole frame; mute/cancel clears queued samples and filter history, while finishing a turn preserves buffered audio for draining. Gain is unity; the old fixed 4x amplification is removed to avoid clipping recorded speech.
+The microphone schematic contains two MP34DT01-M parts: MK1 has L/R grounded and MK2 has L/R tied high. They share PDM clock/data. The ESP32 driver uses I2S0 to convert both PDM slots to interleaved 16 kHz PCM. The shared pipeline selects left, right, or an equal-weight mono mix, removes DC, and queues up to one second of audio. Overflow rejects a whole frame; mute/cancel clears queued samples and filter history, while finishing a turn preserves buffered audio for draining. Gain is unity; the old fixed 4x amplification is removed to avoid clipping recorded speech.
 
 To send simulated microphone audio through the firmware and the real transcription service, start `make livekit` and `make server`, then run:
 
@@ -99,7 +99,15 @@ Use a 16-bit WAV at 16, 24, or 48 kHz, up to 119 seconds. Stereo WAVs represent 
 
 The command builds and boots QEMU, injects stereo PCM at the boundary after hardware PDM conversion, reads processed mono audio from the firmware buffer through UART1, and publishes it as a LiveKit microphone track. The existing start/end-turn RPCs and transcription service handle the recording. A host bridge runs WebRTC; this does not implement on-device LiveKit networking or emulate PDM clock edges, DMA, or physical microphones. QEMU has no I2S/PDM emulation.
 
-`make firmware-hardware` compiles the S3 PDM adapter and peripheral drivers with pinned PlatformIO dependencies. Physical capture remains disabled without confirmed S3 GPIO assignments. Defining both `SLATE_PDM_CLK` and `SLATE_PDM_DATA` enables the adapter for board bring-up; a physical transport consumer still needs to drain the audio buffer. The older haptic pin assignments must also be replaced before haptics are enabled. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
+`make firmware-hardware` compiles the ESP32-WROOM-32 PDM adapter and peripheral drivers with pinned PlatformIO dependencies. To flash the dev board over USB, list ports and use the one that appears when it is connected:
+
+```sh
+make firmware-ports
+make firmware-flash PORT=/dev/cu.usbserial-0001
+make firmware-monitor PORT=/dev/cu.usbserial-0001
+```
+
+Replace the example port with the actual device path. The monitor runs at 115200 baud; send `0` through `5` to request idle, listen, mute, transcribe, respond, or error and inspect the `slate.state` logs. The default board build has no GPIO assignments, so it logs that microphone capture and OLED output are disabled. Defining both `SLATE_PDM_CLK` and `SLATE_PDM_DATA` enables physical capture; the display requires its five pin definitions below. Those pins must match the actual wiring, and a physical transport consumer still needs to drain the audio buffer. Haptics are also not started until their pin mapping is verified. The firmware does not yet send audio to LiveKit itself. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
 
 
 ### Display preview
@@ -112,7 +120,7 @@ make firmware-display
 
 Open [localhost:8010](http://127.0.0.1:8010). The preview reads pixel frames from the firmware running in QEMU. Its buttons request real controller state changes: idle is white, listen green, mute black, transcribe blue, respond yellow, and error magenta. A centered orb glows with a soft halo and expands/contracts sinusoidally over a 120-frame cycle (3.6 seconds on the firmware clock). The animation is independent of microphone input; voice responsiveness is not enabled.
 
-`display.cpp` renders the same RGB565 pixel buffer in both builds. The board's `oled.cpp` sends it through Adafruit's SSD1351 library; QEMU returns it over the simulator connection for the browser to display. The Arduino library's SPI commands and the panel electronics are not emulated. Physical display startup requires all five confirmed S3 pin definitions: `SLATE_OLED_CLK`, `SLATE_OLED_DATA`, `SLATE_OLED_CS`, `SLATE_OLED_DC`, and `SLATE_OLED_RESET`.
+`display.cpp` renders the same RGB565 pixel buffer in both builds. The board's `oled.cpp` sends it through Adafruit's SSD1351 library; QEMU returns it over the simulator connection for the browser to display. The Arduino library's SPI commands and the panel electronics are not emulated. Physical display startup requires all five confirmed ESP32 pin definitions: `SLATE_OLED_CLK`, `SLATE_OLED_DATA`, `SLATE_OLED_CS`, `SLATE_OLED_DC`, and `SLATE_OLED_RESET`.
 
 `make firmware-display-check` checks all six state colors, blanking, animation geometry, and 30 generated frame/state combinations. It saves an actual QEMU frame to `.local/display-listen.png`. Each simulator command starts its own QEMU instance; stop the preview before running the audio or display checks, since they use the same flash image. The preview controls its own simulated device and does not mirror a separate microphone simulator process.
 

@@ -38,7 +38,7 @@ def main() -> None:
                     "buffer overflow and turn reset" in log
                 ):
                     print(log, end="")
-                    print("slate.firmware: ESP32-S3 controller simulation passed")
+                    print("slate.firmware: ESP32 controller simulation passed")
                     return
                 if process.poll() is not None:
                     raise RuntimeError(
