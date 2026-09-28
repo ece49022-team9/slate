@@ -101,9 +101,22 @@ def main():
                 check_orb(data, state)
 
             check()
+            runner.run(firmware.exchange(6, bytes([0])))
+            runner.run(firmware.exchange(1, bytes([0])))
+            speech = struct.pack("<hh", 3000, 3000) * 320
+            for _ in range(5):
+                runner.run(firmware.exchange(2, speech))
+            reactive = runner.run(snapshot(firmware, 1, 0))
+            quiet_pixels = struct.unpack("<16384H", first)
+            reactive_pixels = struct.unpack("<16384H", reactive)
+            assert reactive_pixels[63 * 128 + 63] != COLORS[1]
+            assert sum(bool(c) for c in reactive_pixels) > sum(bool(c) for c in quiet_pixels)
+            muted = runner.run(snapshot(firmware, 2, 0))
+            assert not any(muted)
+            assert runner.run(snapshot(firmware, 1, 0)) == first
             print(
-                "slate.display: six states, glowing orb, smooth breathing cycle, "
-                "and 30 generated pixel cases passed"
+                "slate.display: six states, glowing orb, audio response, "
+                "smooth breathing cycle, and 30 generated pixel cases passed"
             )
         finally:
             runner.run(context.__aexit__(None, None, None))

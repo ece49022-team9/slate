@@ -34,8 +34,8 @@ button:disabled { cursor: wait; opacity: .6; }
 <button data-state="5" aria-pressed="false">Error</button>
 </div>
 <p id="connection" role="alert"></p>
-<p>The glowing orb gently expands and contracts. Its color follows the device state; voice responsiveness is not enabled yet. Mute leaves the screen black.</p>
-<p>This preview checks rendered output. SPI communication, panel brightness, and physical wiring still need a board test.</p>
+<p>The glowing orb gently expands and contracts. In Listen, captured audio makes it larger and shifts green toward white. This preview does not capture your computer microphone. Mute leaves the screen black.</p>
+<p>This preview shows pixels rendered by the simulated firmware; the board drives the physical panel over SPI.</p>
 <script>
 const canvas = document.querySelector('#screen');
 const context = canvas.getContext('2d');

@@ -2,6 +2,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
+#include <cmath>
+#include "display.h"
 #include "mic.h"
 
 static SemaphoreHandle_t lock;
@@ -53,6 +55,7 @@ bool mic_submit(const int16_t* stereo, size_t frames) {
     return false;
   }
   int16_t mono[MIC_FRAME_SAMPLES];
+  uint64_t energy = 0;
   for (size_t i = 0; i < frames; ++i) {
     float input;
     if (selected == MicChannel::MIX) {
@@ -66,7 +69,9 @@ bool mic_submit(const int16_t* stereo, size_t frames) {
     if (output > 32767) output = 32767;
     if (output < -32768) output = -32768;
     mono[i] = static_cast<int16_t>(output);
+    energy += int64_t(mono[i]) * mono[i];
   }
+  display_submit_audio(std::sqrt(float(energy) / frames));
   size_t sent = xStreamBufferSend(buffer, mono, bytes, 0);
   configASSERT(sent == bytes);
   xSemaphoreGive(lock);
