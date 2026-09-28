@@ -1,6 +1,13 @@
 import asyncio
 from pathlib import Path
 
+import serial_asyncio_fast
+
+BAUD = 921_600
+
+
+BAUD = 921_600
+
 
 class Link:
     """The firmware's serial port: text lines, plus audio frames marked by a zero
@@ -57,3 +64,20 @@ class Link:
     def state(self) -> int | None:
         states = [line for line in self.lines if line.startswith("slate.state: ")]
         return int(states[-1].split(": ")[1]) if states else None
+
+
+async def open_board(port: str, log: Path) -> tuple[Link, asyncio.Task]:
+    reader, writer = await serial_asyncio_fast.open_serial_connection(
+        url=port, baudrate=BAUD
+    )
+    board = writer.transport.serial
+    board.dtr = False
+    board.rts = True
+    await asyncio.sleep(0.15)
+    board.rts = False
+    link = Link(reader, writer)
+    task = asyncio.create_task(link.run(log))
+    async with asyncio.timeout(10):
+        while link.state() is None:
+            await asyncio.sleep(0.05)
+    return link, task

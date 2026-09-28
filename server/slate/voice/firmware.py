@@ -1,11 +1,13 @@
 import asyncio
 import wave
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from pathlib import Path
 
 from livekit import rtc
 
-from slate.breadboard import Breadboard, breadboard, build_image
+from slate.board import ROOT
+from slate.breadboard import breadboard, build_image
+from slate.link import Link, open_board
 from slate.voice.audio import MAX_AUDIO_SECONDS
 from slate.voice.device import transcribe_audio
 
@@ -47,18 +49,18 @@ def stereo_pcm(path: Path, slot: int = 0) -> bytes:
 
 
 async def capture(
-    bench: Breadboard, stereo: bytes, channel: str
+    link: Link, channel: str, samples: int, sound: Awaitable[None]
 ) -> AsyncIterator[bytes]:
-    link = bench.link
     await link.type(KEYS[channel] + "a1")
     await link.wait_for("slate.state: 1")
-    player = asyncio.create_task(bench.play(stereo))
-    remaining = len(stereo) // 4
+    while not link.audio.empty():
+        link.audio.get_nowait()
+    player = asyncio.ensure_future(sound)
     try:
-        while remaining > 0:
+        while samples > 0:
             chunk = await asyncio.wait_for(link.audio.get(), timeout=5)
-            chunk = chunk[: remaining * 2]
-            remaining -= len(chunk) // 2
+            chunk = chunk[: samples * 2]
+            samples -= len(chunk) // 2
             yield chunk
         await player
     finally:
@@ -70,4 +72,28 @@ async def simulate_firmware(input_file: Path, api_url: str, channel: str) -> str
     await asyncio.to_thread(build_image)
     async with breadboard() as bench:
         stereo = stereo_pcm(input_file, bench.slot)
-        return await transcribe_audio(capture(bench, stereo, channel), api_url, RATE)
+        audio = capture(bench.link, channel, len(stereo) // 4, bench.play(stereo))
+        return await transcribe_audio(audio, api_url, RATE)
+
+
+async def speaker(path: Path) -> None:
+    await asyncio.sleep(0.8)
+    player = await asyncio.create_subprocess_exec("afplay", str(path))
+    if await player.wait():
+        raise RuntimeError(f"slate.voice: afplay could not play {path}")
+    await asyncio.sleep(0.8)
+
+
+async def board_firmware(
+    input_file: Path, api_url: str, channel: str, port: str
+) -> str:
+    with wave.open(str(input_file), "rb") as audio:
+        seconds = audio.getnframes() / audio.getframerate()
+    link, task = await open_board(port, ROOT / ".local/bench-serial.log")
+    try:
+        samples = int((seconds + 1.6) * RATE)
+        audio = capture(link, channel, samples, speaker(input_file))
+        return await transcribe_audio(audio, api_url, RATE)
+    finally:
+        task.cancel()
+        link.writer.close()

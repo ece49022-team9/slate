@@ -1,4 +1,4 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check voice-deploy voice-check livekit
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check bench voice-deploy voice-check livekit
 
 MODAL_PROFILE ?= sudarshan-1
 ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
@@ -38,6 +38,9 @@ flash: board
 monitor:
 	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make monitor PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
 	uv tool run --from platformio==6.2.0 pio device monitor -d firmware -p "$(PORT)" -b 921600
+
+bench: flash
+	uv run python scripts/check_bench.py "$(PORT)"
 
 sim-setup:
 	bash scripts/qemu.sh
