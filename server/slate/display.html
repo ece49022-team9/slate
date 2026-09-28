@@ -33,17 +33,22 @@ button:disabled { cursor: wait; opacity: .6; }
 <button data-state="4" aria-pressed="false">Respond</button>
 <button data-state="5" aria-pressed="false">Error</button>
 </div>
+<div class="controls"><button id="tone">Play a 440 Hz tone into the mic</button></div>
 <p id="connection" role="alert"></p>
-<p>The glowing orb gently expands and contracts. In Listen, captured audio makes it larger and shifts green toward white. This preview does not capture your computer microphone. Mute leaves the screen black.</p>
-<p>This preview shows pixels rendered by the simulated firmware; the board drives the physical panel over SPI.</p>
+<p>The glowing orb gently expands and contracts. In Listen, sound on the mic makes it larger and shifts green toward white. Mute leaves the screen black.</p>
+<p>This is the firmware you flash to the board, running in QEMU. The picture is rebuilt from the SPI bytes it sends to the SSD1351.</p>
 <script>
 const canvas = document.querySelector('#screen');
 const context = canvas.getContext('2d');
 const pixels = context.createImageData(128, 128);
-const buttons = [...document.querySelectorAll('button')];
+const buttons = [...document.querySelectorAll('button[data-state]')];
 const labels = buttons.map(button => button.textContent);
 const status = document.querySelector('#status');
 const connection = document.querySelector('#connection');
+document.querySelector('#tone').addEventListener('click', async () => {
+  const response = await fetch('/tone', {method: 'POST'});
+  connection.textContent = response.ok ? '' : `Tone failed (${response.status})`;
+});
 for (const button of buttons) {
   button.addEventListener('click', async () => {
     buttons.forEach(item => item.disabled = true);

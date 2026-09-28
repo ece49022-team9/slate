@@ -13,6 +13,9 @@ if git apply --reverse --check "$ROOT/sim/qemu.patch" 2> /dev/null; then
 else
     git apply "$ROOT/sim/qemu.patch"
 fi
+if [ "$(uname -s)" = Darwin ]; then
+    brew install libgcrypt glib pixman libslirp
+fi
 command -v ninja > /dev/null || uv tool install ninja
 if [ ! -f build/build.ninja ]; then
     ./configure --target-list=xtensa-softmmu --enable-gcrypt --enable-slirp \

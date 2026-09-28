@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from slate.board import ROOT, load
+from slate.link import Link
 
 QEMU = Path(
     os.environ.get(
@@ -26,6 +27,7 @@ BOOT_APP = (
 )
 IMAGE = ROOT / ".local/board-flash.bin"
 SERIAL = ROOT / ".local/board-serial.log"
+QEMU_LOG = ROOT / ".local/qemu.log"
 WIDTH = HEIGHT = 128
 SOCKETS = ("wires", "uart", "audio")
 
@@ -52,6 +54,7 @@ class Ssd1351:
     on: bool = False
     ram: bytearray = field(default_factory=lambda: bytearray(WIDTH * HEIGHT * 2))
     frames: deque[Frame] = field(default_factory=lambda: deque(maxlen=300))
+    count: int = 0
 
     def level(self, name: str) -> int:
         return self.levels.get(self.pins[name], 0)
@@ -104,15 +107,15 @@ class Ssd1351:
             if self.offset == window:
                 self.offset = 0
                 self.frames.append(Frame(ns, bytes(self.ram)))
+                self.count += 1
 
 
 @dataclass
 class Breadboard:
     oled: Ssd1351
     slot: int
-    lines: list[str] = field(default_factory=list)
-    uart: asyncio.StreamWriter | None = None
-    audio: asyncio.StreamWriter | None = None
+    link: Link | None = None
+    mic: asyncio.StreamWriter | None = None
 
     async def wires(self, reader: asyncio.StreamReader) -> None:
         while True:
@@ -125,36 +128,14 @@ class Breadboard:
             else:
                 raise RuntimeError(f"slate.breadboard: unknown message {kind!r}")
 
-    async def serial(self, reader: asyncio.StreamReader) -> None:
-        with SERIAL.open("w") as log:
-            async for raw in reader:
-                line = raw.decode(errors="replace").rstrip("\r\n")
-                self.lines.append(line)
-                log.write(line + "\n")
-                log.flush()
-
-    async def type(self, text: str) -> None:
-        self.uart.write(text.encode())
-        await self.uart.drain()
-
     async def speak(self, samples: list[int]) -> None:
         stereo = [0, 0] * len(samples)
         stereo[self.slot :: 2] = samples
-        self.audio.write(struct.pack(f"<{len(stereo)}h", *stereo))
-        await self.audio.drain()
+        await self.play(struct.pack(f"<{len(stereo)}h", *stereo))
 
-    async def wait_for(self, text: str, seconds: float = 10) -> str:
-        start = len(self.lines)
-        async with asyncio.timeout(seconds):
-            while True:
-                for line in self.lines[start:]:
-                    if text in line:
-                        return line
-                await asyncio.sleep(0.05)
-
-    def state(self) -> int | None:
-        states = [line for line in self.lines if line.startswith("slate.state: ")]
-        return int(states[-1].split(": ")[1]) if states else None
+    async def play(self, stereo: bytes) -> None:
+        self.mic.write(stereo)
+        await self.mic.drain()
 
 
 def tone(hz: float, amplitude: int, seconds: float, rate: int) -> list[int]:
@@ -165,7 +146,7 @@ def tone(hz: float, amplitude: int, seconds: float, rate: int) -> list[int]:
 
 
 def build_image() -> Path:
-    subprocess.run(["make", "firmware-hardware"], cwd=ROOT, check=True)
+    subprocess.run(["make", "firmware"], cwd=ROOT, check=True)
     IMAGE.parent.mkdir(exist_ok=True)
     subprocess.run(
         [
@@ -175,7 +156,7 @@ def build_image() -> Path:
             "--chip",
             "esp32",
             "merge-bin",
-            "--fill-flash-size",
+            "--pad-to-size",
             "4MB",
             "-o",
             str(IMAGE),
@@ -213,15 +194,15 @@ async def breadboard() -> AsyncIterator[Breadboard]:
             async def connection(reader, writer) -> None:
                 tasks.append(asyncio.current_task())
                 if name == "uart":
-                    bench.uart = writer
+                    bench.link = Link(reader, writer)
                 elif name == "audio":
-                    bench.audio = writer
+                    bench.mic = writer
                 connected[name].set()
                 try:
                     if name == "wires":
                         await bench.wires(reader)
                     elif name == "uart":
-                        await bench.serial(reader)
+                        await bench.link.run(SERIAL)
                     else:
                         await reader.read()
                 except (asyncio.IncompleteReadError, ConnectionError):
@@ -251,9 +232,9 @@ async def breadboard() -> AsyncIterator[Breadboard]:
             "-serial",
             "chardev:uart",
             "-global",
-            f"esp32.i2s.sample-rate={mic['sample_hz']}",
+            f"driver=esp32.i2s,property=sample-rate,value={mic['sample_hz']}",
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=QEMU_LOG.open("w"),
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
@@ -261,9 +242,11 @@ async def breadboard() -> AsyncIterator[Breadboard]:
             async with asyncio.timeout(10):
                 for event in connected.values():
                     await event.wait()
+                while bench.link.state() is None:
+                    await asyncio.sleep(0.05)
             yield bench
         finally:
-            for writer in (bench.uart, bench.audio):
+            for writer in (bench.link and bench.link.writer, bench.mic):
                 if writer is not None:
                     writer.close()
             if process.returncode is None:

@@ -5,15 +5,15 @@ from pathlib import Path
 
 from livekit import rtc
 
-from slate.simulator import FRAME_SAMPLES, ROOT, Firmware, qemu
+from slate.breadboard import Breadboard, breadboard, build_image
 from slate.voice.audio import MAX_AUDIO_SECONDS
 from slate.voice.device import transcribe_audio
 
 RATE = 16_000
-CHANNELS = {"left": 0, "right": 1, "mix": 2}
+KEYS = {"left": "l", "right": "r", "mix": "m"}
 
 
-def stereo_pcm(path: Path) -> bytes:
+def stereo_pcm(path: Path, slot: int = 0) -> bytes:
     with wave.open(str(path), "rb") as audio:
         channels = audio.getnchannels()
         rate = audio.getframerate()
@@ -39,35 +39,35 @@ def stereo_pcm(path: Path) -> bytes:
         count = len(pcm) // 2
         stereo = bytearray(count * 4)
         for i in range(count):
-            stereo[i * 4 : i * 4 + 2] = pcm[i * 2 : i * 2 + 2]
+            start = i * 4 + slot * 2
+            stereo[start : start + 2] = pcm[i * 2 : i * 2 + 2]
         pcm = bytes(stereo)
     padding = bytes(RATE * 4 // 5)
     return padding + pcm + padding
 
 
 async def capture(
-    firmware: Firmware, stereo: bytes, channel: str
+    bench: Breadboard, stereo: bytes, channel: str
 ) -> AsyncIterator[bytes]:
-    await firmware.exchange(1, bytes([CHANNELS[channel]]))
+    link = bench.link
+    await link.type(KEYS[channel] + "a1")
+    await link.wait_for("slate.state: 1")
+    player = asyncio.create_task(bench.play(stereo))
+    remaining = len(stereo) // 4
     try:
-        for offset in range(0, len(stereo), FRAME_SAMPLES * 4):
-            chunk = stereo[offset : offset + FRAME_SAMPLES * 4]
-            audio = await firmware.exchange(2, chunk)
-            if len(audio) != len(chunk) // 2:
-                raise RuntimeError("slate.firmware: capture lost samples")
-            yield audio
-        if tail := await firmware.exchange(3):
-            yield tail
+        while remaining > 0:
+            chunk = await asyncio.wait_for(link.audio.get(), timeout=5)
+            chunk = chunk[: remaining * 2]
+            remaining -= len(chunk) // 2
+            yield chunk
+        await player
     finally:
-        await firmware.exchange(4)
+        player.cancel()
+        await link.type("x0")
 
 
 async def simulate_firmware(input_file: Path, api_url: str, channel: str) -> str:
-    stereo = stereo_pcm(input_file)
-    build = await asyncio.create_subprocess_exec(
-        "bash", "scripts/esp-idf.sh", "build", cwd=ROOT
-    )
-    if await build.wait():
-        raise RuntimeError("slate.firmware: build failed")
-    async with qemu() as firmware:
-        return await transcribe_audio(capture(firmware, stereo, channel), api_url, RATE)
+    await asyncio.to_thread(build_image)
+    async with breadboard() as bench:
+        stereo = stereo_pcm(input_file, bench.slot)
+        return await transcribe_audio(capture(bench, stereo, channel), api_url, RATE)

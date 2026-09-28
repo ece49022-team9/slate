@@ -24,6 +24,15 @@ class FirmwareAudioTests(unittest.TestCase):
             result[padding:-padding], struct.pack("<hhhhhh", 1000, 0, -2000, 0, 3000, 0)
         )
 
+    def test_mono_can_populate_the_right_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = struct.pack("<hh", 1000, -2000)
+            result = stereo_pcm(self.wav(directory, 1, data), slot=1)
+        padding = RATE * 4 // 5
+        self.assertEqual(
+            result[padding:-padding], struct.pack("<hhhh", 0, 1000, 0, -2000)
+        )
+
     def test_stereo_preserves_channel_order(self):
         data = struct.pack("<hhhh", 1000, -2000, 3000, -4000)
         with tempfile.TemporaryDirectory() as directory:

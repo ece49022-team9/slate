@@ -9,11 +9,6 @@ __pycache__/
 !.env.example
 node_modules/
 dist/
-firmware/build/
-firmware/managed_components/
-firmware/sdkconfig
-firmware/sdkconfig.old
-firmware/sdkconfig.*.old
 firmware/.pio/
 firmware/.vscode/
 *.kicad_prl

@@ -66,7 +66,7 @@ def main() -> None:
         "--sample-rate", type=int, choices=[16000, 24000, 48000], default=16000
     )
     firmware = commands.add_parser(
-        "firmware", help="Send a WAV through the QEMU mic buffer and LiveKit"
+        "firmware", help="Play a WAV into the simulated board's mic and LiveKit"
     )
     firmware.add_argument("input", type=Path)
     firmware.add_argument("--api-url", default="http://127.0.0.1:8000")
