@@ -19,9 +19,11 @@ void setup() {
   Serial.println("slate.boot: OLED disabled pending ESP32 pin mapping");
 #endif
   Serial.println("slate.boot: Send 0-5 over serial to change device state");
+  Serial.println("slate.state: 0");
 }
 
 void loop() {
+  static SlateState reported_state = IDLE;
   while (Serial.available()) {
     char key = Serial.read();
     if (key >= '0' && key <= '5') {
@@ -29,4 +31,9 @@ void loop() {
     }
   }
   delay(20);
+  SlateState state = slate_get_state();
+  if (state != reported_state) {
+    Serial.printf("slate.state: %u\n", static_cast<unsigned>(state));
+    reported_state = state;
+  }
 }
