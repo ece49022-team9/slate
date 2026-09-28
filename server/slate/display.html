@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slate display</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101213; color: #e9ebea; }
+body { max-width: 600px; margin: 56px auto; padding: 0 24px; }
+h1 { font-size: 26px; font-weight: 550; margin-bottom: 6px; }
+p { color: #a5ada9; font-size: 14px; line-height: 1.6; }
+.screen { background: #080909; border: 1px solid #343b37; border-radius: 16px; padding: 24px; width: fit-content; margin: 32px 0 20px; }
+canvas { display: block; width: min(384px, calc(100vw - 100px)); height: auto; image-rendering: pixelated; background: black; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
+button { padding: 10px 14px; border-radius: 8px; background: #1c211e; border: 1px solid #414c45; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
+button:hover { background: #2d3931; }
+button[aria-pressed=true] { color: #101713; background: #b6e1c4; border-color: #b6e1c4; }
+button:disabled { cursor: wait; opacity: .6; }
+#status { color: #b6e1c4; font-family: ui-monospace, monospace; font-size: 12px; }
+#connection { color: #d2d8d4; }
+</style>
+</head>
+<body>
+<h1>Slate display</h1>
+<p>Adafruit SSD1351 · 128 × 128 pixels · RGB565</p>
+<div class="screen"><canvas id="screen" width="128" height="128" aria-label="Live device display"></canvas></div>
+<div id="status" role="status">Starting display…</div>
+<div class="controls" aria-label="Device state">
+<button data-state="0" aria-pressed="false">Idle</button>
+<button data-state="1" aria-pressed="false">Listen</button>
+<button data-state="2" aria-pressed="false">Mute</button>
+<button data-state="3" aria-pressed="false">Transcribe</button>
+<button data-state="4" aria-pressed="false">Respond</button>
+<button data-state="5" aria-pressed="false">Error</button>
+</div>
+<p id="connection" role="alert"></p>
+<p>The glowing orb gently expands and contracts. In Listen, captured audio makes it larger and shifts green toward white. This preview does not capture your computer microphone. Mute leaves the screen black.</p>
+<p>This preview shows pixels rendered by the simulated firmware; the board drives the physical panel over SPI.</p>
+<script>
+const canvas = document.querySelector('#screen');
+const context = canvas.getContext('2d');
+const pixels = context.createImageData(128, 128);
+const buttons = [...document.querySelectorAll('button')];
+const labels = buttons.map(button => button.textContent);
+const status = document.querySelector('#status');
+const connection = document.querySelector('#connection');
+for (const button of buttons) {
+  button.addEventListener('click', async () => {
+    buttons.forEach(item => item.disabled = true);
+    try {
+      const response = await fetch(`/state/${button.dataset.state}`, {method: 'POST'});
+      if (!response.ok) throw new Error(`State change failed (${response.status})`);
+    } catch (error) {
+      connection.textContent = error.message;
+    } finally {
+      buttons.forEach(item => item.disabled = false);
+    }
+  });
+}
+async function refresh() {
+  try {
+    const response = await fetch('/frame', {cache: 'no-store'});
+    if (!response.ok) throw new Error(`Display unavailable (${response.status})`);
+    const data = new DataView(await response.arrayBuffer());
+    if (data.byteLength !== 32780 || data.getUint16(0, true) !== 128 || data.getUint16(2, true) !== 128) throw new Error('Invalid display frame');
+    const state = data.getUint32(4, true);
+    const frame = data.getUint32(8, true);
+    for (let i = 0; i < 128 * 128; i++) {
+      const color = data.getUint16(12 + i * 2, true);
+      const r = color >> 11, g = (color >> 5) & 63, b = color & 31;
+      pixels.data.set([(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), 255], i * 4);
+    }
+    context.putImageData(pixels, 0, 0);
+    status.textContent = `${labels[state]} · firmware frame ${frame}`;
+    buttons.forEach(button => button.setAttribute('aria-pressed', Number(button.dataset.state) === state));
+    connection.textContent = '';
+  } catch (error) {
+    connection.textContent = error.message;
+    status.textContent = 'Disconnected · last frame shown';
+  }
+  setTimeout(refresh, 100);
+}
+refresh();
+</script>
+</body>
+</html>

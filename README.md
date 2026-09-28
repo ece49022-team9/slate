@@ -1,12 +1,12 @@
 # Slate
 
-A portable voice assistant for everyday tasks. The ESP32-S3 handles audio and device feedback. Python handles speech, model calls, and browser tasks. React handles setup and approvals.
+A portable voice assistant for everyday tasks. The ESP32 handles audio and device feedback. Python handles speech, model calls, and browser tasks. React handles setup and approvals.
 
 ## Code
 
 | Path | Work |
 | --- | --- |
-| `firmware/` | ESP32-S3 firmware |
+| `firmware/` | ESP32 firmware |
 | `server/slate/voice/` | Audio streaming, speech recognition and generation |
 | `server/slate/agent/` | Model calls and task execution |
 | `server/slate/browser/` | Browser sessions, tools and result checks |
@@ -76,7 +76,7 @@ STT accepts mono 24 kHz, 16-bit PCM WAV files up to 120 seconds. TTS returns the
 
 ## Firmware
 
-The target is ESP32-S3. Install ESP-IDF 5.5.5 and Espressif's QEMU, then build and boot it headlessly:
+The target is the original ESP32, using the `esp32dev` profile for an ESP32-WROOM-32 dev board. Install ESP-IDF 5.5.5 and Espressif's QEMU, then build and boot it headlessly:
 
 ```sh
 make firmware-setup
@@ -85,6 +85,43 @@ make firmware-check
 
 `make firmware` builds. `make firmware-sim` leaves the serial console open. Exit with Ctrl-A, then X. The setup uses `~/esp/esp-idf-v5.5.5` and `~/.espressif`, with Python packages managed by uv.
 
-QEMU checks firmware startup. It does not test the board's microphone, speaker, display, or Wi-Fi. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later audio connection. PlatformIO still needs a `platformio.ini`.
+QEMU runs the same FreeRTOS state controller, channel selection, DC filter, and microphone buffer as the board build. `make firmware-check` checks capture gating, left/right/mix selection, overflow rejection, and buffer reset. `make firmware-mic-check` uses Hypothesis to generate 60 stereo audio cases, replay them with different chunk boundaries, and compare the firmware output against an independent PCM calculation. Failures are shrunk and saved for replay.
+
+The microphone schematic contains two MP34DT01-M parts: MK1 has L/R grounded and MK2 has L/R tied high. They share PDM clock/data. The ESP32 driver uses I2S0 to convert both PDM slots to interleaved 16 kHz PCM. The shared pipeline selects left, right, or an equal-weight mono mix, removes DC, and queues up to one second of audio. Overflow rejects a whole frame; mute/cancel clears queued samples and filter history, while finishing a turn preserves buffered audio for draining. Gain is unity; the old fixed 4x amplification is removed to avoid clipping recorded speech.
+
+To send simulated microphone audio through the firmware and the real transcription service, start `make livekit` and `make server`, then run:
+
+```sh
+MODAL_PROFILE=sudarshan-1 uv run python -m slate.voice firmware .local/voice-check.wav
+```
+
+Use a 16-bit WAV at 16, 24, or 48 kHz, up to 119 seconds. Stereo WAVs represent the two microphone slots; mono WAVs populate only the left slot. `--channel left` is the default; `--channel right` selects the other mic and `--channel mix` averages both. For a mono WAV, mix therefore halves the signal level and right produces silence.
+
+The command builds and boots QEMU, injects stereo PCM at the boundary after hardware PDM conversion, reads processed mono audio from the firmware buffer through UART1, and publishes it as a LiveKit microphone track. The existing start/end-turn RPCs and transcription service handle the recording. A host bridge runs WebRTC; this does not implement on-device LiveKit networking or emulate PDM clock edges, DMA, or physical microphones. QEMU has no I2S/PDM emulation.
+
+`make firmware-hardware` compiles the ESP32-WROOM-32 PDM adapter and peripheral drivers with pinned PlatformIO dependencies. To flash the dev board over USB, list ports and use the one that appears when it is connected:
+
+```sh
+make flash
+make monitor
+```
+
+`make flash` and `make monitor` select the board automatically when exactly one matching USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>` explicitly. The monitor runs at 115200 baud; send `0` through `5` to request idle, listen, mute, transcribe, respond, or error and inspect the `slate.state` logs. PDM clock is GPIO26 and shared PDM data is GPIO36. GPIO39 is input-only on the original ESP32 and cannot drive the PDM clock. Send `1` to start capture and read the half-second `slate.mic` sample count, RMS, and peak reports. Speak near the mics: in LISTEN, the green orb should expand and brighten toward white. Return to idle with `0`, then send `l`, `r`, or `m` to select the left mic, right mic, or mix before listening again. The serial meter drains audio for this board test; the firmware does not yet send physical microphone audio to LiveKit. Haptics are not started until their pin mapping is verified. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover the later on-device audio connection.
+
+
+### Display preview
+
+The display is Adafruit product 1431: a 128×128 RGB565 OLED with an SSD1351 controller. Run:
+
+```sh
+make firmware-display
+```
+
+Open [localhost:8010](http://127.0.0.1:8010). The preview reads pixel frames from the firmware running in QEMU. Its buttons request real controller state changes: idle is white, listen green, mute black, transcribe blue, respond yellow, and error magenta. A centered orb glows with a soft halo and expands/contracts sinusoidally over a 120-frame cycle (3.6 seconds on the firmware clock). In LISTEN, captured audio adds size and shifts its color from green toward white. The browser preview does not capture computer microphone audio.
+
+`display.cpp` renders the same RGB565 pixel buffer in both builds. The board's `oled.cpp` sends it through Adafruit's SSD1351 library; QEMU returns it over the simulator connection for the browser to display. The Arduino library's SPI commands and the panel electronics are not emulated. The board build uses the confirmed OLED wiring: clock GPIO18, MOSI GPIO23, CS GPIO5, D/C GPIO16, and reset GPIO17. These five ESP32 pins are defined as `SLATE_OLED_CLK`, `SLATE_OLED_DATA`, `SLATE_OLED_CS`, `SLATE_OLED_DC`, and `SLATE_OLED_RESET`. Hardware SPI now sends the full frame at 16 MHz. The OLED task reports its measured frame rate every two seconds; the connected board reported 33.3 fps after the change.
+
+`make firmware-display-check` checks all six state colors, blanking, animation geometry, audio response, and 30 generated frame/state combinations. It saves an actual QEMU frame to `.local/display-listen.png`. Each simulator command starts its own QEMU instance; stop the preview before running the audio or display checks, since they use the same flash image. The preview controls its own simulated device and does not mirror a separate microphone simulator process.
+
 
 [Proposal](https://docs.google.com/document/d/1dz02PJORUFB1m--cltmt9tKI_VPXVcO9dAPNODxkFbo/edit) · [Work split](https://notes.granola.ai/t/a576ba7f-ef74-42ac-b631-dfefc260f884-008umkv4)

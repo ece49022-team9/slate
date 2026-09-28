@@ -24,17 +24,31 @@ def main() -> None:
             while time.monotonic() < deadline:
                 output.seek(0)
                 log = output.read()
-                if "slate.boot: Firmware started." in log:
+                if any(
+                    failure in log
+                    for failure in (
+                        "assert failed:",
+                        "stack overflow",
+                        "Guru Meditation",
+                    )
+                ):
+                    raise RuntimeError(f"slate.firmware: firmware crashed\n{log}")
+                if (
+                    "slate.sim: PASS: controller, mic channels, capture gating, "
+                    "buffer overflow and turn reset" in log
+                ):
                     print(log, end="")
-                    print("slate.firmware: ESP32-S3 boot passed")
+                    print("slate.firmware: ESP32 controller simulation passed")
                     return
                 if process.poll() is not None:
                     raise RuntimeError(
-                        f"slate.firmware: QEMU exited before boot\n{log}"
+                        f"slate.firmware: QEMU exited before completion\n{log}"
                     )
                 time.sleep(0.1)
             output.seek(0)
-            raise TimeoutError(f"slate.firmware: QEMU did not boot\n{output.read()}")
+            raise TimeoutError(
+                f"slate.firmware: QEMU simulation timed out\n{output.read()}"
+            )
         finally:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)

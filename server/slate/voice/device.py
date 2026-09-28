@@ -1,5 +1,7 @@
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from contextlib import aclosing
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -20,6 +22,26 @@ def session_request(url: str, method: str, body: bytes | None = None) -> dict:
 
 async def simulate(input_file: Path, api_url: str, sample_rate: int = 16_000) -> str:
     pcm = read_wav(input_file.read_bytes())
+
+    async def chunks() -> AsyncIterator[bytes]:
+        resampler = rtc.AudioResampler(SAMPLE_RATE, sample_rate, num_channels=1)
+        padding = bytes(SAMPLE_RATE * SAMPLE_BYTES // 5)
+        audio = padding + pcm + padding
+        frame_bytes = SAMPLE_RATE * SAMPLE_BYTES // 50
+        for offset in range(0, len(audio), frame_bytes):
+            chunk = audio[offset : offset + frame_bytes]
+            frame = rtc.AudioFrame(chunk, SAMPLE_RATE, 1, len(chunk) // SAMPLE_BYTES)
+            for converted in resampler.push(frame):
+                yield converted.data.tobytes()
+        for converted in resampler.flush():
+            yield converted.data.tobytes()
+
+    return await transcribe_audio(chunks(), api_url, sample_rate)
+
+
+async def transcribe_audio(
+    audio: AsyncIterator[bytes], api_url: str, sample_rate: int
+) -> str:
     session = await asyncio.to_thread(
         session_request, f"{api_url}/api/voice/sessions", "POST", b"{}"
     )
@@ -49,23 +71,21 @@ async def simulate(input_file: Path, api_url: str, sample_rate: int = 16_000) ->
         await room.connect(session["server_url"], session["participant_token"])
         track = rtc.LocalAudioTrack.create_audio_track("microphone", source)
         options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
-        await room.local_participant.publish_track(track, options)
+        publication = await room.local_participant.publish_track(track, options)
+        await asyncio.wait_for(publication.wait_for_subscription(), timeout=10)
         turn = await room.local_participant.perform_rpc(
             destination_identity=session["worker_identity"],
             method="start_turn",
             payload="",
         )
-        resampler = rtc.AudioResampler(SAMPLE_RATE, sample_rate, num_channels=1)
-        padding = bytes(SAMPLE_RATE * SAMPLE_BYTES // 5)
-        audio = padding + pcm + padding
-        frame_bytes = SAMPLE_RATE * SAMPLE_BYTES // 50
-        for offset in range(0, len(audio), frame_bytes):
-            chunk = audio[offset : offset + frame_bytes]
-            frame = rtc.AudioFrame(chunk, SAMPLE_RATE, 1, len(chunk) // SAMPLE_BYTES)
-            for converted in resampler.push(frame):
-                await source.capture_frame(converted)
-        for converted in resampler.flush():
-            await source.capture_frame(converted)
+        async with aclosing(aiter(audio)) as chunks:
+            async for chunk in chunks:
+                if not chunk or len(chunk) % SAMPLE_BYTES:
+                    raise ValueError("slate.voice: incomplete PCM samples")
+                frame = rtc.AudioFrame(
+                    chunk, sample_rate, 1, len(chunk) // SAMPLE_BYTES
+                )
+                await source.capture_frame(frame)
         await source.wait_for_playout()
         await room.local_participant.perform_rpc(
             destination_identity=session["worker_identity"],

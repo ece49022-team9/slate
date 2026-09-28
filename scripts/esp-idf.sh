@@ -17,7 +17,7 @@ if [ "${1:-}" = setup ]; then
         brew install libgcrypt glib pixman sdl2 libslirp
     fi
     uv run --no-project --python 3.12 "$IDF_PATH/tools/idf_tools.py" \
-        install --targets esp32s3
+        install --targets esp32
     uv run --no-project --python 3.12 "$IDF_PATH/tools/idf_tools.py" \
         install qemu-xtensa
     if [ ! -x "$IDF_PYTHON_ENV_PATH/bin/python" ]; then
@@ -29,7 +29,7 @@ if [ "${1:-}" = setup ]; then
         -r "$IDF_PATH/tools/requirements/requirements.core.txt" \
         -c "$IDF_TOOLS_PATH/espidf.constraints.v5.5.txt"
     printf '5.5' > "$IDF_PYTHON_ENV_PATH/idf_version.txt"
-    echo "slate.firmware: ESP-IDF and ESP32-S3 QEMU are ready"
+    echo "slate.firmware: ESP-IDF and ESP32 QEMU are ready"
     exit 0
 fi
 
