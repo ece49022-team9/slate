@@ -110,7 +110,8 @@ def main():
             quiet_pixels = struct.unpack("<16384H", first)
             reactive_pixels = struct.unpack("<16384H", reactive)
             assert reactive_pixels[63 * 128 + 63] != COLORS[1]
-            assert sum(bool(c) for c in reactive_pixels) > sum(bool(c) for c in quiet_pixels)
+            lit = sum(bool(c) for c in reactive_pixels)
+            assert lit > sum(bool(c) for c in quiet_pixels)
             muted = runner.run(snapshot(firmware, 2, 0))
             assert not any(muted)
             assert runner.run(snapshot(firmware, 1, 0)) == first
