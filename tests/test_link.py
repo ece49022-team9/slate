@@ -1,4 +1,3 @@
-import asyncio
 import struct
 import tempfile
 import unittest
@@ -23,15 +22,12 @@ def encode(item) -> bytes:
     return bytes([0, len(value) & 0xFF, len(value) >> 8]) + value
 
 
-async def parse(stream: bytes, cuts: list[int]) -> Link:
-    reader = asyncio.StreamReader()
+def parse(stream: bytes, cuts: list[int]) -> Link:
     bounds = sorted({0, len(stream), *(cut % (len(stream) + 1) for cut in cuts)})
-    for start, end in zip(bounds, bounds[1:], strict=False):
-        reader.feed_data(stream[start:end])
-    reader.feed_eof()
-    link = Link(reader, None)
     with tempfile.TemporaryDirectory() as directory:
-        await link.run(Path(directory) / "serial.log")
+        link = Link(bytearray().extend, Path(directory) / "serial.log")
+        for start, end in zip(bounds, bounds[1:], strict=False):
+            link.feed(stream[start:end])
     return link
 
 
@@ -39,7 +35,7 @@ class LinkTests(unittest.TestCase):
     @settings(max_examples=200)
     @given(st.lists(st.one_of(lines, frames), max_size=12), st.lists(st.integers(0)))
     def test_recovers_lines_and_audio_at_any_chunking(self, items, cuts):
-        link = asyncio.run(parse(b"".join(map(encode, items)), cuts))
+        link = parse(b"".join(map(encode, items)), cuts)
         audio = []
         while not link.audio.empty():
             audio.append(link.audio.get_nowait())

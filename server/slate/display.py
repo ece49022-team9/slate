@@ -12,7 +12,7 @@ from slate.breadboard import breadboard, build_image, tone
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with breadboard() as bench:
+    async with breadboard(realtime=True) as bench:
         app.state.bench = bench
         yield
 
@@ -43,7 +43,7 @@ async def frame(request: Request):
 async def state(state: int, request: Request):
     if not 0 <= state <= 5:
         raise HTTPException(400, "Unknown display state")
-    await request.app.state.bench.link.type(str(state))
+    request.app.state.bench.link.type(str(state))
     return {"state": state}
 
 

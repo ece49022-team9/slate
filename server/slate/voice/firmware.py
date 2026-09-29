@@ -51,7 +51,7 @@ def stereo_pcm(path: Path, slot: int = 0) -> bytes:
 async def capture(
     link: Link, channel: str, samples: int, sound: Awaitable[None]
 ) -> AsyncIterator[bytes]:
-    await link.type(KEYS[channel] + "a1")
+    link.type(KEYS[channel] + "a1")
     await link.wait_for("slate.state: 1")
     while not link.audio.empty():
         link.audio.get_nowait()
@@ -65,12 +65,12 @@ async def capture(
         await player
     finally:
         player.cancel()
-        await link.type("x0")
+        link.type("x0")
 
 
 async def simulate_firmware(input_file: Path, api_url: str, channel: str) -> str:
     await asyncio.to_thread(build_image)
-    async with breadboard() as bench:
+    async with breadboard(realtime=True) as bench:
         stereo = stereo_pcm(input_file, bench.slot)
         audio = capture(bench.link, channel, len(stereo) // 4, bench.play(stereo))
         return await transcribe_audio(audio, api_url, RATE)
@@ -96,4 +96,3 @@ async def board_firmware(
         return await transcribe_audio(audio, api_url, RATE)
     finally:
         task.cancel()
-        link.writer.close()

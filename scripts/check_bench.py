@@ -34,7 +34,7 @@ def write_tone(rate: int) -> None:
 
 
 async def listen(link: Link, key: str, seconds: float, sound: bool) -> list[int]:
-    await link.type(key + "a1")
+    link.type(key + "a1")
     await link.wait_for("slate.state: 1")
     while not link.audio.empty():
         link.audio.get_nowait()
@@ -42,7 +42,7 @@ async def listen(link: Link, key: str, seconds: float, sound: bool) -> list[int]
     if sound:
         player = await asyncio.create_subprocess_exec("afplay", str(TONE))
     await asyncio.sleep(seconds)
-    await link.type("x0")
+    link.type("x0")
     await link.wait_for("slate.state: 0")
     if player:
         await player.wait()
@@ -62,7 +62,7 @@ async def run(port: str) -> None:
     link, task = await open_board(port, PORT_LOG)
     try:
         for state in [1, 2, 3, 4, 5, 0]:
-            await link.type(str(state))
+            link.type(str(state))
             await link.wait_for(f"slate.state: {state}", seconds=3)
         line = await link.wait_for("slate.oled:", seconds=5)
         fps = float(line.split("(")[1].split()[0])
@@ -79,7 +79,6 @@ async def run(port: str) -> None:
         assert ratio > 10, f"slate.bench: 440 Hz is only {ratio:.1f}x the other bands"
     finally:
         task.cancel()
-        link.writer.close()
     print(
         f"slate.bench: {board['mcu']} went through all six states; OLED at {fps} fps; "
         f"the {mic['slot']} mic heard the speaker's 440 Hz tone at rms "

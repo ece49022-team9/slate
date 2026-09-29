@@ -37,15 +37,15 @@ async def record(
     bench: Breadboard, samples: list[tuple[int, int]], channel: str, rate: int
 ) -> list[int]:
     link = bench.link
-    await link.type(KEYS[channel] + "a1")
+    link.type(KEYS[channel] + "a1")
     await link.wait_for("slate.state: 1")
     while not link.audio.empty():
         link.audio.get_nowait()
     lead = rate // 4
     stereo = [(0, 0)] * lead + samples + [(0, 0)] * 320
     await bench.play(b"".join(struct.pack("<hh", *pair) for pair in stereo))
-    await asyncio.sleep(len(stereo) / rate + 0.3)
-    await link.type("x0")
+    await bench.sleep(0.3)
+    link.type("x0")
     await link.wait_for("slate.state: 0")
     audio = b""
     while not link.audio.empty():
@@ -90,13 +90,16 @@ def main() -> None:
 
             async def cancelled_turn():
                 link = bench.link
-                await link.type("l1")
+                link.type("l1")
                 await link.wait_for("slate.state: 1")
-                await bench.play(struct.pack("<hh", 30000, 0) * rate)
-                await asyncio.sleep(0.2)
-                await link.type("20")
+                loud = asyncio.create_task(
+                    bench.play(struct.pack("<hh", 30000, 0) * rate)
+                )
+                await bench.sleep(0.2)
+                link.type("20")
                 await link.wait_for("slate.state: 0")
-                await asyncio.sleep(1.2)
+                await loud
+                await bench.sleep(0.3)
                 samples = [(1000, -2000)] * 64
                 actual = trimmed(await record(bench, samples, "left", rate))
                 assert actual[:64] == reference(samples, "left"), (

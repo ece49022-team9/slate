@@ -27,12 +27,10 @@ def check_orb(frame: Frame, state: int) -> None:
 
 
 async def show(bench: Breadboard, state: int) -> Frame:
-    await bench.link.type(str(state))
+    bench.link.type(str(state))
     if bench.link.state() != state:
         await bench.link.wait_for(f"slate.state: {state}")
-    count = bench.oled.count
-    while bench.oled.count < count + 2:
-        await asyncio.sleep(0.01)
+    await bench.sleep(0.07)
     return bench.oled.frames[-1]
 
 
@@ -68,7 +66,7 @@ def main() -> None:
 
             first = runner.run(show(bench, 1))
             start = bench.oled.count
-            runner.run(asyncio.sleep(4))
+            runner.run(bench.sleep(4))
             frames = list(bench.oled.frames)[-(bench.oled.count - start) :]
             lit = [sum(1 for pixel in frame.pixels if pixel) for frame in frames]
             assert max(lit) > 1.3 * min(lit), "slate.display: orb is not breathing"
