@@ -112,7 +112,7 @@ QEMU boots the exact image `make flash` writes. Python plays the parts on the br
 - [check_mic.py](scripts/check_mic.py): Hypothesis generates stereo audio for each channel. The streamed output must match an independent DC-filter calculation within one step, replay identically, and start clean after a muted turn. Failures are shrunk and saved for replay.
 - [check_display.py](scripts/check_display.py): all six state colors, a blank panel on mute, a centered orb that fits the panel, smooth breathing, and 15 generated state sequences. It saves a frame to `.local/display-listen.png`.
 
-`make sim` serves the preview at [localhost:8010](http://127.0.0.1:8010). Its buttons send state keys over serial, and one plays a 440 Hz tone into the mic. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
+`make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
 
 To send audio through the firmware and the real transcription service, start `make livekit` and `make server`, then run:
 

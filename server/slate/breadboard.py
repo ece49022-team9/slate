@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections import deque
+from collections import Counter, deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -132,6 +132,10 @@ class Breadboard:
         self.played: list[asyncio.Future] = []
         self.alarms: list[tuple[int, Callable[[], None]]] = []
         self.link = Link(self.uart.extend, SERIAL, self.timeout)
+        self.levels: dict[int, int] = {}
+        self.toggles: Counter[int] = Counter()
+        self.spi_bytes = 0
+        self.audio_bytes = 0
 
     async def wires(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -141,8 +145,11 @@ class Breadboard:
             kind, ns, size = struct.unpack("<cQH", await reader.readexactly(11))
             payload = await reader.readexactly(size)
             if kind == b"G":
+                self.levels[payload[0]] = payload[1]
+                self.toggles[payload[0]] += 1
                 self.oled.pin(ns, payload[0], payload[1])
             elif kind == b"S":
+                self.spi_bytes += size
                 self.oled.spi(ns, payload)
             elif kind == b"O":
                 self.output += payload
@@ -176,6 +183,7 @@ class Breadboard:
             chunk = self.audio[: self.credit]
             del self.audio[: len(chunk)]
             self.credit -= len(chunk)
+            self.audio_bytes += len(chunk)
             message += struct.pack("<cH", b"A", len(chunk)) + chunk
         if not self.audio:
             self.credit = 0
@@ -215,12 +223,15 @@ class Breadboard:
         await self.play(struct.pack(f"<{len(stereo)}h", *stereo))
 
     async def play(self, stereo: bytes) -> None:
-        if not self.audio:
-            self.credit = self.lead
-        self.audio += stereo
+        self.feed(stereo)
         future = asyncio.get_running_loop().create_future()
         self.played.append(future)
         await future
+
+    def feed(self, stereo: bytes) -> None:
+        if not self.audio:
+            self.credit = self.lead
+        self.audio += stereo
 
 
 def tone(hz: float, amplitude: int, seconds: float, rate: int) -> list[int]:

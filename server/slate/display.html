@@ -3,89 +3,231 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Slate display</title>
+<title>Slate breadboard</title>
 <style>
-:root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101213; color: #e9ebea; }
-body { max-width: 600px; margin: 56px auto; padding: 0 24px; }
-h1 { font-size: 26px; font-weight: 550; margin-bottom: 6px; }
-p { color: #a5ada9; font-size: 14px; line-height: 1.6; }
-.screen { background: #080909; border: 1px solid #343b37; border-radius: 16px; padding: 24px; width: fit-content; margin: 32px 0 20px; }
-canvas { display: block; width: min(384px, calc(100vw - 100px)); height: auto; image-rendering: pixelated; background: black; }
-.controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
-button { padding: 10px 14px; border-radius: 8px; background: #1c211e; border: 1px solid #414c45; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
-button:hover { background: #2d3931; }
-button[aria-pressed=true] { color: #101713; background: #b6e1c4; border-color: #b6e1c4; }
-button:disabled { cursor: wait; opacity: .6; }
-#status { color: #b6e1c4; font-family: ui-monospace, monospace; font-size: 12px; }
-#connection { color: #d2d8d4; }
+:root { color-scheme: dark; --bg: #0f1211; --panel: #161b19; --line: #2b332f; --text: #e6eae8; --dim: #97a29c; --accent: #b6e1c4; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+body { margin: 0; padding: 24px clamp(14px, 3vw, 32px) 40px; }
+header { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; }
+h2 { font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin: 0 0 12px; }
+#clock { font-family: ui-monospace, monospace; font-size: 13px; color: var(--accent); }
+main { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 20px; margin-top: 20px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.wide { grid-column: 1 / -1; }
+svg { width: 100%; height: auto; display: block; }
+svg text { font-family: ui-monospace, monospace; font-size: 12px; fill: var(--text); }
+svg .title { font-family: system-ui, sans-serif; font-size: 14px; font-weight: 600; }
+svg .dim { fill: var(--dim); font-size: 11px; }
+.wire { fill: none; stroke-width: 2.5; opacity: .35; transition: opacity .2s; }
+.wire.active { opacity: 1; stroke-dasharray: 6 6; animation: flow .5s linear infinite; }
+.wire.high { opacity: .9; }
+@keyframes flow { to { stroke-dashoffset: -12; } }
+canvas { display: block; width: 100%; max-width: 384px; aspect-ratio: 1; image-rendering: pixelated; background: black; border-radius: 8px; border: 1px solid var(--line); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+button { padding: 8px 12px; border-radius: 8px; background: #1e2522; border: 1px solid #3a4540; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
+button:hover { background: #28312d; }
+button[aria-pressed=true] { color: #0f1512; background: var(--accent); border-color: var(--accent); }
+#problems { list-style: none; padding: 0; margin: 14px 0 0; font-size: 13px; }
+#problems li { margin: 6px 0; color: var(--dim); }
+#problems b { font-weight: 600; margin-right: 6px; }
+#problems .warning b { color: #f0c674; }
+#problems .error b { color: #f28b82; }
+#console { height: 260px; overflow-y: auto; background: #0b0d0c; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; margin: 0; }
+form { display: flex; gap: 8px; margin-top: 10px; }
+input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid #3a4540; background: #0b0d0c; color: inherit; font-family: ui-monospace, monospace; }
+p { color: var(--dim); font-size: 13px; line-height: 1.55; margin: 12px 0 0; }
+#error { color: #f28b82; }
 </style>
 </head>
 <body>
-<h1>Slate display</h1>
-<p>Adafruit SSD1351 · 128 × 128 pixels · RGB565</p>
-<div class="screen"><canvas id="screen" width="128" height="128" aria-label="Live device display"></canvas></div>
-<div id="status" role="status">Starting display…</div>
-<div class="controls" aria-label="Device state">
-<button data-state="0" aria-pressed="false">Idle</button>
-<button data-state="1" aria-pressed="false">Listen</button>
-<button data-state="2" aria-pressed="false">Mute</button>
-<button data-state="3" aria-pressed="false">Transcribe</button>
-<button data-state="4" aria-pressed="false">Respond</button>
-<button data-state="5" aria-pressed="false">Error</button>
+<header>
+<h1>Slate breadboard</h1>
+<span id="clock">Starting QEMU…</span>
+<span id="error" role="alert"></span>
+</header>
+<main>
+<section>
+<h2>Wiring</h2>
+<svg id="board" viewBox="0 0 720 360" role="img" aria-label="Breadboard wiring"></svg>
+<ul id="problems"></ul>
+</section>
+<section>
+<h2>Display</h2>
+<canvas id="screen" width="128" height="128" aria-label="SSD1351 panel"></canvas>
+<div class="row" id="states"></div>
+<div class="row">
+<button id="tone">Play 440 Hz tone</button>
+<button id="mic" aria-pressed="false">Use my microphone</button>
 </div>
-<div class="controls"><button id="tone">Play a 440 Hz tone into the mic</button></div>
-<p id="connection" role="alert"></p>
-<p>The glowing orb gently expands and contracts. In Listen, sound on the mic makes it larger and shifts green toward white. Mute leaves the screen black.</p>
-<p>This is the firmware you flash to the board, running in QEMU. The picture is rebuilt from the SPI bytes it sends to the SSD1351.</p>
+<p>The picture is rebuilt from the SPI bytes the flashed firmware sends to the SSD1351. In Listen, sound on the mic makes the orb grow and turn white.</p>
+</section>
+<section class="wide">
+<h2>Serial</h2>
+<pre id="console" aria-live="polite"></pre>
+<form id="keys"><input id="text" autocomplete="off" placeholder="0-5 state · l/r/m mic · a/x audio stream"><button>Send</button></form>
+</section>
+</main>
 <script>
-const canvas = document.querySelector('#screen');
-const context = canvas.getContext('2d');
-const pixels = context.createImageData(128, 128);
-const buttons = [...document.querySelectorAll('button[data-state]')];
-const labels = buttons.map(button => button.textContent);
-const status = document.querySelector('#status');
-const connection = document.querySelector('#connection');
-document.querySelector('#tone').addEventListener('click', async () => {
-  const response = await fetch('/tone', {method: 'POST'});
-  connection.textContent = response.ok ? '' : `Tone failed (${response.status})`;
-});
-for (const button of buttons) {
-  button.addEventListener('click', async () => {
-    buttons.forEach(item => item.disabled = true);
-    try {
-      const response = await fetch(`/state/${button.dataset.state}`, {method: 'POST'});
-      if (!response.ok) throw new Error(`State change failed (${response.status})`);
-    } catch (error) {
-      connection.textContent = error.message;
-    } finally {
-      buttons.forEach(item => item.disabled = false);
-    }
-  });
+const NAMES = ['Idle', 'Listen', 'Mute', 'Transcribe', 'Respond', 'Error'];
+const COLORS = {oled: '#7fd1c7', mic: '#f0c674'};
+const svg = document.querySelector('#board');
+const error = document.querySelector('#error');
+const wires = [];
+let board, last, rate = 16000;
+
+function node(tag, attrs, text) {
+  const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, value);
+  if (text !== undefined) element.textContent = text;
+  svg.append(element);
+  return element;
 }
+
+function draw() {
+  const pins = board.devices.flatMap(device => Object.entries(device.pins).map(([pin, gpio]) => ({device, pin, gpio})));
+  const gpios = [...new Set(pins.map(p => p.gpio))].sort((a, b) => a - b);
+  const pitch = 26, top = 70;
+  const height = Math.max(top + gpios.length * pitch + 30, 360);
+  svg.setAttribute('viewBox', `0 0 720 ${height}`);
+  node('rect', {x: 30, y: 30, width: 190, height: top + gpios.length * pitch - 20, rx: 10, fill: '#1b2320', stroke: '#3a4540'});
+  node('text', {x: 46, y: 56, class: 'title'}, board.mcu.name);
+  node('text', {x: 46, y: 74, class: 'dim'}, `${board.supply_v} V`);
+  const gpioY = Object.fromEntries(gpios.map((gpio, i) => [gpio, top + 30 + i * pitch]));
+  for (const gpio of gpios) {
+    node('circle', {cx: 220, cy: gpioY[gpio], r: 4, fill: '#97a29c'});
+    node('text', {x: 206, y: gpioY[gpio] + 4, 'text-anchor': 'end'}, `GPIO${gpio}`);
+  }
+  let y = 30;
+  for (const device of board.devices) {
+    const names = Object.keys(device.pins);
+    const boxHeight = 50 + names.length * pitch;
+    node('rect', {x: 450, y, width: 250, height: boxHeight, rx: 10, fill: '#1b2320', stroke: COLORS[device.name] || '#3a4540'});
+    node('text', {x: 466, y: y + 24, class: 'title'}, device.name.toUpperCase());
+    node('text', {x: 466, y: y + 40, class: 'dim'}, device.part);
+    names.forEach((pin, i) => {
+      const py = y + 62 + i * pitch, gpio = device.pins[pin];
+      node('circle', {cx: 450, cy: py, r: 4, fill: '#97a29c'});
+      node('text', {x: 464, y: py + 4}, pin);
+      const level = node('text', {x: 686, y: py + 4, 'text-anchor': 'end', class: 'dim'}, '');
+      const path = node('path', {class: 'wire', stroke: COLORS[device.name] || '#b6e1c4',
+        d: `M220 ${gpioY[gpio]} C 335 ${gpioY[gpio]}, 335 ${py}, 450 ${py}`});
+      svg.prepend(path);
+      wires.push({device: device.name, pin, gpio, path, level});
+    });
+    y += boxHeight + 20;
+  }
+  document.querySelector('#problems').innerHTML = board.problems.map(p =>
+    `<li class="${p.level}"><b>${p.level}</b>${p.device}: ${p.message}</li>`).join('');
+}
+
+function activity(status) {
+  const spi = last ? status.spi_bytes - last.spi_bytes : 0;
+  const audio = last ? status.audio_bytes - last.audio_bytes : 0;
+  for (const wire of wires) {
+    const toggled = last ? (status.toggles[wire.gpio] || 0) - (last.toggles[wire.gpio] || 0) : 0;
+    const level = status.levels[wire.gpio];
+    let active = toggled > 0;
+    if (wire.device === 'oled' && (wire.pin === 'clk' || wire.pin === 'data')) active = spi > 0;
+    if (wire.device === 'mic') active = wire.pin === 'clk' ? status.state !== null : audio > 0;
+    wire.path.classList.toggle('active', active);
+    wire.path.classList.toggle('high', level === 1);
+    wire.level.textContent = level === undefined ? '' : (level ? 'high' : 'low');
+  }
+  last = status;
+}
+
+async function poll() {
+  try {
+    const status = await (await fetch('/status', {cache: 'no-store'})).json();
+    document.querySelector('#clock').textContent =
+      `${(status.now / 1e9).toFixed(1)} s emulated · ${NAMES[status.state] ?? '…'} · ${status.fps} fps`;
+    document.querySelectorAll('#states button').forEach(b => b.setAttribute('aria-pressed', Number(b.dataset.state) === status.state));
+    const log = document.querySelector('#console');
+    const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = status.lines.join('\n');
+    if (atBottom) log.scrollTop = log.scrollHeight;
+    activity(status);
+    error.textContent = '';
+  } catch (e) {
+    error.textContent = 'Simulator unavailable';
+  }
+  setTimeout(poll, 200);
+}
+
+const context = document.querySelector('#screen').getContext('2d');
+const image = context.createImageData(128, 128);
 async function refresh() {
   try {
     const response = await fetch('/frame', {cache: 'no-store'});
-    if (!response.ok) throw new Error(`Display unavailable (${response.status})`);
-    const data = new DataView(await response.arrayBuffer());
-    if (data.byteLength !== 32780 || data.getUint16(0, true) !== 128 || data.getUint16(2, true) !== 128) throw new Error('Invalid display frame');
-    const state = data.getUint32(4, true);
-    const frame = data.getUint32(8, true);
-    for (let i = 0; i < 128 * 128; i++) {
-      const color = data.getUint16(12 + i * 2, true);
-      const r = color >> 11, g = (color >> 5) & 63, b = color & 31;
-      pixels.data.set([(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), 255], i * 4);
+    if (response.ok) {
+      const data = new DataView(await response.arrayBuffer());
+      for (let i = 0; i < 128 * 128; i++) {
+        const color = data.getUint16(12 + i * 2, true);
+        const r = color >> 11, g = (color >> 5) & 63, b = color & 31;
+        image.data.set([(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), 255], i * 4);
+      }
+      context.putImageData(image, 0, 0);
     }
-    context.putImageData(pixels, 0, 0);
-    status.textContent = `${labels[state]} · firmware frame ${frame}`;
-    buttons.forEach(button => button.setAttribute('aria-pressed', Number(button.dataset.state) === state));
-    connection.textContent = '';
-  } catch (error) {
-    connection.textContent = error.message;
-    status.textContent = 'Disconnected · last frame shown';
-  }
-  setTimeout(refresh, 100);
+  } catch (e) {}
+  setTimeout(refresh, 60);
 }
-refresh();
+
+NAMES.forEach((name, state) => {
+  const button = document.createElement('button');
+  button.textContent = name;
+  button.dataset.state = state;
+  button.onclick = () => fetch(`/state/${state}`, {method: 'POST'});
+  document.querySelector('#states').append(button);
+});
+document.querySelector('#tone').onclick = () => fetch('/tone', {method: 'POST'});
+document.querySelector('#keys').onsubmit = event => {
+  event.preventDefault();
+  const input = document.querySelector('#text');
+  if (input.value) fetch('/serial', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: input.value})});
+  input.value = '';
+};
+
+let microphone;
+document.querySelector('#mic').onclick = async event => {
+  const button = event.currentTarget;
+  if (microphone) {
+    microphone.stream.getTracks().forEach(track => track.stop());
+    microphone.socket.close();
+    await microphone.audio.close();
+    microphone = null;
+    button.setAttribute('aria-pressed', 'false');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false}});
+    const audio = new AudioContext({sampleRate: rate});
+    const code = `registerProcessor('pcm', class extends AudioWorkletProcessor {
+      process(inputs) { if (inputs[0][0]) this.port.postMessage(inputs[0][0]); return true; } });`;
+    await audio.audioWorklet.addModule(URL.createObjectURL(new Blob([code], {type: 'text/javascript'})));
+    const worklet = new AudioWorkletNode(audio, 'pcm');
+    const socket = new WebSocket(`ws://${location.host}/mic`);
+    socket.binaryType = 'arraybuffer';
+    worklet.port.onmessage = ({data}) => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      const pcm = new Int16Array(data.length);
+      for (let i = 0; i < data.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, data[i] * 32767));
+      socket.send(pcm.buffer);
+    };
+    audio.createMediaStreamSource(stream).connect(worklet);
+    microphone = {stream, audio, socket};
+    button.setAttribute('aria-pressed', 'true');
+  } catch (e) {
+    error.textContent = `Microphone unavailable: ${e.message}`;
+  }
+};
+
+(async () => {
+  board = await (await fetch('/board')).json();
+  rate = board.devices.find(d => d.name === 'mic')?.settings.sample_hz ?? rate;
+  draw();
+  poll();
+  refresh();
+})();
 </script>
 </body>
 </html>
