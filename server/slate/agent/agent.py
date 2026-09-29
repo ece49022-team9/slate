@@ -2,6 +2,7 @@ import json
 
 from slate.agent.mcp_client import MCPManager
 from slate.agent.model import Model
+from slate.agent.memory import InMemoryMemory, Memory
 from slate.agent.tools import (
     TOOL_DEFINITIONS,
     TOOLS,
@@ -9,10 +10,14 @@ from slate.agent.tools import (
 
 
 class Agent:
-    def __init__(self):
-        self.model = Model("openrouter/free")
-
+    def __init__(
+        self,
+        model: str | None = None,
+        memory: Memory | None = None,
+    ):
+        self.model = Model(model)
         self.mcp = MCPManager()
+        self.memory = memory or InMemoryMemory()
 
     async def initialize(self):
         await self._connect_mcp_servers()
@@ -40,12 +45,14 @@ class Agent:
 
         all_tools = TOOL_DEFINITIONS + mcp_tools
 
-        messages = [
-            {
-                "role": "user",
-                "content": message,
-            }
-        ]
+        user_message = {
+            "role": "user",
+            "content": message,
+        }
+
+        messages = self.memory.get_context(message)
+
+        messages.append(user_message)
 
         while True:
             response = self.model.chat(
@@ -57,15 +64,27 @@ class Agent:
 
             assistant_message = choice.message
 
+            messages.append(
+                assistant_message.model_dump()
+            )
+
             if not assistant_message.tool_calls:
+                self.memory.add_message(user_message)
+
+                self.memory.add_message(
+                    {
+                        "role": "assistant",
+                        "content": assistant_message.content or "",
+                    }
+                )
+                
                 return assistant_message.content or ""
-
-            messages.append(assistant_message)
-
             for tool_call in assistant_message.tool_calls:
                 tool_name = tool_call.function.name
 
-                arguments = json.loads(tool_call.function.arguments or "{}")
+                arguments = json.loads(
+                    tool_call.function.arguments or "{}"
+                )
 
                 if tool_name in TOOLS:
                     result = TOOLS[tool_name](arguments)
@@ -82,10 +101,10 @@ class Agent:
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": (tool_call.id),
+                        "tool_call_id": tool_call.id,
                         "content": str(result),
                     }
-                )
+                    )
 
     async def close(self):
         await self.mcp.close()

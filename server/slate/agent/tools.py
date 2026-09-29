@@ -8,10 +8,8 @@ from slate.browser.tools import (
     browser_open,
 )
 
-
 def get_current_time():
     return datetime.now().astimezone().isoformat()
-
 
 TOOLS = {
     "get_current_time": lambda args: get_current_time(),
@@ -21,7 +19,6 @@ TOOLS = {
     "browser_activity": browser_activity,
     "browser_clear_activity": browser_clear_activity,
 }
-
 
 TOOL_DEFINITIONS = [
     {

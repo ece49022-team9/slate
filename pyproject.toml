@@ -9,8 +9,9 @@ dependencies = [
     "playwright>=1.63.0",
     "python-dotenv>=1.2.3",
     "uvicorn>=0.52.4,<0.53",
-    "mcp[cli]>=1.0.0", 
-    "httpx2>=0.1.0", 
+    "mcp[cli]>=1.0.0",
+    "httpx2>=0.1.0",
+    "turbopuffer>=2.10.2",
 ]
 
 [dependency-groups]

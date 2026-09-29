@@ -5,6 +5,7 @@ from openai import OpenAI
 
 load_dotenv()
 
+DEFAULT_MODEL = "openrouter/free"
 
 # using /free right now, can customize specific free models
 # 50 requests per day for free acounts
@@ -19,7 +20,7 @@ class Model:
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
         )
-        self.model = model
+        self.model = model or os.getenv("SLATE_MODEL", DEFAULT_MODEL)
 
     def chat(self, messages: list, tools: list | None = None):
         return self.client.chat.completions.create(
