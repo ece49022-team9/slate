@@ -414,6 +414,11 @@
         "filename": "ESP32_PRELIM_DESIGN.kicad_sch",
         "name": "Root",
         "uuid": "ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+      },
+      {
+        "filename": "power.kicad_sch",
+        "name": "power",
+        "uuid": "367b94e0-d2af-41e7-9adf-27a9965201d9"
       }
     ],
     "used_designators": "",
@@ -423,6 +428,10 @@
     [
       "ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb",
       "Root"
+    ],
+    [
+      "367b94e0-d2af-41e7-9adf-27a9965201d9",
+      "power"
     ]
   ],
   "text_variables": {},

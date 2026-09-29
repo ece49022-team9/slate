@@ -8,14 +8,21 @@ dependencies = [
     "openai>=3.14.0",
     "playwright>=1.63.0",
     "python-dotenv>=1.2.3",
-    "uvicorn>=0.52.4,<0.53",
     "mcp[cli]>=1.0.0",
     "httpx2>=0.1.0",
     "turbopuffer>=2.10.2",
+    "livekit==1.1.18",
+    "livekit-api==1.2.1",
+    "modal==1.5.5",
+    "uvicorn>=0.52.4,<0.53",
 ]
 
 [dependency-groups]
-dev = ["ruff>=0.15,<0.16"]
+dev = [
+    "httpx>=0.28,<0.29",
+    "hypothesis>=6.168.1",
+    "ruff>=0.15,<0.16",
+]
 
 [build-system]
 requires = ["hatchling"]

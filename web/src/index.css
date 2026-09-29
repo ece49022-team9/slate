@@ -14,5 +14,17 @@ h1 { margin: 0; font-size: 3rem; letter-spacing: -0.06em; }
 section { margin: 2rem 0; padding: 1.5rem; background: white; border: 1px solid #d8ddd8; }
 button { font: inherit; padding: 0.5rem 1rem; color: white; background: #264b41; border: 0; border-radius: 0.25rem; cursor: pointer; }
 button:disabled { opacity: 0.6; cursor: wait; }
+.controls { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.secondary { color: #264b41; background: #e9eeeb; }
+.talk { min-width: 8rem; touch-action: none; user-select: none; }
+.talk.active { background: #a73929; }
+.status { margin-top: 0; font-weight: 600; }
+.status.recording { color: #a73929; }
+.hint { margin-bottom: 0; font-size: 0.9rem; color: #565f5d; }
+.error { color: #a73929; }
+.transcript { min-height: 9rem; }
+.transcript h2 { margin-top: 0; font-size: 1rem; }
+.transcript p { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 600px) { main { margin: 2rem auto; } }
 a { color: #264b41; }
 :focus-visible { outline: 3px solid #986300; outline-offset: 3px; }

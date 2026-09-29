@@ -24,3 +24,4 @@ firmware/.vscode/
 Thumbs.db
 Desktop.ini
 .local/
+.hypothesis/
