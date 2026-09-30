@@ -13,11 +13,11 @@ def test(name, function):
         result = function()
 
         print("  Result:", result)
-        print(f"  ✓ PASS")
+        print("  ✓ PASS")
         passed += 1
 
     except Exception as error:
-        print(f"  ✗ FAIL")
+        print("  ✗ FAIL")
         print(f"  Error: {type(error).__name__}: {error}")
         failed += 1
 

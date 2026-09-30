@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Protocol
 
 import turbopuffer
@@ -137,7 +137,7 @@ class TurbopufferMemory:
                         "role": role,
                         "text": str(content),
                         "created_at": datetime.now(
-                            timezone.utc
+                            UTC
                         ).isoformat(),
                     }
                 ],

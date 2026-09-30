@@ -1,8 +1,8 @@
 import json
 
 from slate.agent.mcp_client import MCPManager
-from slate.agent.model import Model
 from slate.agent.memory import InMemoryMemory, Memory
+from slate.agent.model import Model
 from slate.agent.tools import (
     TOOL_DEFINITIONS,
     TOOLS,

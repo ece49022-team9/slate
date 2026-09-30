@@ -8,6 +8,7 @@ from slate.browser.tools import (
     browser_open,
 )
 
+
 def get_current_time():
     return datetime.now().astimezone().isoformat()
 
