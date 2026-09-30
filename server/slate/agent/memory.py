@@ -7,11 +7,9 @@ import turbopuffer
 
 
 class Memory(Protocol):
-    def get_context(self, query: str | None = None) -> list[dict]:
-        ...
+    def get_context(self, query: str | None = None) -> list[dict]: ...
 
-    def add_message(self, message: dict) -> None:
-        ...
+    def add_message(self, message: dict) -> None: ...
 
 
 class InMemoryMemory:
@@ -38,9 +36,7 @@ class TurbopufferMemory:
         api_key = os.getenv("TURBOPUFFER_API_KEY")
 
         if not api_key:
-            raise ValueError(
-                "TURBOPUFFER_API_KEY is not set"
-            )
+            raise ValueError("TURBOPUFFER_API_KEY is not set")
 
         self.user_id = user_id
         self.recent_messages = recent_messages
@@ -54,7 +50,8 @@ class TurbopufferMemory:
         )
 
         self.namespace = self.client.namespace(
-            namespace or os.getenv(
+            namespace
+            or os.getenv(
                 "TURBOPUFFER_NAMESPACE",
                 "slate-memory",
             )
@@ -104,8 +101,7 @@ class TurbopufferMemory:
                     {
                         "role": "system",
                         "content": (
-                            "Relevant memory from a previous "
-                            f"conversation:\n{text}"
+                            f"Relevant memory from a previous conversation:\n{text}"
                         ),
                     }
                 )
@@ -136,9 +132,7 @@ class TurbopufferMemory:
                         "user_id": self.user_id,
                         "role": role,
                         "text": str(content),
-                        "created_at": datetime.now(
-                            UTC
-                        ).isoformat(),
+                        "created_at": datetime.now(UTC).isoformat(),
                     }
                 ],
                 distance_metric="cosine_distance",

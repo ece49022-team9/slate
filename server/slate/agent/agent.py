@@ -64,9 +64,7 @@ class Agent:
 
             assistant_message = choice.message
 
-            messages.append(
-                assistant_message.model_dump()
-            )
+            messages.append(assistant_message.model_dump())
 
             if not assistant_message.tool_calls:
                 self.memory.add_message(user_message)
@@ -77,14 +75,12 @@ class Agent:
                         "content": assistant_message.content or "",
                     }
                 )
-                
+
                 return assistant_message.content or ""
             for tool_call in assistant_message.tool_calls:
                 tool_name = tool_call.function.name
 
-                arguments = json.loads(
-                    tool_call.function.arguments or "{}"
-                )
+                arguments = json.loads(tool_call.function.arguments or "{}")
 
                 if tool_name in TOOLS:
                     result = TOOLS[tool_name](arguments)
@@ -104,7 +100,7 @@ class Agent:
                         "tool_call_id": tool_call.id,
                         "content": str(result),
                     }
-                    )
+                )
 
     async def close(self):
         await self.mcp.close()

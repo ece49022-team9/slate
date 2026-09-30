@@ -7,6 +7,7 @@ load_dotenv()
 
 DEFAULT_MODEL = "openrouter/free"
 
+
 # using /free right now, can customize specific free models
 # 50 requests per day for free acounts
 class Model:

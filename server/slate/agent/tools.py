@@ -12,6 +12,7 @@ from slate.browser.tools import (
 def get_current_time():
     return datetime.now().astimezone().isoformat()
 
+
 TOOLS = {
     "get_current_time": lambda args: get_current_time(),
     "browser_open": browser_open,

@@ -1,8 +1,8 @@
-
 from slate.agent.agent import Agent
 
 passed = 0
 failed = 0
+
 
 def test(name, function):
     global passed, failed
