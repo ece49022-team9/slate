@@ -1,4 +1,4 @@
-# Slate — Backend ↔ Web App Event Schema
+# Backend ↔ Web App Event Schema
 Scope: Communication between the Python backend and the React web app only. Device ↔ backend audio/WebSocket traffic is a separate spec.
 
 ## 1. Goals
