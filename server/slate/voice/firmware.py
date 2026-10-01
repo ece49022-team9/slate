@@ -96,3 +96,4 @@ async def board_firmware(
         return await transcribe_audio(audio, api_url, RATE)
     finally:
         task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
