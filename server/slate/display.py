@@ -1,5 +1,6 @@
 import struct
 from array import array
+from collections.abc import Iterable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -111,14 +112,15 @@ async def serial(keys: Keys, request: Request):
 async def play_tone(request: Request):
     board, _ = load()
     rate = board["device"]["mic"]["sample_hz"]
-    request.app.state.bench.feed(stereo(tone(440, 8000, 1.5, rate), request.app))
+    bench = request.app.state.bench
+    bench.feed(mic_slot_pcm(tone(440, 8000, 1.5, rate), bench.slot))
     return {"tone": 440}
 
 
-def stereo(samples, app: FastAPI) -> bytes:
+def mic_slot_pcm(samples: Iterable[int], slot: int) -> bytes:
     mono = array("h", samples)
-    both = array("h", bytes(len(mono) * 4))
-    both[app.state.bench.slot :: 2] = mono
+    both = array("h", [0]) * (len(mono) * 2)
+    both[slot::2] = mono
     return both.tobytes()
 
 
@@ -128,7 +130,8 @@ async def microphone(socket: WebSocket):
     try:
         while True:
             data = await socket.receive_bytes()
-            socket.app.state.bench.feed(stereo(array("h", data), socket.app))
+            bench = socket.app.state.bench
+            bench.feed(mic_slot_pcm(array("h", data), bench.slot))
     except WebSocketDisconnect:
         return
 

@@ -156,6 +156,7 @@ async function poll() {
 
 const context = document.querySelector('#screen').getContext('2d');
 const image = context.createImageData(128, 128);
+let frameErrorReported = false;
 async function refresh() {
   try {
     const response = await fetch('/frame', {cache: 'no-store'});
@@ -167,8 +168,12 @@ async function refresh() {
         image.data.set([(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), 255], i * 4);
       }
       context.putImageData(image, 0, 0);
+      frameErrorReported = false;
     }
-  } catch (e) {}
+  } catch (e) {
+    if (!frameErrorReported) console.error('[slate.display] Frame refresh failed', e);
+    frameErrorReported = true;
+  }
   setTimeout(refresh, 60);
 }
 
@@ -206,7 +211,12 @@ document.querySelector('#mic').onclick = async event => {
     audio = new AudioContext({sampleRate: rate});
     const code = `registerProcessor('pcm', class extends AudioWorkletProcessor {
       process(inputs) { if (inputs[0][0]) this.port.postMessage(inputs[0][0]); return true; } });`;
-    await audio.audioWorklet.addModule(URL.createObjectURL(new Blob([code], {type: 'text/javascript'})));
+    const workletUrl = URL.createObjectURL(new Blob([code], {type: 'text/javascript'}));
+    try {
+      await audio.audioWorklet.addModule(workletUrl);
+    } finally {
+      URL.revokeObjectURL(workletUrl);
+    }
     const worklet = new AudioWorkletNode(audio, 'pcm');
     socket = new WebSocket(`ws://${location.host}/mic`);
     socket.binaryType = 'arraybuffer';
