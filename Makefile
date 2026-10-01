@@ -1,4 +1,4 @@
-.PHONY: setup server web check firmware firmware-setup firmware-sim firmware-check firmware-hardware flash monitor ports firmware-mic-check firmware-display firmware-display-check voice-deploy voice-check livekit
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check bench voice-deploy voice-check livekit
 
 MODAL_PROFILE ?= sudarshan-1
 ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
@@ -15,23 +15,43 @@ web:
 	npm --prefix web run dev
 
 check:
+	uv run python -m slate.board --check
 	uv run ruff check server scripts tests
 	uv run ruff format --check server scripts tests
 	uv run python -m unittest discover -s tests
 	npm --prefix web run lint
 	npm --prefix web run build
 
-firmware:
-	bash scripts/esp-idf.sh build
+board:
+	uv run python -m slate.board
 
-firmware-setup:
-	bash scripts/esp-idf.sh setup
+firmware: board
+	uv tool run --from platformio==6.2.0 pio run -d firmware
 
-firmware-sim:
-	bash scripts/esp-idf.sh qemu
+ports:
+	uv tool run --from platformio==6.2.0 pio device list
 
-firmware-check:
-	uv run python scripts/check_firmware.py
+flash: board
+	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make flash PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
+	uv tool run --from platformio==6.2.0 pio run -d firmware -t upload --upload-port "$(PORT)"
+
+monitor:
+	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make monitor PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
+	uv tool run --from platformio==6.2.0 pio device monitor -d firmware -p "$(PORT)" -b 921600
+
+bench: flash
+	uv run python scripts/check_bench.py "$(PORT)"
+
+sim-setup:
+	bash scripts/qemu.sh
+
+sim:
+	uv run python -m slate.display
+
+sim-check:
+	uv run python scripts/check_breadboard.py
+	uv run python scripts/check_mic.py
+	uv run python scripts/check_display.py
 
 voice-deploy:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run modal deploy -m slate.voice.stt
@@ -42,26 +62,3 @@ voice-check:
 
 livekit:
 	livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1
-
-firmware-hardware:
-	uv tool run --from platformio==6.2.0 pio run -d firmware
-
-ports:
-	uv tool run --from platformio==6.2.0 pio device list
-
-flash:
-	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make flash PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
-	uv tool run --from platformio==6.2.0 pio run -d firmware -t upload --upload-port "$(PORT)"
-
-monitor:
-	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make monitor PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
-	uv tool run --from platformio==6.2.0 pio device monitor -d firmware -p "$(PORT)" -b 115200
-
-firmware-mic-check:
-	uv run python scripts/check_mic.py
-
-firmware-display:
-	uv run python -m slate.display
-
-firmware-display-check:
-	uv run python scripts/check_display.py

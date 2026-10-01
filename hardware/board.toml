@@ -1,0 +1,13 @@
+mcu = "esp32-wroom-32"
+supply_v = 3.3
+
+[device.oled]
+part = "ssd1351"
+pins = { clk = 18, data = 23, cs = 5, dc = 16, reset = 17 }
+spi_hz = 16_000_000
+
+[device.mic]
+part = "mp34dt01"
+pins = { clk = 26, data = 36 }
+slot = "left"
+sample_hz = 16_000

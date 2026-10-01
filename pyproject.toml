@@ -8,11 +8,13 @@ dependencies = [
     "livekit==1.1.18",
     "livekit-api==1.2.1",
     "modal==1.5.5",
+    "pyserial-asyncio-fast>=0.16",
     "uvicorn>=0.52.4,<0.53",
 ]
 
 [dependency-groups]
 dev = [
+    "esptool>=5.1,<6",
     "httpx>=0.28,<0.29",
     "hypothesis>=6.168.1",
     "ruff>=0.15,<0.16",

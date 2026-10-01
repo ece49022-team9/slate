@@ -27,22 +27,20 @@ static void capture(void*) {
   }
 }
 
-void pdm_start(int clock_pin, int data_pin) {
-  ESP_ERROR_CHECK(GPIO_IS_VALID_OUTPUT_GPIO(clock_pin) && GPIO_IS_VALID_GPIO(data_pin)
-                      && clock_pin != data_pin ? ESP_OK : ESP_ERR_INVALID_ARG);
+void pdm_start() {
   i2s_chan_config_t channel = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   channel.dma_desc_num = 6;
   channel.dma_frame_num = MIC_FRAME_SAMPLES;
   ESP_ERROR_CHECK(i2s_new_channel(&channel, nullptr, &receiver));
   i2s_pdm_rx_config_t config = {};
-  config.clk_cfg = I2S_PDM_RX_CLK_DEFAULT_CONFIG(MIC_SAMPLE_RATE);
+  config.clk_cfg = I2S_PDM_RX_CLK_DEFAULT_CONFIG(MIC_SAMPLE_HZ);
   config.slot_cfg = I2S_PDM_RX_SLOT_PCM_FMT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
   config.slot_cfg.slot_mask = I2S_PDM_SLOT_BOTH;
-  config.gpio_cfg.clk = static_cast<gpio_num_t>(clock_pin);
-  config.gpio_cfg.din = static_cast<gpio_num_t>(data_pin);
+  config.gpio_cfg.clk = static_cast<gpio_num_t>(MIC_CLK);
+  config.gpio_cfg.din = static_cast<gpio_num_t>(MIC_DATA);
   ESP_ERROR_CHECK(i2s_channel_init_pdm_rx_mode(receiver, &config));
   ESP_ERROR_CHECK(i2s_channel_enable(receiver));
   BaseType_t created = xTaskCreate(capture, "PDM", 4096, nullptr, 6, nullptr);
   configASSERT(created == pdPASS);
-  ESP_LOGI("slate.pdm", "Capturing left/right PCM at %u Hz", MIC_SAMPLE_RATE);
+  ESP_LOGI("slate.pdm", "Capturing left/right PCM at %u Hz", MIC_SAMPLE_HZ);
 }

@@ -1,0 +1,786 @@
+diff --git a/hw/char/esp32_uart.c b/hw/char/esp32_uart.c
+index 41de9cf..396561a 100644
+--- a/hw/char/esp32_uart.c
++++ b/hw/char/esp32_uart.c
+@@ -29,6 +29,8 @@
+ static gboolean uart_transmit(void *do_not_use, GIOCondition cond, void *opaque);
+ static void uart_receive(void *opaque, const uint8_t *buf, int size);
+ 
++void (*esp32_uart_tx_hook)(Chardev *chr, uint8_t byte);
++
+ 
+ void esp32_uart_update_irq(ESP32UARTState *s)
+ {
+@@ -218,12 +220,20 @@ static gboolean uart_transmit(void *do_not_use, GIOCondition cond, void *opaque)
+ 
+     /* drain the fifo instantly, if the char device backend is not connected */
+     if (!qemu_chr_fe_backend_open(&s->chr)) {
+-        fifo8_reset(&s->tx_fifo);
++        while (fifo8_num_used(&s->tx_fifo) > 0) {
++            uint8_t b = fifo8_pop(&s->tx_fifo);
++            if (esp32_uart_tx_hook) {
++                esp32_uart_tx_hook(qemu_chr_fe_get_driver(&s->chr), b);
++            }
++        }
+         return FALSE;
+     }
+ 
+     while (fifo8_num_used(&s->tx_fifo) > 0) {
+         uint8_t b = fifo8_peek(&s->tx_fifo);
++        if (esp32_uart_tx_hook) {
++            esp32_uart_tx_hook(qemu_chr_fe_get_driver(&s->chr), b);
++        }
+         int r = qemu_chr_fe_write(&s->chr, &b, 1);
+         if (r == 1) {
+             fifo8_pop(&s->tx_fifo);
+diff --git a/hw/gpio/esp32_gpio.c b/hw/gpio/esp32_gpio.c
+index 4fea1f5..cb27407 100644
+--- a/hw/gpio/esp32_gpio.c
++++ b/hw/gpio/esp32_gpio.c
+@@ -24,21 +24,70 @@
+ static uint64_t esp32_gpio_read(void *opaque, hwaddr addr, unsigned int size)
+ {
+     Esp32GpioState *s = ESP32_GPIO(opaque);
++    uint64_t level = (s->in & ~s->enable) | (s->out & s->enable);
+     uint64_t r = 0;
+     switch (addr) {
+     case A_GPIO_STRAP:
+         r = s->strap_mode;
+         break;
+-
++    case A_GPIO_OUT:
++        r = (uint32_t) s->out;
++        break;
++    case A_GPIO_OUT1:
++        r = s->out >> 32;
++        break;
++    case A_GPIO_ENABLE:
++        r = (uint32_t) s->enable;
++        break;
++    case A_GPIO_ENABLE1:
++        r = s->enable >> 32;
++        break;
++    case A_GPIO_IN:
++        r = (uint32_t) level;
++        break;
++    case A_GPIO_IN1:
++        r = level >> 32;
++        break;
+     default:
+         break;
+     }
+     return r;
+ }
+ 
++static uint64_t esp32_gpio_apply(uint64_t current, hwaddr offset, uint64_t value)
++{
++    switch (offset) {
++    case 0x0:
++        return value;
++    case 0x4:
++        return current | value;
++    default:
++        return current & ~value;
++    }
++}
++
+ static void esp32_gpio_write(void *opaque, hwaddr addr,
+                        uint64_t value, unsigned int size)
+ {
++    Esp32GpioState *s = ESP32_GPIO(opaque);
++    uint64_t before = s->out;
++    if (addr >= A_GPIO_OUT && addr <= A_GPIO_OUT_W1TC) {
++        uint64_t low = esp32_gpio_apply((uint32_t) s->out, addr - A_GPIO_OUT, value);
++        s->out = (s->out & ~0xffffffffULL) | (uint32_t) low;
++    } else if (addr >= A_GPIO_OUT1 && addr <= A_GPIO_OUT1_W1TC) {
++        uint64_t high = esp32_gpio_apply(s->out >> 32, addr - A_GPIO_OUT1, value);
++        s->out = (s->out & 0xffffffffULL) | (high << 32);
++    } else if (addr >= A_GPIO_ENABLE && addr <= A_GPIO_ENABLE_W1TC) {
++        uint64_t low = esp32_gpio_apply((uint32_t) s->enable, addr - A_GPIO_ENABLE, value);
++        s->enable = (s->enable & ~0xffffffffULL) | (uint32_t) low;
++    } else if (addr >= A_GPIO_ENABLE1 && addr <= A_GPIO_ENABLE1_W1TC) {
++        uint64_t high = esp32_gpio_apply(s->enable >> 32, addr - A_GPIO_ENABLE1, value);
++        s->enable = (s->enable & 0xffffffffULL) | (high << 32);
++    }
++    for (uint64_t changed = before ^ s->out; changed; changed &= changed - 1) {
++        int pin = ctz64(changed);
++        qemu_set_irq(s->pins[pin], (s->out >> pin) & 1);
++    }
+ }
+ 
+ static const MemoryRegionOps uart_ops = {
+@@ -49,6 +98,9 @@ static const MemoryRegionOps uart_ops = {
+ 
+ static void esp32_gpio_reset_hold(Object *obj, ResetType type)
+ {
++    Esp32GpioState *s = ESP32_GPIO(obj);
++    s->out = 0;
++    s->enable = 0;
+ }
+ 
+ static void esp32_gpio_realize(DeviceState *dev, Error **errp)
+@@ -67,6 +119,7 @@ static void esp32_gpio_init(Object *obj)
+                           TYPE_ESP32_GPIO, 0x1000);
+     sysbus_init_mmio(sbd, &s->iomem);
+     sysbus_init_irq(sbd, &s->irq);
++    qdev_init_gpio_out_named(DEVICE(obj), s->pins, ESP32_GPIO_OUT, ESP32_GPIO_PINS);
+ }
+ 
+ static Property esp32_gpio_properties[] = {
+diff --git a/hw/misc/esp32_i2s.c b/hw/misc/esp32_i2s.c
+new file mode 100644
+index 0000000..d6a2366
+--- /dev/null
++++ b/hw/misc/esp32_i2s.c
+@@ -0,0 +1,224 @@
++/*
++ * ESP32 I2S receive with DMA, enough for the ESP-IDF PDM RX driver.
++ *
++ * Received PCM is pushed with esp32_i2s_push() as interleaved 16-bit
++ * left/right samples. When none is queued, the microphone slots read silence.
++ * Samples are delivered at the "sample-rate" property, in virtual time.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/error-report.h"
++#include "qapi/error.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "exec/address-spaces.h"
++#include "hw/misc/esp32_i2s.h"
++
++#define R_CONF (0x08 / 4)
++#define R_INT_RAW (0x0c / 4)
++#define R_INT_ST (0x10 / 4)
++#define R_INT_ENA (0x14 / 4)
++#define R_INT_CLR (0x18 / 4)
++#define R_RXEOF_NUM (0x24 / 4)
++#define R_IN_LINK (0x34 / 4)
++#define R_IN_EOF_DES_ADDR (0x3c / 4)
++#define R_LC_CONF (0x60 / 4)
++#define R_STATE (0xbc / 4)
++
++#define CONF_RX_RESET BIT(1)
++#define CONF_RX_START BIT(5)
++#define IN_LINK_ADDR 0xfffff
++#define IN_LINK_STOP BIT(28)
++#define IN_LINK_START BIT(29)
++#define LC_IN_RST BIT(0)
++#define INT_IN_DONE BIT(8)
++#define INT_IN_SUC_EOF BIT(9)
++#define DMA_BASE 0x3ff00000
++#define AUDIO_BYTES 65536
++
++static void esp32_i2s_update_irq(Esp32I2sState *s)
++{
++    qemu_set_irq(s->irq, (s->regs[R_INT_RAW] & s->regs[R_INT_ENA]) != 0);
++}
++
++static uint32_t esp32_i2s_eof_bytes(Esp32I2sState *s)
++{
++    return MAX(s->regs[R_RXEOF_NUM], 1) * 4;
++}
++
++static void esp32_i2s_schedule(Esp32I2sState *s)
++{
++    bool running = s->linked && (s->regs[R_CONF] & CONF_RX_START);
++    if (!running) {
++        timer_del(&s->timer);
++        return;
++    }
++    if (!timer_pending(&s->timer)) {
++        int64_t ns = (int64_t) esp32_i2s_eof_bytes(s) * NANOSECONDS_PER_SECOND
++                     / ((int64_t) s->sample_rate * 4);
++        timer_mod(&s->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + ns);
++    }
++}
++
++static void esp32_i2s_receive_block(void *opaque)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    uint32_t remaining = esp32_i2s_eof_bytes(s);
++    uint32_t last = s->descriptor;
++    while (remaining && s->descriptor) {
++        uint32_t desc[3];
++        address_space_read(&address_space_memory, s->descriptor,
++                           MEMTXATTRS_UNSPECIFIED, desc, sizeof(desc));
++        uint32_t size = desc[0] & 0xfff;
++        uint32_t length = MIN(size, remaining);
++        g_autofree uint8_t *data = g_malloc0(length);
++        uint32_t available = MIN(fifo8_num_used(&s->audio), length);
++        if (available) {
++            fifo8_pop_buf(&s->audio, data, available);
++        }
++        address_space_write(&address_space_memory, desc[1],
++                            MEMTXATTRS_UNSPECIFIED, data, length);
++        remaining -= length;
++        desc[0] = (desc[0] & ~(0xfffu << 12) & ~BIT(31)) | (length << 12);
++        if (!remaining) {
++            desc[0] |= BIT(30);
++        }
++        address_space_write(&address_space_memory, s->descriptor,
++                            MEMTXATTRS_UNSPECIFIED, desc, 4);
++        last = s->descriptor;
++        s->descriptor = desc[2];
++    }
++    s->regs[R_IN_EOF_DES_ADDR] = last;
++    s->regs[R_INT_RAW] |= INT_IN_DONE | INT_IN_SUC_EOF;
++    esp32_i2s_update_irq(s);
++    esp32_i2s_schedule(s);
++}
++
++static uint64_t esp32_i2s_read(void *opaque, hwaddr addr, unsigned int size)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    unsigned reg = addr / 4;
++    if (reg == R_INT_ST) {
++        return s->regs[R_INT_RAW] & s->regs[R_INT_ENA];
++    }
++    return reg < ARRAY_SIZE(s->regs) ? s->regs[reg] : 0;
++}
++
++static void esp32_i2s_write(void *opaque, hwaddr addr, uint64_t value,
++                            unsigned int size)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    unsigned reg = addr / 4;
++    if (reg >= ARRAY_SIZE(s->regs)) {
++        return;
++    }
++    switch (reg) {
++    case R_INT_CLR:
++        s->regs[R_INT_RAW] &= ~value;
++        esp32_i2s_update_irq(s);
++        return;
++    case R_INT_ENA:
++        s->regs[reg] = value;
++        esp32_i2s_update_irq(s);
++        return;
++    case R_IN_LINK:
++        if (value & IN_LINK_STOP) {
++            s->linked = false;
++        }
++        if (value & IN_LINK_START) {
++            s->descriptor = DMA_BASE | (value & IN_LINK_ADDR);
++            s->linked = true;
++        }
++        s->regs[reg] = value & ~(IN_LINK_START | IN_LINK_STOP);
++        break;
++    case R_CONF:
++        if (value & CONF_RX_RESET) {
++            fifo8_reset(&s->audio);
++        }
++        s->regs[reg] = value;
++        break;
++    case R_LC_CONF:
++        if (value & LC_IN_RST) {
++            s->linked = false;
++        }
++        s->regs[reg] = value;
++        break;
++    default:
++        s->regs[reg] = value;
++    }
++    esp32_i2s_schedule(s);
++}
++
++void esp32_i2s_push(Esp32I2sState *s, const uint8_t *data, uint32_t len)
++{
++    if (len > fifo8_num_free(&s->audio)) {
++        error_report("esp32.i2s: microphone buffer overflow");
++        exit(1);
++    }
++    fifo8_push_all(&s->audio, data, len);
++}
++
++static const MemoryRegionOps esp32_i2s_ops = {
++    .read = esp32_i2s_read,
++    .write = esp32_i2s_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++};
++
++static void esp32_i2s_reset_hold(Object *obj, ResetType type)
++{
++    Esp32I2sState *s = ESP32_I2S(obj);
++    memset(s->regs, 0, sizeof(s->regs));
++    s->linked = false;
++    s->descriptor = 0;
++    timer_del(&s->timer);
++    fifo8_reset(&s->audio);
++}
++
++static void esp32_i2s_realize(DeviceState *dev, Error **errp)
++{
++    Esp32I2sState *s = ESP32_I2S(dev);
++    if (!s->sample_rate) {
++        error_setg(errp, "esp32.i2s needs a nonzero sample-rate");
++        return;
++    }
++}
++
++static void esp32_i2s_init(Object *obj)
++{
++    Esp32I2sState *s = ESP32_I2S(obj);
++    memory_region_init_io(&s->iomem, obj, &esp32_i2s_ops, s, TYPE_ESP32_I2S, 0x1000);
++    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->iomem);
++    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq);
++    fifo8_create(&s->audio, AUDIO_BYTES);
++    timer_init_ns(&s->timer, QEMU_CLOCK_VIRTUAL, esp32_i2s_receive_block, s);
++}
++
++static Property esp32_i2s_properties[] = {
++    DEFINE_PROP_UINT32("sample-rate", Esp32I2sState, sample_rate, 16000),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void esp32_i2s_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++    rc->phases.hold = esp32_i2s_reset_hold;
++    dc->realize = esp32_i2s_realize;
++    device_class_set_props(dc, esp32_i2s_properties);
++}
++
++static const TypeInfo esp32_i2s_info = {
++    .name = TYPE_ESP32_I2S,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(Esp32I2sState),
++    .instance_init = esp32_i2s_init,
++    .class_init = esp32_i2s_class_init,
++};
++
++static void esp32_i2s_register_types(void)
++{
++    type_register_static(&esp32_i2s_info);
++}
++
++type_init(esp32_i2s_register_types)
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index 4c2b5b3..9406866 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -145,7 +145,9 @@ system_ss.add(when: 'CONFIG_XTENSA_ESP32', if_true: files(
+   'esp32_aes.c',
+   'esp32_ledc.c',
+   'esp32_flash_enc.c',
+-  'ssi_psram.c'
++  'ssi_psram.c',
++  'slate_board.c',
++  'esp32_i2s.c'
+ ))
+ 
+ system_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
+diff --git a/hw/misc/slate_board.c b/hw/misc/slate_board.c
+new file mode 100644
+index 0000000..e7c4f5f
+--- /dev/null
++++ b/hw/misc/slate_board.c
+@@ -0,0 +1,181 @@
++/*
++ * Slate breadboard bridge. QEMU and the Slate part models run in lockstep over
++ * one character device, so a run replays exactly given the same inputs.
++ *
++ * QEMU to Python: kind (1 byte), virtual time in ns (8 bytes), payload length
++ * (2 bytes), payload. All integers are little endian.
++ *   'G' payload: pin, level
++ *   'S' payload: bytes written on VSPI
++ *   'O' payload: bytes written by UART0
++ *   'T' empty: emulated time reached the next tick; QEMU waits for Python
++ *
++ * Python to QEMU, only after 'T': kind (1 byte), payload length (2 bytes),
++ * payload.
++ *   'U' payload: bytes to receive on UART0
++ *   'A' payload: interleaved 16-bit left/right PCM for the I2S0 microphones
++ *   'R' empty: resume until the next tick
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/timer.h"
++#include "qemu/error-report.h"
++#include "qapi/error.h"
++#include "hw/irq.h"
++#include "hw/qdev-properties.h"
++#include "hw/qdev-properties-system.h"
++#include "hw/char/esp32_uart.h"
++#include "hw/misc/slate_board.h"
++
++static SlateBoardState *slate_board;
++
++static void slate_board_send(SlateBoardState *s, uint8_t kind, int64_t ns,
++                             const uint8_t *payload, uint16_t len)
++{
++    uint8_t header[11];
++    header[0] = kind;
++    stq_le_p(header + 1, ns);
++    stw_le_p(header + 9, len);
++    if (qemu_chr_fe_write_all(&s->chr, header, sizeof(header)) != sizeof(header) ||
++        qemu_chr_fe_write_all(&s->chr, payload, len) != len) {
++        error_report("slate.board: lost connection to the part models");
++        exit(1);
++    }
++}
++
++static void slate_board_flush(SlateBoardState *s)
++{
++    if (s->pending_len) {
++        slate_board_send(s, s->pending_kind, s->pending_ns, s->pending, s->pending_len);
++        s->pending_len = 0;
++    }
++}
++
++static void slate_board_append(SlateBoardState *s, uint8_t kind, uint8_t byte)
++{
++    if (s->pending_len && s->pending_kind != kind) {
++        slate_board_flush(s);
++    }
++    if (!s->pending_len) {
++        s->pending_kind = kind;
++        s->pending_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    }
++    s->pending[s->pending_len++] = byte;
++    if (s->pending_len == SLATE_BOARD_BUFFER) {
++        slate_board_flush(s);
++    }
++}
++
++static uint32_t slate_board_transfer(SSIPeripheral *dev, uint32_t value)
++{
++    slate_board_append(SLATE_BOARD(dev), 'S', value);
++    return 0;
++}
++
++static void slate_board_uart_tx(Chardev *chr, uint8_t byte)
++{
++    if (slate_board && chr == slate_board->uart) {
++        slate_board_append(slate_board, 'O', byte);
++    }
++}
++
++static void slate_board_pin(void *opaque, int pin, int level)
++{
++    SlateBoardState *s = SLATE_BOARD(opaque);
++    uint8_t payload[] = { pin, level != 0 };
++    slate_board_flush(s);
++    slate_board_send(s, 'G', qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL), payload, 2);
++}
++
++static void slate_board_read(SlateBoardState *s, uint8_t *buf, int len)
++{
++    if (len && qemu_chr_fe_read_all(&s->chr, buf, len) != len) {
++        error_report("slate.board: lost connection to the part models");
++        exit(1);
++    }
++}
++
++static void slate_board_deliver_uart(SlateBoardState *s)
++{
++    uint32_t room = MIN(qemu_chr_be_can_write(s->uart), fifo8_num_used(&s->uart_in));
++    if (room) {
++        uint8_t bytes[SLATE_BOARD_UART_IN];
++        uint32_t len = fifo8_pop_buf(&s->uart_in, bytes, room);
++        qemu_chr_be_write(s->uart, bytes, len);
++    }
++}
++
++static void slate_board_tick(void *opaque)
++{
++    SlateBoardState *s = SLATE_BOARD(opaque);
++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    slate_board_flush(s);
++    slate_board_send(s, 'T', now, NULL, 0);
++    for (;;) {
++        uint8_t header[3];
++        slate_board_read(s, header, sizeof(header));
++        uint16_t len = lduw_le_p(header + 1);
++        g_autofree uint8_t *payload = g_malloc(MAX(len, 1));
++        slate_board_read(s, payload, len);
++        if (header[0] == 'R') {
++            break;
++        } else if (header[0] == 'U') {
++            if (len > fifo8_num_free(&s->uart_in)) {
++                error_report("slate.board: UART0 input overflow");
++                exit(1);
++            }
++            fifo8_push_all(&s->uart_in, payload, len);
++        } else if (header[0] == 'A') {
++            esp32_i2s_push(s->i2s, payload, len);
++        } else {
++            error_report("slate.board: unknown message %c", header[0]);
++            exit(1);
++        }
++    }
++    slate_board_deliver_uart(s);
++    timer_mod(&s->tick, now + s->tick_ns);
++}
++
++static void slate_board_realize(SSIPeripheral *dev, Error **errp)
++{
++    SlateBoardState *s = SLATE_BOARD(dev);
++    if (!qemu_chr_fe_backend_connected(&s->chr)) {
++        error_setg(errp, "slate.board needs a chardev");
++        return;
++    }
++    qdev_init_gpio_in_named(DEVICE(dev), slate_board_pin, "pin", SLATE_BOARD_PINS);
++    fifo8_create(&s->uart_in, SLATE_BOARD_UART_IN);
++    timer_init_ns(&s->tick, QEMU_CLOCK_VIRTUAL, slate_board_tick, s);
++    timer_mod(&s->tick, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->tick_ns);
++    slate_board = s;
++    esp32_uart_tx_hook = slate_board_uart_tx;
++}
++
++static Property slate_board_properties[] = {
++    DEFINE_PROP_CHR("chardev", SlateBoardState, chr),
++    DEFINE_PROP_UINT32("tick-ns", SlateBoardState, tick_ns, 1000000),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void slate_board_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    SSIPeripheralClass *k = SSI_PERIPHERAL_CLASS(klass);
++    k->realize = slate_board_realize;
++    k->transfer = slate_board_transfer;
++    k->cs_polarity = SSI_CS_NONE;
++    device_class_set_props(dc, slate_board_properties);
++}
++
++static const TypeInfo slate_board_info = {
++    .name = TYPE_SLATE_BOARD,
++    .parent = TYPE_SSI_PERIPHERAL,
++    .instance_size = sizeof(SlateBoardState),
++    .class_init = slate_board_class_init,
++};
++
++static void slate_board_register_types(void)
++{
++    type_register_static(&slate_board_info);
++}
++
++type_init(slate_board_register_types)
+diff --git a/hw/ssi/esp32_spi.c b/hw/ssi/esp32_spi.c
+index f47bfca..4d0d12f 100644
+--- a/hw/ssi/esp32_spi.c
++++ b/hw/ssi/esp32_spi.c
+@@ -275,7 +275,7 @@ static void esp32_spi_do_command(Esp32SpiState* s, uint32_t cmd_reg)
+ 
+     case R_SPI_CMD_USR_MASK:
+         maybe_encrypt_data(s);
+-        if (FIELD_EX32(s->user_reg, SPI_USER, COMMAND) || FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_BITLEN)) {
++        if (FIELD_EX32(s->user_reg, SPI_USER, COMMAND)) {
+             t.cmd = FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_VALUE);
+             t.cmd_bytes = bitlen_to_bytes(FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_BITLEN));
+         } else {
+diff --git a/hw/xtensa/esp32.c b/hw/xtensa/esp32.c
+index e000470..9b1a9fb 100644
+--- a/hw/xtensa/esp32.c
++++ b/hw/xtensa/esp32.c
+@@ -37,6 +37,8 @@
+ #include "exec/exec-all.h"
+ #include "net/net.h"
+ #include "elf.h"
++#include "chardev/char.h"
++#include "hw/misc/slate_board.h"
+ 
+ #define TYPE_ESP32_SOC "xtensa.esp32"
+ #define ESP32_SOC(obj) OBJECT_CHECK(Esp32SocState, (obj), TYPE_ESP32_SOC)
+@@ -415,6 +417,11 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
+     qdev_realize(DEVICE(&s->gpio), &s->periph_bus, &error_fatal);
+     esp32_soc_add_periph_device(sys_mem, &s->gpio, DR_REG_GPIO_BASE);
+ 
++    qdev_realize(DEVICE(&s->i2s0), &s->periph_bus, &error_fatal);
++    esp32_soc_add_periph_device(sys_mem, &s->i2s0, DR_REG_I2S_BASE);
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2s0), 0,
++                       qdev_get_gpio_in(intmatrix_dev, ETS_I2S0_INTR_SOURCE));
++
+     for (int i = 0; i < ESP32_UART_COUNT; ++i) {
+         const hwaddr uart_base[] = {DR_REG_UART_BASE, DR_REG_UART1_BASE, DR_REG_UART2_BASE};
+         qdev_realize(DEVICE(&s->uart[i]), &s->periph_bus, &error_fatal);
+@@ -524,7 +531,6 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
+     esp32_soc_add_unimp_device(sys_mem, "esp32.slc", DR_REG_SLC_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.slchost", DR_REG_SLCHOST_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.apbctrl", DR_REG_APB_CTRL_BASE, 0x1000);
+-    esp32_soc_add_unimp_device(sys_mem, "esp32.i2s0", DR_REG_I2S_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.i2s1", DR_REG_I2S1_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.rmt", DR_REG_RMT_BASE, 0x1000);
+     esp32_soc_add_unimp_device(sys_mem, "esp32.pcnt", DR_REG_PCNT_BASE, 0x1000);
+@@ -597,6 +603,7 @@ static void esp32_soc_init(Object *obj)
+     object_property_add_alias(obj, "serial2", OBJECT(&s->uart[2]), "chardev");
+ 
+     object_initialize_child(obj, "gpio", &s->gpio, TYPE_ESP32_GPIO);
++    object_initialize_child(obj, "i2s0", &s->i2s0, TYPE_ESP32_I2S);
+ 
+     object_initialize_child(obj, "dport", &s->dport, TYPE_ESP32_DPORT);
+ 
+@@ -754,6 +761,24 @@ static void esp32_machine_init_i2c(Esp32SocState *s)
+     object_property_set_int(OBJECT(tmp105), "temperature", 25 * 1000, &error_fatal);
+ }
+ 
++static void esp32_machine_init_slate(Esp32SocState *ss)
++{
++    Chardev *chr = qemu_chr_find("slate");
++    if (!chr) {
++        return;
++    }
++    BusState *vspi = qdev_get_child_bus(DEVICE(&ss->spi[3]), "spi");
++    DeviceState *board = qdev_new(TYPE_SLATE_BOARD);
++    qdev_prop_set_chr(board, "chardev", chr);
++    SLATE_BOARD(board)->uart = serial_hd(0);
++    SLATE_BOARD(board)->i2s = &ss->i2s0;
++    qdev_realize_and_unref(board, vspi, &error_fatal);
++    for (int pin = 0; pin < ESP32_GPIO_PINS; ++pin) {
++        qdev_connect_gpio_out_named(DEVICE(&ss->gpio), ESP32_GPIO_OUT, pin,
++                                    qdev_get_gpio_in_named(board, "pin", pin));
++    }
++}
++
+ static void esp32_machine_init_openeth(Esp32SocState *ss)
+ {
+     SysBusDevice *sbd;
+@@ -827,6 +852,7 @@ static void esp32_machine_init(MachineState *machine)
+     }
+ 
+     esp32_machine_init_i2c(ss);
++    esp32_machine_init_slate(ss);
+ 
+     esp32_machine_init_openeth(ss);
+ 
+diff --git a/include/hw/char/esp32_uart.h b/include/hw/char/esp32_uart.h
+index 3a84fe9..6f49b87 100644
+--- a/include/hw/char/esp32_uart.h
++++ b/include/hw/char/esp32_uart.h
+@@ -120,6 +120,9 @@ typedef struct ESPUARTClass {
+  */
+ void esp32_uart_set_rx_timeout(ESP32UARTState *s);
+ 
++/* Called with every byte a UART sends, before it reaches its character device. */
++extern void (*esp32_uart_tx_hook)(Chardev *chr, uint8_t byte);
++
+ 
+ /**
+  * @brief Check the current state of the UART FIFOs and trigger an interrupt if enabled and if any reached
+diff --git a/include/hw/gpio/esp32_gpio.h b/include/hw/gpio/esp32_gpio.h
+index 163b41a..ce50394 100644
+--- a/include/hw/gpio/esp32_gpio.h
++++ b/include/hw/gpio/esp32_gpio.h
+@@ -9,10 +9,26 @@
+ #define ESP32_GPIO_GET_CLASS(obj)   OBJECT_GET_CLASS(Esp32GpioClass, obj, TYPE_ESP32_GPIO)
+ #define ESP32_GPIO_CLASS(klass)     OBJECT_CLASS_CHECK(Esp32GpioClass, klass, TYPE_ESP32_GPIO)
+ 
++REG32(GPIO_OUT, 0x0004)
++REG32(GPIO_OUT_W1TS, 0x0008)
++REG32(GPIO_OUT_W1TC, 0x000C)
++REG32(GPIO_OUT1, 0x0010)
++REG32(GPIO_OUT1_W1TS, 0x0014)
++REG32(GPIO_OUT1_W1TC, 0x0018)
++REG32(GPIO_ENABLE, 0x0020)
++REG32(GPIO_ENABLE_W1TS, 0x0024)
++REG32(GPIO_ENABLE_W1TC, 0x0028)
++REG32(GPIO_ENABLE1, 0x002C)
++REG32(GPIO_ENABLE1_W1TS, 0x0030)
++REG32(GPIO_ENABLE1_W1TC, 0x0034)
+ REG32(GPIO_STRAP, 0x0038)
++REG32(GPIO_IN, 0x003C)
++REG32(GPIO_IN1, 0x0040)
+ 
+ #define ESP32_STRAP_MODE_FLASH_BOOT 0x12
+ #define ESP32_STRAP_MODE_UART_BOOT  0x0f
++#define ESP32_GPIO_PINS 64
++#define ESP32_GPIO_OUT "gpio-out"
+ 
+ typedef struct Esp32GpioState {
+     SysBusDevice parent_obj;
+@@ -20,6 +36,10 @@ typedef struct Esp32GpioState {
+     MemoryRegion iomem;
+     qemu_irq irq;
+     uint32_t strap_mode;
++    uint64_t out;
++    uint64_t enable;
++    uint64_t in;
++    qemu_irq pins[ESP32_GPIO_PINS];
+ } Esp32GpioState;
+ 
+ typedef struct Esp32GpioClass {
+diff --git a/include/hw/misc/esp32_i2s.h b/include/hw/misc/esp32_i2s.h
+new file mode 100644
+index 0000000..ffc7c84
+--- /dev/null
++++ b/include/hw/misc/esp32_i2s.h
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include "hw/sysbus.h"
++#include "qemu/fifo8.h"
++#include "qemu/timer.h"
++
++#define TYPE_ESP32_I2S "esp32.i2s"
++OBJECT_DECLARE_SIMPLE_TYPE(Esp32I2sState, ESP32_I2S)
++
++struct Esp32I2sState {
++    SysBusDevice parent_obj;
++    MemoryRegion iomem;
++    qemu_irq irq;
++    Fifo8 audio;
++    QEMUTimer timer;
++    uint32_t sample_rate;
++    uint32_t regs[0x100 / 4];
++    uint32_t descriptor;
++    bool linked;
++};
++
++void esp32_i2s_push(Esp32I2sState *s, const uint8_t *data, uint32_t len);
+diff --git a/include/hw/misc/slate_board.h b/include/hw/misc/slate_board.h
+new file mode 100644
+index 0000000..2b4efc2
+--- /dev/null
++++ b/include/hw/misc/slate_board.h
+@@ -0,0 +1,28 @@
++#pragma once
++
++#include "hw/ssi/ssi.h"
++#include "chardev/char-fe.h"
++#include "qemu/fifo8.h"
++#include "qemu/timer.h"
++#include "hw/misc/esp32_i2s.h"
++
++#define TYPE_SLATE_BOARD "slate.board"
++OBJECT_DECLARE_SIMPLE_TYPE(SlateBoardState, SLATE_BOARD)
++
++#define SLATE_BOARD_PINS 64
++#define SLATE_BOARD_BUFFER 4096
++#define SLATE_BOARD_UART_IN 256
++
++struct SlateBoardState {
++    SSIPeripheral parent_obj;
++    CharBackend chr;
++    uint32_t tick_ns;
++    QEMUTimer tick;
++    Chardev *uart;
++    Esp32I2sState *i2s;
++    Fifo8 uart_in;
++    uint8_t pending_kind;
++    uint8_t pending[SLATE_BOARD_BUFFER];
++    uint16_t pending_len;
++    int64_t pending_ns;
++};
+diff --git a/include/hw/xtensa/esp32.h b/include/hw/xtensa/esp32.h
+index fc1f927..06dc006 100644
+--- a/include/hw/xtensa/esp32.h
++++ b/include/hw/xtensa/esp32.h
+@@ -6,6 +6,7 @@
+ #include "hw/misc/esp32_reg.h"
+ #include "hw/char/esp32_uart.h"
+ #include "hw/gpio/esp32_gpio.h"
++#include "hw/misc/esp32_i2s.h"
+ #include "hw/misc/esp32_dport.h"
+ #include "hw/misc/esp32_rtc_cntl.h"
+ #include "hw/misc/esp32_rng.h"
+@@ -37,6 +38,7 @@ typedef struct Esp32SocState {
+     Esp32TWAIState twai;
+     ESP32UARTState uart[ESP32_UART_COUNT];
+     Esp32GpioState gpio;
++    Esp32I2sState i2s0;
+     Esp32RngState rng;
+     Esp32RtcCntlState rtc_cntl;
+     Esp32FrcTimerState frc_timer[ESP32_FRC_COUNT];
