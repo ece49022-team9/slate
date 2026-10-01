@@ -46,9 +46,10 @@ async def listen(link: Link, key: str, seconds: float, sound: bool) -> list[int]
     await link.wait_for("slate.state: 0")
     if player:
         await player.wait()
-    audio = b""
+    chunks = []
     while not link.audio.empty():
-        audio += link.audio.get_nowait()
+        chunks.append(link.audio.get_nowait())
+    audio = b"".join(chunks)
     samples = list(struct.unpack(f"<{len(audio) // 2}h", audio))
     return samples[len(samples) // 10 :]
 
@@ -72,17 +73,20 @@ async def run(port: str) -> None:
         assert len(loud) > rate, f"slate.bench: only {len(loud)} samples streamed"
         others = [power(loud, hz, rate) for hz in (300, 600, 1000, 2000)]
         ratio = power(loud, 440, rate) / (sum(others) / len(others))
-        assert rms(loud) > 3 * rms(quiet), (
-            f"slate.bench: tone rms {rms(loud):.0f} is not above "
-            f"background {rms(quiet):.0f}"
+        loud_rms = rms(loud)
+        quiet_rms = rms(quiet)
+        assert loud_rms > 3 * quiet_rms, (
+            f"slate.bench: tone rms {loud_rms:.0f} is not above "
+            f"background {quiet_rms:.0f}"
         )
         assert ratio > 10, f"slate.bench: 440 Hz is only {ratio:.1f}x the other bands"
     finally:
         task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     print(
         f"slate.bench: {board['mcu']} went through all six states; OLED at {fps} fps; "
         f"the {mic['slot']} mic heard the speaker's 440 Hz tone at rms "
-        f"{rms(loud):.0f} (background {rms(quiet):.0f}), {ratio:.0f}x the other "
+        f"{loud_rms:.0f} (background {quiet_rms:.0f}), {ratio:.0f}x the other "
         "bands. Check the panel by eye: the orb should change color with each state."
     )
 
