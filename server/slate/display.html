@@ -198,14 +198,17 @@ document.querySelector('#mic').onclick = async event => {
     button.setAttribute('aria-pressed', 'false');
     return;
   }
+  let stream;
+  let audio;
+  let socket;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false}});
-    const audio = new AudioContext({sampleRate: rate});
+    stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false}});
+    audio = new AudioContext({sampleRate: rate});
     const code = `registerProcessor('pcm', class extends AudioWorkletProcessor {
       process(inputs) { if (inputs[0][0]) this.port.postMessage(inputs[0][0]); return true; } });`;
     await audio.audioWorklet.addModule(URL.createObjectURL(new Blob([code], {type: 'text/javascript'})));
     const worklet = new AudioWorkletNode(audio, 'pcm');
-    const socket = new WebSocket(`ws://${location.host}/mic`);
+    socket = new WebSocket(`ws://${location.host}/mic`);
     socket.binaryType = 'arraybuffer';
     worklet.port.onmessage = ({data}) => {
       if (socket.readyState !== WebSocket.OPEN) return;
@@ -214,9 +217,14 @@ document.querySelector('#mic').onclick = async event => {
       socket.send(pcm.buffer);
     };
     audio.createMediaStreamSource(stream).connect(worklet);
+    const response = await fetch('/state/1', {method: 'POST'});
+    if (!response.ok) throw new Error('Could not enter Listen state');
     microphone = {stream, audio, socket};
     button.setAttribute('aria-pressed', 'true');
   } catch (e) {
+    stream?.getTracks().forEach(track => track.stop());
+    socket?.close();
+    if (audio) await audio.close();
     error.textContent = `Microphone unavailable: ${e.message}`;
   }
 };
