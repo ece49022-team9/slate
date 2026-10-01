@@ -15,6 +15,7 @@ dependencies = [
     "livekit-api==1.2.1",
     "modal==1.5.5",
     "uvicorn>=0.52.4,<0.53",
+    "browserbase>=1.0.0",
 ]
 
 [dependency-groups]

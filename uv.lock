@@ -178,6 +178,23 @@ wheels = [
 ]
 
 [[package]]
+name = "browserbase"
+version = "1.20.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/00/00/c220539147a908dfb81ce728af2dca8651a44324d378e6b8e26ab3a03964/browserbase-1.20.0.tar.gz", hash = "sha256:3014c01cb7d7edd94ebb9a2fda7e98ee235866ed879fdb2eaf907356e8c145a6", size = 299433, upload-time = "2026-09-24T23:25:25.957Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/85/17a4e092a0aa931571df696ddfd660a5d106aadda2c398fe64bf5e16a55d/browserbase-1.20.0-py3-none-any.whl", hash = "sha256:ab488d7f5555751afd0be83bfc86a8ea9470eba834e4f8722e296a01fde15278", size = 169358, upload-time = "2026-09-24T23:25:27.315Z" },
+]
+
+[[package]]
 name = "cbor2"
 version = "6.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1939,6 +1956,7 @@ name = "slate-server"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "browserbase" },
     { name = "fastapi" },
     { name = "httpx2" },
     { name = "livekit" },
@@ -1961,6 +1979,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "browserbase", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.141.1,<0.142" },
     { name = "httpx2", specifier = ">=0.1.0" },
     { name = "livekit", specifier = "==1.1.18" },

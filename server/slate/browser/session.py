@@ -1,5 +1,6 @@
 import os
 
+from browserbase import Browserbase
 from playwright.sync_api import sync_playwright
 
 
@@ -8,21 +9,68 @@ class BrowserSession:
         self.playwright = None
         self.browser = None
         self.page = None
+        self.session = None
 
-        self.headless = os.getenv("SLATE_BROWSER_HEADLESS", "true").lower() == "true"
+        self.headless = os.getenv(
+            "SLATE_BROWSER_HEADLESS",
+            "true",
+        ).lower() == "true"
+
+        self.browserbase_api_key = os.getenv("BROWSERBASE_API_KEY")
+        self.browserbase_project_id = os.getenv("BROWSERBASE_PROJECT_ID")
 
         self.activity = []
 
     def start(self):
+        if not self.browserbase_api_key:
+            raise RuntimeError(
+                "BROWSERBASE_API_KEY is not set"
+            )
+
+        if not self.browserbase_project_id:
+            raise RuntimeError(
+                "BROWSERBASE_PROJECT_ID is not set"
+            )
+
+        # Create Browserbase client
+        bb = Browserbase(
+            api_key=self.browserbase_api_key,
+        )
+
+        # Create a remote Browserbase browser session
+        self.session = bb.sessions.create(
+            project_id=self.browserbase_project_id,
+        )
+
+        # Start Playwright
         self.playwright = sync_playwright().start()
 
-        self.browser = self.playwright.chromium.launch(headless=self.headless)
+        # Connect Playwright to Browserbase's remote Chromium
+        self.browser = self.playwright.chromium.connect_over_cdp(
+            self.session.connect_url
+        )
 
-        self.page = self.browser.new_page()
+        # Browserbase already has a page/context.
+        # Use the existing page if one exists.
+        contexts = self.browser.contexts
+
+        if contexts:
+            pages = contexts[0].pages
+
+            if pages:
+                self.page = pages[0]
+            else:
+                self.page = contexts[0].new_page()
+        else:
+            context = self.browser.new_context()
+            self.page = context.new_page()
 
         self._log(
             "browser_started",
-            "Started browser session",
+            "Started Browserbase browser session",
+            {
+                "session_id": self.session.id,
+            },
         )
 
     def open(self, url: str):
@@ -50,7 +98,9 @@ class BrowserSession:
 
         elements = []
 
-        interactive = self.page.locator("a, button, input, textarea, select")
+        interactive = self.page.locator(
+            "a, button, input, textarea, select"
+        )
 
         count = min(interactive.count(), 50)
 
@@ -61,7 +111,9 @@ class BrowserSession:
                 if not element.is_visible():
                     continue
 
-                tag = element.evaluate("(el) => el.tagName").lower()
+                tag = element.evaluate(
+                    "(el) => el.tagName"
+                ).lower()
 
                 text = ""
 
@@ -71,15 +123,25 @@ class BrowserSession:
                     except Exception:
                         pass
 
-                placeholder = element.get_attribute("placeholder")
+                placeholder = element.get_attribute(
+                    "placeholder"
+                )
 
-                aria_label = element.get_attribute("aria-label")
+                aria_label = element.get_attribute(
+                    "aria-label"
+                )
 
                 value = element.get_attribute("value")
 
                 element_type = element.get_attribute("type")
 
-                label = text or aria_label or placeholder or value or tag
+                label = (
+                    text
+                    or aria_label
+                    or placeholder
+                    or value
+                    or tag
+                )
 
                 elements.append(
                     {
@@ -96,7 +158,9 @@ class BrowserSession:
         body_text = ""
 
         try:
-            body_text = self.page.locator("body").inner_text()[:10000]
+            body_text = self.page.locator(
+                "body"
+            ).inner_text()[:10000]
         except Exception:
             pass
 
@@ -123,7 +187,9 @@ class BrowserSession:
         key=None,
     ):
         if self.page is None:
-            raise RuntimeError("Browser session is not started")
+            raise RuntimeError(
+                "Browser session is not started"
+            )
 
         if action == "click":
             element = self._element(element_id)
@@ -145,10 +211,6 @@ class BrowserSession:
             element = self._element(element_id)
 
             label = self._element_label(element)
-
-            # Do NOT log the actual text.
-            # This prevents passwords and sensitive
-            # information from appearing in activity logs.
 
             self._log(
                 "type",
@@ -212,7 +274,9 @@ class BrowserSession:
                 "Went back",
             )
 
-            self.page.go_back(wait_until="domcontentloaded")
+            self.page.go_back(
+                wait_until="domcontentloaded"
+            )
 
         elif action == "forward":
             self._log(
@@ -220,10 +284,14 @@ class BrowserSession:
                 "Went forward",
             )
 
-            self.page.go_forward(wait_until="domcontentloaded")
+            self.page.go_forward(
+                wait_until="domcontentloaded"
+            )
 
         else:
-            raise ValueError(f"Unknown browser action: {action}")
+            raise ValueError(
+                f"Unknown browser action: {action}"
+            )
 
         return self.observe()
 
@@ -235,9 +303,13 @@ class BrowserSession:
 
     def _element(self, element_id):
         if element_id is None:
-            raise ValueError("element_id is required")
+            raise ValueError(
+                "element_id is required"
+            )
 
-        interactive = self.page.locator("a, button, input, textarea, select")
+        interactive = self.page.locator(
+            "a, button, input, textarea, select"
+        )
 
         visible_index = -1
 
@@ -256,11 +328,15 @@ class BrowserSession:
             except Exception:
                 continue
 
-        raise ValueError(f"Element {element_id} not found")
+        raise ValueError(
+            f"Element {element_id} not found"
+        )
 
     def _element_label(self, element):
         try:
-            tag = element.evaluate("(el) => el.tagName").lower()
+            tag = element.evaluate(
+                "(el) => el.tagName"
+            ).lower()
 
             text = ""
 
@@ -270,13 +346,25 @@ class BrowserSession:
                 except Exception:
                     pass
 
-            aria_label = element.get_attribute("aria-label")
+            aria_label = element.get_attribute(
+                "aria-label"
+            )
 
-            placeholder = element.get_attribute("placeholder")
+            placeholder = element.get_attribute(
+                "placeholder"
+            )
 
-            element_type = element.get_attribute("type")
+            element_type = element.get_attribute(
+                "type"
+            )
 
-            return (text or aria_label or placeholder or element_type or tag)[:200]
+            return (
+                text
+                or aria_label
+                or placeholder
+                or element_type
+                or tag
+            )[:200]
 
         except Exception:
             return "element"
@@ -290,13 +378,16 @@ class BrowserSession:
         entry = {
             "action": action,
             "message": message,
-            "url": (self.page.url if self.page else None),
+            "url": (
+                self.page.url
+                if self.page
+                else None
+            ),
             "details": details or {},
         }
 
         self.activity.append(entry)
 
-        # Keep the activity list bounded.
         if len(self.activity) > 100:
             self.activity.pop(0)
 
@@ -305,7 +396,7 @@ class BrowserSession:
     def close(self):
         self._log(
             "browser_closed",
-            "Closed browser session",
+            "Closed Browserbase browser session",
         )
 
         if self.browser:
@@ -317,3 +408,4 @@ class BrowserSession:
         self.browser = None
         self.page = None
         self.playwright = None
+        self.session = None
