@@ -1,7 +1,8 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-speaker-check bench voice-deploy voice-check livekit
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-speaker-check bench voice-deploy voice-check livekit sim-voice
 
 FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
+INPUT ?= .local/voice-check.wav
 ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
 PORT ?= $(if $(filter 1,$(words $(ESP32_PORTS))),$(firstword $(ESP32_PORTS)))
 
@@ -57,6 +58,9 @@ sim-check:
 
 sim-speaker-check:
 	uv run python scripts/check_speaker.py
+
+sim-voice:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.voice firmware "$(INPUT)"
 
 voice-deploy:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run modal deploy -m slate.voice.stt

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from slate.voice.audio import read_wav
 from slate.voice.client import speak, transcribe
-from slate.voice.device import simulate
+from slate.voice.device import VoiceResult, simulate
 from slate.voice.firmware import board_firmware, simulate_firmware
 
 SMOKE_TEXT = "Slate is ready. The voice system is working."
@@ -18,6 +18,13 @@ def save_audio(output: Path, audio: bytes) -> None:
     print(f"slate.tts: wrote {output}")
 
 
+def show_turn(result: VoiceResult, output: Path) -> None:
+    print(f"slate.stt: {result.transcript}")
+    print(f"slate.agent: {result.reply}")
+    if result.audio:
+        save_audio(output, result.audio)
+
+
 async def run(args: argparse.Namespace) -> None:
     started = time.monotonic()
     if args.command == "stt":
@@ -27,14 +34,20 @@ async def run(args: argparse.Namespace) -> None:
     elif args.command == "tts":
         save_audio(args.output, await speak(args.text, args.max_seconds))
     elif args.command == "simulate":
-        print(await simulate(args.input, args.api_url, args.sample_rate))
+        show_turn(
+            await simulate(args.input, args.api_url, args.sample_rate), args.output
+        )
     elif args.command == "firmware":
         if args.port:
-            print(
-                await board_firmware(args.input, args.api_url, args.channel, args.port)
+            show_turn(
+                await board_firmware(args.input, args.api_url, args.channel, args.port),
+                args.output,
             )
         else:
-            print(await simulate_firmware(args.input, args.api_url, args.channel))
+            show_turn(
+                await simulate_firmware(args.input, args.api_url, args.channel),
+                args.output,
+            )
     else:
         audio = await speak(SMOKE_TEXT)
         save_audio(args.output, audio)
@@ -67,6 +80,7 @@ def main() -> None:
     )
     device.add_argument("input", type=Path)
     device.add_argument("--api-url", default="http://127.0.0.1:8000")
+    device.add_argument("--output", type=Path, default=Path(".local/reply.wav"))
     device.add_argument(
         "--sample-rate", type=int, choices=[16000, 24000, 48000], default=16000
     )
@@ -75,6 +89,7 @@ def main() -> None:
     )
     firmware.add_argument("input", type=Path)
     firmware.add_argument("--api-url", default="http://127.0.0.1:8000")
+    firmware.add_argument("--output", type=Path, default=Path(".local/reply.wav"))
     firmware.add_argument("--channel", choices=["left", "right", "mix"], default="left")
     firmware.add_argument(
         "--port", help="Use the board on this serial port and play the WAV aloud"

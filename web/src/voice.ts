@@ -1,6 +1,6 @@
 import { createLocalAudioTrack, LocalAudioTrack, Room, RoomEvent, Track } from 'livekit-client'
 
-export type VoiceState = 'offline' | 'connecting' | 'ready' | 'starting' | 'recording' | 'transcribing'
+export type VoiceState = 'offline' | 'connecting' | 'ready' | 'starting' | 'recording' | 'transcribing' | 'responding'
 
 type Session = {
   session_id: string
@@ -22,15 +22,22 @@ export class VoiceConnection {
   private timer?: ReturnType<typeof setTimeout>
   private onState: (state: VoiceState) => void
   private onTranscript: (text: string, final: boolean) => void
+  private onReply: (text: string) => void
+  private onPlayback: (blocked: boolean) => void
   private onError: (message: string) => void
+  private speaker?: HTMLAudioElement
 
   constructor(
     onState: (state: VoiceState) => void,
     onTranscript: (text: string, final: boolean) => void,
+    onReply: (text: string) => void,
+    onPlayback: (blocked: boolean) => void,
     onError: (message: string) => void,
   ) {
     this.onState = onState
     this.onTranscript = onTranscript
+    this.onReply = onReply
+    this.onPlayback = onPlayback
     this.onError = onError
   }
 
@@ -55,7 +62,20 @@ export class VoiceConnection {
       this.session = body as Session
       if (this.closed) throw new Error('Connection closed')
       this.room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-        this.receiveTranscript(payload, participant?.identity, topic)
+        this.receiveEvent(payload, participant?.identity, topic)
+      })
+      this.room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
+        if (participant.identity !== this.session?.worker_identity || track.kind !== Track.Kind.Audio) return
+        this.speaker = track.attach() as HTMLAudioElement
+        this.speaker.hidden = true
+        document.body.appendChild(this.speaker)
+      })
+      this.room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        for (const element of track.detach()) element.remove()
+        this.speaker = undefined
+      })
+      this.room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+        this.onPlayback(!this.room.canPlaybackAudio)
       })
       this.room.on(RoomEvent.Disconnected, () => {
         if (!this.closed) void this.fail(new Error('Session ended. Connect again to continue.'))
@@ -71,14 +91,18 @@ export class VoiceConnection {
     }
   }
 
-  private receiveTranscript(payload: Uint8Array, identity?: string, topic?: string): void {
-    if (topic !== 'slate.transcript' || identity !== this.session?.worker_identity) return
+  private receiveEvent(payload: Uint8Array, identity?: string, topic?: string): void {
+    if ((topic !== 'slate.transcript' && topic !== 'slate.reply') || identity !== this.session?.worker_identity) return
     try {
       const event = JSON.parse(new TextDecoder().decode(payload)) as Transcript
       if (event.turn_id !== this.turn || this.closed) return
       if (event.error) this.onError(event.error)
-      if (typeof event.text === 'string') this.onTranscript(event.text, event.final === true)
-      if (event.final || event.error) {
+      if (topic === 'slate.transcript' && typeof event.text === 'string') {
+        this.onTranscript(event.text, event.final === true)
+        if (event.final && event.text) this.onState('responding')
+      }
+      if (topic === 'slate.reply' && typeof event.text === 'string') this.onReply(event.text)
+      if ((topic === 'slate.reply' && event.final) || event.error || (topic === 'slate.transcript' && event.final && !event.text)) {
         this.turn = undefined
         this.recording = false
         clearTimeout(this.timer)
@@ -114,6 +138,7 @@ export class VoiceConnection {
   private async begin(): Promise<void> {
     this.onError('')
     this.onTranscript('', false)
+    this.onReply('')
     this.onState('starting')
     this.turn = await this.rpc('start_turn')
     if (this.closed) return
@@ -162,12 +187,24 @@ export class VoiceConnection {
     await this.disconnect()
   }
 
+  async enableAudio(): Promise<void> {
+    try {
+      await this.room.startAudio()
+      this.onPlayback(!this.room.canPlaybackAudio)
+    } catch (error) {
+      this.onError(error instanceof Error ? error.message : 'Could not play Slate’s reply')
+    }
+  }
+
   async disconnect(): Promise<void> {
     this.closed = true
     this.turn = undefined
     this.recording = false
     clearTimeout(this.timer)
     this.microphone?.stop()
+    this.speaker?.remove()
+    this.speaker = undefined
+    this.onPlayback(false)
     await this.room.disconnect()
     const session = this.session
     this.session = undefined

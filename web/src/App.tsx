@@ -8,6 +8,7 @@ const labels: Record<VoiceState, string> = {
   starting: 'Opening microphone…',
   recording: 'Listening',
   transcribing: 'Finishing the transcript…',
+  responding: 'Speaking…',
 }
 
 export default function App() {
@@ -15,6 +16,8 @@ export default function App() {
   const [state, setState] = useState<VoiceState>('offline')
   const [transcript, setTranscript] = useState('')
   const [final, setFinal] = useState(false)
+  const [reply, setReply] = useState('')
+  const [audioBlocked, setAudioBlocked] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -36,13 +39,13 @@ export default function App() {
     const client = new VoiceConnection(setState, (text, done) => {
       setTranscript(text)
       setFinal(done)
-    }, setError)
+    }, setReply, setAudioBlocked, setError)
     connection.current = client
     void client.connect()
   }
 
   const canTalk = state === 'ready' || state === 'starting' || state === 'recording'
-  const busy = state === 'starting' || state === 'recording' || state === 'transcribing'
+  const busy = state === 'starting' || state === 'recording' || state === 'transcribing' || state === 'responding'
 
   return (
     <main>
@@ -89,9 +92,14 @@ export default function App() {
             {state === 'recording' ? 'Listening…' : 'Talk'}
           </button>
           {busy && <button className="secondary" onClick={() => void connection.current?.cancel()}>Cancel</button>}
+          {audioBlocked && <button className="secondary" onClick={() => void connection.current?.enableAudio()}>Enable reply audio</button>}
         </div>
-        <p className="hint">Audio is sent only while you hold Talk. This test shows text and does not speak back.</p>
+        <p className="hint">Audio is sent only while you hold Talk. Slate replies through LiveKit after transcription.</p>
         {error && <p role="alert" className="error">{error}</p>}
+      </section>
+      <section aria-label="Reply" className="transcript">
+        <h2>Slate</h2>
+        <p aria-live="polite">{reply || 'Slate’s reply will appear here.'}</p>
       </section>
       <section aria-label="Transcript" className="transcript">
         <h2>Transcript</h2>
