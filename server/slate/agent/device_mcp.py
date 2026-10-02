@@ -7,36 +7,37 @@ from mcp.server.mcpserver import MCPServer
 
 from slate.agent.code_mode import (
     DEVICE_STUBS,
-    DEVICE_TYPESCRIPT,
-    CloudflareExecutor,
     DeviceClient,
+    ModalSandbox,
     MontyExecutor,
+    SandboxExecutor,
 )
 from slate.device import DeviceStatus
 
 
 def build_server(*, mode: str | None = None) -> MCPServer:
     selected = mode or os.getenv("SLATE_DEVICE_MODE", "monty")
-    if selected not in ("tools", "monty", "cloudflare"):
+    if selected not in ("tools", "monty", "modal"):
         raise ValueError(f"Unknown SLATE_DEVICE_MODE: {selected}")
     client = httpx.AsyncClient(
         base_url=os.getenv("SLATE_DEVICE_URL", "http://127.0.0.1:8000"),
         timeout=3,
     )
     device = DeviceClient(client)
-    monty = MontyExecutor(device)
-    cloudflare_client = httpx.AsyncClient(
-        base_url=os.getenv("SLATE_CLOUDFLARE_CODE_URL", "http://127.0.0.1:8650"),
-        timeout=15,
+    sandbox = ModalSandbox()
+    executor = (
+        SandboxExecutor(device, sandbox)
+        if selected == "modal"
+        else MontyExecutor(device)
     )
-    cloudflare = CloudflareExecutor(device, cloudflare_client)
 
     @asynccontextmanager
     async def lifespan(server):
         async with AsyncExitStack() as cleanup:
-            cleanup.push_async_callback(cloudflare_client.aclose)
             cleanup.push_async_callback(client.aclose)
-            cleanup.push_async_callback(monty.close)
+            cleanup.push_async_callback(executor.close)
+            if selected == "modal":
+                await sandbox.ensure()
             yield
 
     server = MCPServer("Slate device", lifespan=lifespan)
@@ -59,7 +60,6 @@ def build_server(*, mode: str | None = None) -> MCPServer:
             """Read acknowledged firmware state for this active turn."""
             return DeviceStatus.model_validate(await device.get_status(scope))
     else:
-        signatures = DEVICE_STUBS if selected == "monty" else DEVICE_TYPESCRIPT
         description = (
             "Compose the device SDK in one sandboxed program for the active scope. "
             "Pass the opaque scope from the active turn instructions as scope. "
@@ -68,24 +68,23 @@ def build_server(*, mode: str | None = None) -> MCPServer:
             "text is printable ASCII with at most 64 characters. "
             "Results include actual firmware receipts. No file, network, shell, "
             "or other host capabilities. "
+            + "Python REPL state persists within this scope; failures reset it. "
+            "The final expression returns a value. "
             + (
-                "Python REPL state persists within this scope; failures reset it. "
-                "The final expression returns a value. "
+                "Runs in Monty, a restricted Python subset. "
                 if selected == "monty"
-                else "JavaScript runs in a separate Cloudflare Workers/V8 runtime. "
-                "Supply an async arrow function and return its result. "
+                else "Runs in CPython 3.12 with the standard library inside an "
+                "isolated Modal container. "
             )
             + "Never blindly replay failed code: completed actions remain applied.\n"
-            + signatures
+            + DEVICE_STUBS
         )
 
         @server.tool(
             name="execute_device_code", description=description, structured_output=True
         )
         async def execute_device_code(scope: str, code: str) -> dict[str, Any]:
-            if selected == "monty":
-                return await monty.execute(scope, code)
-            return await cloudflare.execute(scope, code)
+            return await executor.execute(scope, code)
 
     return server
 

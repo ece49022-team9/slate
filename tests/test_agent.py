@@ -608,7 +608,10 @@ class AgentRuntimeTests(unittest.TestCase):
         }
         with (
             patch("slate.agent.runtime.shutil.which", return_value="/opt/tools/uv"),
-            patch.dict("os.environ", {"SLATE_DEVICE_MODE": "monty"}),
+            patch.dict(
+                "os.environ",
+                {"SLATE_DEVICE_MODE": "monty", "MODAL_PROFILE": "slate-test"},
+            ),
         ):
             agent_runtime.configure_device_tools(config)
             agent_runtime.configure_device_tools(config)
@@ -638,7 +641,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 "DEVICE_AUTH": "existing-device-credential",
                 "SLATE_DEVICE_MODE": "monty",
                 "SLATE_DEVICE_URL": "http://127.0.0.1:8000",
-                "SLATE_CLOUDFLARE_CODE_URL": "http://127.0.0.1:8650",
+                "MODAL_PROFILE": "slate-test",
             },
         )
 

@@ -63,16 +63,14 @@ Short live voice turns pass, but some device-confirmation replies still reach CS
 
 Hermes receives one `execute_device_code` MCP entry point by default. Its Python REPL exposes `device.set_orb(color, radius)`, `device.show_text(text)`, and `device.get_status()`. Pydantic validates requests and firmware receipts; each active voice turn has a separate capability scope. Successful commands include matching request IDs and firmware revisions. Failed programs report already-applied actions, and their REPL state is discarded. Text is limited to 64 printable ASCII characters; radius is 10–45 pixels.
 
-Monty runs locally as a bounded subprocess with explicitly exposed methods. It has no host files, network, or shell access. It can also run on our own Linux compute, including Modal; it does not replace the Chromium/Linux sandbox. This is a Monty adapter for Hermes, not a migration to Pydantic AI's agent harness.
+Monty runs as a bounded subprocess on whichever machine runs the device MCP server; today that is the Mac running Hermes. It exposes only the listed methods and has no host files, network, or shell access. It does not replace the Chromium/Linux sandbox. This is a Monty adapter for Hermes, not a migration to Pydantic AI's agent harness.
 
-`SLATE_DEVICE_MODE=tools make agent` selects the three separate MCP tools for comparison. `SLATE_DEVICE_MODE=cloudflare make agent` selects JavaScript code mode through the local Workers prototype. Restart Hermes after changing mode. The Cloudflare prototype uses its actual `DynamicWorkerExecutor`, disables generated code's outbound network, and uses a fresh supervised Workers process per execution. It has not been deployed to Cloudflare.
+`SLATE_DEVICE_MODE=modal make agent` runs the same Python SDK in CPython 3.12 inside a Modal Sandbox with outbound network blocked. Device calls travel back over the sandbox's stdin/stdout to our device route, so the sandbox needs no route to the device. Each scope gets a fresh interpreter in a warm sandbox; a spare is kept ready for the next voice turn. A timeout or cancellation terminates the whole sandbox. `SLATE_DEVICE_MODE=tools make agent` selects the three separate MCP tools for comparison. Restart Hermes after changing mode.
 
 ```sh
-make device-check       # real firmware commands and OLED SPI pixels
-make code-setup         # install the pinned local Workers prototype
-make device-code-check  # Monty and Workers against QEMU through HTTP
-make device-code-profile  # time tools, Monty and Workers; LAYER=agent for Hermes turns
-make code-worker        # Workers endpoint for Hermes's cloudflare mode
+make device-check         # real firmware commands and OLED SPI pixels
+make device-code-check    # Monty and the Modal sandbox against QEMU through HTTP
+make device-code-profile  # time tools, Monty and Modal; LAYER=agent for Hermes turns
 make voice-controls-check
 ```
 

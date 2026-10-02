@@ -1,4 +1,4 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile code-setup code-worker voice-controls-check
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile voice-controls-check
 
 MODAL_PROFILE ?= sudarshan-1
 INPUT ?= .local/voice-check.wav
@@ -59,17 +59,11 @@ sim-check:
 device-check:
 	uv run python scripts/check_device.py
 
-code-setup:
-	npm install --prefix .local/cloudflare-code-mode --no-save --package-lock=false @cloudflare/codemode@0.5.3 miniflare@4.20260730.0 esbuild@0.28.2
-
-code-worker:
-	node scripts/cloudflare_code_mode.mjs
-
 device-code-check:
-	uv run python scripts/check_device_code.py
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_device_code.py
 
 device-code-profile:
-	uv run python scripts/profile_device_code.py --layer $(or $(LAYER),exec)
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_device_code.py --layer $(or $(LAYER),exec)
 
 voice-controls-check:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_voice_controls.py
@@ -94,7 +88,7 @@ agent-login:
 	uv run python -m slate.agent.runtime login
 
 agent:
-	uv run python -m slate.agent.runtime start
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.agent.runtime start
 
 browser:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal start
