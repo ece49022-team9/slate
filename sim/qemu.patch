@@ -560,10 +560,102 @@ index 0000000..e7c4f5f
 +
 +type_init(slate_board_register_types)
 diff --git a/hw/ssi/esp32_spi.c b/hw/ssi/esp32_spi.c
-index f47bfca..4d0d12f 100644
+index f47bfca..883d2bb 100644
 --- a/hw/ssi/esp32_spi.c
 +++ b/hw/ssi/esp32_spi.c
-@@ -275,7 +275,7 @@ static void esp32_spi_do_command(Esp32SpiState* s, uint32_t cmd_reg)
+@@ -11,6 +11,8 @@
+ #include "qemu/osdep.h"
+ #include "qemu/log.h"
+ #include "qemu/module.h"
++#include "qemu/timer.h"
++#include "hw/core/cpu.h"
+ #include "sysemu/sysemu.h"
+ #include "hw/hw.h"
+ #include "hw/sysbus.h"
+@@ -43,6 +45,29 @@ enum {
+ 
+ static void esp32_spi_do_command(Esp32SpiState* state, uint32_t cmd_reg);
+ 
++/* A CPU polling a busy bus halts until the transfer ends, so idle time warps instead of spinning. */
++static void esp32_spi_wait_for_bus(Esp32SpiState *s)
++{
++    if (!current_cpu || s->stalled) {
++        return;
++    }
++    s->stalled = current_cpu;
++    current_cpu->halted = 1;
++    cpu_exit(current_cpu);
++    timer_mod(s->busy_timer, s->busy_until);
++}
++
++static void esp32_spi_bus_free(void *opaque)
++{
++    Esp32SpiState *s = opaque;
++    CPUState *cpu = s->stalled;
++    s->stalled = NULL;
++    if (cpu) {
++        cpu->halted = 0;
++        qemu_cpu_kick(cpu);
++    }
++}
++
+ static uint64_t esp32_spi_read(void *opaque, hwaddr addr, unsigned int size)
+ {
+     Esp32SpiState *s = ESP32_SPI(opaque);
+@@ -81,6 +106,15 @@ static uint64_t esp32_spi_read(void *opaque, hwaddr addr, unsigned int size)
+     case A_SPI_PIN:
+         r = s->pin_reg;
+         break;
++    case A_SPI_CLOCK:
++        r = s->clock_reg;
++        break;
++    case A_SPI_CMD:
++        if (qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) < s->busy_until) {
++            r = s->busy_cmd;
++            esp32_spi_wait_for_bus(s);
++        }
++        break;
+     case A_SPI_W0 ... A_SPI_W0 + (ESP32_SPI_BUF_WORDS - 1) * sizeof(uint32_t):
+         r = s->data_reg[(addr - A_SPI_W0) / sizeof(uint32_t)];
+         break;
+@@ -135,6 +169,9 @@ static void esp32_spi_write(void *opaque, hwaddr addr,
+     case A_SPI_PIN:
+         s->pin_reg = value;
+         break;
++    case A_SPI_CLOCK:
++        s->clock_reg = value;
++        break;
+     case A_SPI_CMD:
+         esp32_spi_do_command(s, value);
+         break;
+@@ -197,6 +234,26 @@ static void maybe_encrypt_data(Esp32SpiState *s)
+     }
+ }
+ 
++/* Keep USR busy for the bits a real controller clocks out at the programmed rate. */
++static void esp32_spi_hold_bus(Esp32SpiState *s, uint32_t cmd_reg, Esp32SpiTransaction *t)
++{
++    uint64_t hz = 80000000;
++    if (!FIELD_EX32(s->clock_reg, SPI_CLOCK, EQU_SYSCLK)) {
++        hz /= (uint64_t)(FIELD_EX32(s->clock_reg, SPI_CLOCK, DIV_PRE) + 1) *
++              (FIELD_EX32(s->clock_reg, SPI_CLOCK, CNT_N) + 1);
++    }
++    uint64_t data = FIELD_EX32(s->user_reg, SPI_USER, DOUTDIN)
++        ? MAX(t->data_tx_bytes, t->data_rx_bytes)
++        : t->data_tx_bytes + t->data_rx_bytes;
++    uint64_t bits = 8 * (t->cmd_bytes + t->addr_bytes + data);
++    if (FIELD_EX32(s->user_reg, SPI_USER, DUMMY)) {
++        bits += FIELD_EX32(s->user1_reg, SPI_USER1, DUMMY_CYCLELEN) + 1;
++    }
++    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    s->busy_until = MAX(now, s->busy_until) + (int64_t)(bits * 1000000000ULL / hz);
++    s->busy_cmd = cmd_reg;
++}
++
+ static void esp32_spi_do_command(Esp32SpiState* s, uint32_t cmd_reg)
+ {
+     Esp32SpiTransaction t = {
+@@ -275,7 +332,7 @@ static void esp32_spi_do_command(Esp32SpiState* s, uint32_t cmd_reg)
  
      case R_SPI_CMD_USR_MASK:
          maybe_encrypt_data(s);
@@ -572,6 +664,24 @@ index f47bfca..4d0d12f 100644
              t.cmd = FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_VALUE);
              t.cmd_bytes = bitlen_to_bytes(FIELD_EX32(s->user2_reg, SPI_USER2, COMMAND_BITLEN));
          } else {
+@@ -298,6 +355,9 @@ static void esp32_spi_do_command(Esp32SpiState* s, uint32_t cmd_reg)
+         return;
+     }
+     esp32_spi_transaction(s, &t);
++    if (cmd_reg == R_SPI_CMD_USR_MASK) {
++        esp32_spi_hold_bus(s, cmd_reg, &t);
++    }
+ }
+ 
+ 
+@@ -333,6 +393,7 @@ static void esp32_spi_init(Object *obj)
+     sysbus_init_irq(sbd, &s->irq);
+ 
+     s->spi = ssi_create_bus(DEVICE(s), "spi");
++    s->busy_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, esp32_spi_bus_free, s);
+     qdev_init_gpio_out_named(DEVICE(s), &s->cs_gpio[0], SSI_GPIO_CS, ESP32_SPI_CS_COUNT);
+ }
+ 
 diff --git a/hw/xtensa/esp32.c b/hw/xtensa/esp32.c
 index e000470..9b1a9fb 100644
 --- a/hw/xtensa/esp32.c
@@ -764,6 +874,41 @@ index 0000000..2b4efc2
 +    uint16_t pending_len;
 +    int64_t pending_ns;
 +};
+diff --git a/include/hw/ssi/esp32_spi.h b/include/hw/ssi/esp32_spi.h
+index dcf9bc8..25c9d05 100644
+--- a/include/hw/ssi/esp32_spi.h
++++ b/include/hw/ssi/esp32_spi.h
+@@ -3,6 +3,7 @@
+ #include "hw/hw.h"
+ #include "hw/registerfields.h"
+ #include "hw/ssi/ssi.h"
++#include "qemu/timer.h"
+ 
+ #define TYPE_ESP32_SPI "ssi.esp32.spi"
+ #define ESP32_SPI(obj) OBJECT_CHECK(Esp32SpiState, (obj), TYPE_ESP32_SPI)
+@@ -30,6 +31,11 @@ typedef struct Esp32SpiState {
+     uint32_t mosi_dlen_reg;
+     uint32_t miso_dlen_reg;
+     uint32_t pin_reg;
++    uint32_t clock_reg;
++    uint32_t busy_cmd;
++    int64_t busy_until;
++    QEMUTimer *busy_timer;
++    CPUState *stalled;
+     uint32_t data_reg[ESP32_SPI_BUF_WORDS];
+ } Esp32SpiState;
+ 
+@@ -53,6 +59,10 @@ REG32(SPI_CMD, 0x00)
+     FIELD(SPI_CMD, PER, 16, 1)
+ 
+ REG32(SPI_ADDR, 0x04)
++REG32(SPI_CLOCK, 0x18)
++    FIELD(SPI_CLOCK, EQU_SYSCLK, 31, 1)
++    FIELD(SPI_CLOCK, DIV_PRE, 18, 13)
++    FIELD(SPI_CLOCK, CNT_N, 12, 6)
+ REG32(SPI_CTRL, 0x08)
+ REG32(SPI_STATUS, 0x10)
+     FIELD(SPI_STATUS, STATUS, 0, 16)
 diff --git a/include/hw/xtensa/esp32.h b/include/hw/xtensa/esp32.h
 index fc1f927..06dc006 100644
 --- a/include/hw/xtensa/esp32.h

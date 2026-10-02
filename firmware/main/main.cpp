@@ -8,6 +8,7 @@
 #include "pdm.h"
 #include "oled.h"
 #include "display.h"
+#include "perf.h"
 
 void setup() {
   Serial.begin(921600);
@@ -161,5 +162,6 @@ void loop() {
     meter_peak = 0;
     last_meter = millis();
   }
+  perf_stack(PerfTask::LOOP);
   delay(20);
 }

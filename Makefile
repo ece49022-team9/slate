@@ -1,4 +1,4 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile voice-controls-check
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench calibrate-sim voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile voice-controls-check
 
 MODAL_PROFILE ?= sudarshan-1
 INPUT ?= .local/voice-check.wav
@@ -43,6 +43,10 @@ monitor:
 
 bench: flash
 	uv run python scripts/check_bench.py "$(PORT)"
+	uv run python scripts/check_resources.py --port "$(PORT)"
+
+calibrate-sim: flash
+	uv run python scripts/check_resources.py --port "$(PORT)" --calibrate
 
 sim-setup:
 	bash scripts/qemu.sh
@@ -55,6 +59,7 @@ sim-check:
 	uv run python scripts/check_mic.py
 	uv run python scripts/check_display.py
 	uv run python scripts/check_device.py
+	uv run python scripts/check_resources.py
 
 device-check:
 	uv run python scripts/check_device.py
