@@ -64,17 +64,11 @@ sim-speaker-check:
 device-check:
 	uv run python scripts/check_device.py
 
-code-setup:
-	npm install --prefix .local/cloudflare-code-mode --no-save --package-lock=false @cloudflare/codemode@0.5.3 miniflare@4.20260730.0 esbuild@0.28.2
-
-code-worker:
-	node scripts/cloudflare_code_mode.mjs
-
 device-code-check:
-	uv run python scripts/check_device_code.py
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_device_code.py
 
 device-code-profile:
-	uv run python scripts/profile_device_code.py --layer $(or $(LAYER),exec)
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_device_code.py --layer $(or $(LAYER),exec)
 
 voice-controls-check:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_voice_controls.py
@@ -99,7 +93,7 @@ agent-login:
 	uv run python -m slate.agent.runtime login
 
 agent:
-	uv run python -m slate.agent.runtime start
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.agent.runtime start
 
 browser:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal start

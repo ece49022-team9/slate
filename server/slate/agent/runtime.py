@@ -53,10 +53,9 @@ def configure_device_tools(config: dict) -> None:
     server.setdefault("env", {}).update(
         SLATE_DEVICE_MODE=os.getenv("SLATE_DEVICE_MODE", "monty"),
         SLATE_DEVICE_URL=os.getenv("SLATE_DEVICE_URL", "http://127.0.0.1:8000"),
-        SLATE_CLOUDFLARE_CODE_URL=os.getenv(
-            "SLATE_CLOUDFLARE_CODE_URL", "http://127.0.0.1:8650"
-        ),
     )
+    if profile := os.getenv("MODAL_PROFILE"):
+        server["env"]["MODAL_PROFILE"] = profile
 
 
 def environment() -> dict[str, str]:

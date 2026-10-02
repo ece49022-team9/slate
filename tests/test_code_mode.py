@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import signal
 import sys
 import unittest
 from pathlib import Path
@@ -8,7 +9,12 @@ from pathlib import Path
 import httpx
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from slate.agent.code_mode import DeviceClient, MontyExecutor
+from slate.agent.code_mode import (
+    DeviceClient,
+    MontyExecutor,
+    Runner,
+    SandboxExecutor,
+)
 from slate.agent.device_mcp import build_server
 
 
@@ -26,7 +32,7 @@ def receipt(operation: str = "get_status", **values) -> dict:
     }
 
 
-class CodeModeTests(unittest.IsolatedAsyncioTestCase):
+class DeviceFixture(unittest.IsolatedAsyncioTestCase):
     def setup_device(self, handler=None):
         self.requests: list[httpx.Request] = []
 
@@ -44,6 +50,8 @@ class CodeModeTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(client.aclose)
         return DeviceClient(client)
 
+
+class CodeModeTests(DeviceFixture):
     async def executor(self, device, **limits):
         executor = MontyExecutor(device, **limits)
         self.addAsyncCleanup(executor.close)
@@ -236,7 +244,7 @@ class CodeModeTests(unittest.IsolatedAsyncioTestCase):
         for mode, names in (
             ("tools", {"device_set_orb", "device_show_text", "device_get_status"}),
             ("monty", {"execute_device_code"}),
-            ("cloudflare", {"execute_device_code"}),
+            ("modal", {"execute_device_code"}),
         ):
             with self.subTest(mode=mode):
                 server = build_server(mode=mode)
@@ -340,115 +348,160 @@ class StdioMCPTests(LocalDeviceHTTPTests):
                         self.assertEqual(value, receipt("set_orb"))
 
 
-class CloudflareRuntimeTests(LocalDeviceHTTPTests):
-    async def asyncSetUp(self):
-        await super().asyncSetUp()
-        if not (
-            self.repo / ".local/cloudflare-code-mode/node_modules/miniflare"
-        ).is_dir():
-            self.skipTest(
-                "Install the pinned local Cloudflare prototype dependencies first"
-            )
-        self.process = await asyncio.create_subprocess_exec(
-            "node",
-            str(self.repo / "scripts/cloudflare_code_mode.mjs"),
-            env={
-                **os.environ,
-                "SLATE_DEVICE_URL": self.device_url,
-                "SLATE_CLOUDFLARE_CODE_PORT": "0",
-            },
+RUNNER = Path(__file__).resolve().parents[1] / "server/slate/agent/sandbox_runner.py"
+
+
+class LocalSandbox:
+    def __init__(self) -> None:
+        self.processes: list[asyncio.subprocess.Process] = []
+        self.terminated = 0
+
+    async def spawn(self) -> Runner:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-u",
+            str(RUNNER),
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
-        self.addAsyncCleanup(self.close_runtime)
-        line = await asyncio.wait_for(self.process.stdout.readline(), 5)
-        self.assertIn(b"listening", line)
-        runtime_port = int(line.rsplit(b":", 1)[1])
-        self.client = httpx.AsyncClient(
-            base_url=f"http://127.0.0.1:{runtime_port}", timeout=10
+        self.processes.append(process)
+
+        async def chunks():
+            while chunk := await process.stdout.read(4096):
+                yield chunk
+
+        async def close():
+            process.stdin.close()
+            await process.wait()
+
+        return Runner(
+            lambda text: process.stdin.write(text.encode()),
+            process.stdin.drain,
+            chunks(),
+            close,
+            65_536,
         )
-        self.addAsyncCleanup(self.client.aclose)
 
-    async def close_runtime(self):
-        if self.process.returncode is None:
-            self.process.terminate()
-        await asyncio.wait_for(self.process.communicate(), 5)
+    async def terminate(self) -> None:
+        self.terminated += 1
+        for process in self.processes:
+            if process.returncode is None:
+                process.send_signal(signal.SIGKILL)
+                await process.wait()
 
-    async def execute(self, code):
-        response = await self.client.post(
-            "/execute", json={"scope": "scope-a", "code": code}
+
+class SandboxExecutorTests(DeviceFixture):
+    async def executor(self, device, **limits):
+        self.sandbox = LocalSandbox()
+        executor = SandboxExecutor(device, self.sandbox, **limits)
+        self.addAsyncCleanup(executor.close)
+        return executor
+
+    async def test_cpython_program_composes_sdk_and_keeps_scope_state(self):
+        executor = await self.executor(self.setup_device())
+        first = await executor.execute(
+            "scope-a",
+            "import asyncio, statistics\n"
+            "orb, text = await asyncio.gather(\n"
+            "    device.set_orb('#112233', 24), device.show_text('Ready'))\n"
+            "print('sent', statistics.mean([1, 3]))\n"
+            "[orb['operation'], text['operation']]",
         )
-        self.assertEqual(response.status_code, 200, response.text)
-        return response.json()
-
-    async def test_real_workers_sdk_composition_network_denial_and_stale_scope(self):
-        result = await self.execute(
-            "async () => { return [await device.set_orb('#112233', 24), "
-            "await device.show_text('Ready')]; }"
+        self.assertEqual(first["status"], "completed", first)
+        self.assertEqual(first["result"], ["set_orb", "show_text"])
+        self.assertEqual(first["output"], "sent 2\n")
+        self.assertEqual(
+            [call["status"] for call in first["calls"]], ["completed", "completed"]
         )
-        self.assertEqual(result["status"], "completed")
-        self.assertEqual(result["result"], [receipt("set_orb"), receipt("show_text")])
-        self.assertEqual(self.requests, ["status", "set_orb", "show_text"])
-        denied = await self.execute("async () => await fetch('https://example.com')")
-        self.assertEqual(denied["status"], "error")
-        self.assertIn("not permitted", denied["error"]["message"])
-        self.assertEqual(denied["calls"], [])
-        unknown = await self.execute("async () => await device.delete_all()")
-        self.assertEqual(unknown["status"], "error")
-        self.assertEqual(unknown["calls"], [])
-        self.active = False
-        stale = await self.execute("async () => 42")
-        self.assertEqual(stale["status"], "error")
-        self.assertIn("inactive", stale["error"]["message"])
+        kept = await executor.execute("scope-a", "orb['revision']")
+        self.assertEqual(kept["result"], 1)
+        fresh = await executor.execute("scope-b", "orb")
+        self.assertEqual(fresh["error"]["type"], "NameError")
+        self.assertEqual(len(self.sandbox.processes), 2)
+        self.assertEqual(self.sandbox.terminated, 0)
 
-    async def test_cpu_loop_is_stopped_by_external_watchdog_and_next_execution_works(
-        self,
-    ):
-        async with asyncio.timeout(8):
-            result = await self.execute("async () => { while (true) {} }")
+    async def test_device_errors_are_python_exceptions_and_failures_reset_state(self):
+        executor = await self.executor(self.setup_device())
+        caught = await executor.execute(
+            "scope-a",
+            "value = 7\n"
+            "try:\n    await device.set_orb('blue', 99)\n"
+            "except Exception as error:\n    message = str(error)\n"
+            "message",
+        )
+        self.assertEqual(caught["status"], "completed")
+        self.assertIn("ValidationError", caught["result"])
+        self.assertEqual(caught["calls"][0]["status"], "failed")
+        self.assertEqual(
+            [request.url.path for request in self.requests],
+            ["/api/device/scope-a/status"],
+        )
+        failure = await executor.execute("scope-a", "raise KeyError('boom')")
+        self.assertEqual(failure["error"]["type"], "KeyError")
+        self.assertTrue(failure["state_reset"])
+        reset = await executor.execute("scope-a", "value")
+        self.assertEqual(reset["error"]["type"], "NameError")
+        self.assertEqual(self.sandbox.terminated, 0)
+
+    async def test_runaway_program_discards_the_sandbox_and_next_run_works(self):
+        executor = await self.executor(self.setup_device(), timeout=1)
+        async with asyncio.timeout(5):
+            stuck = await executor.execute("scope-a", "while True:\n    pass")
+        self.assertEqual(stuck["error"]["type"], "TimeoutError")
+        self.assertEqual(self.sandbox.terminated, 1)
+        self.assertEqual((await executor.execute("scope-a", "6 * 7"))["result"], 42)
+
+    async def test_call_budget_stops_the_program_after_acknowledged_calls(self):
+        executor = await self.executor(self.setup_device(), max_calls=2)
+        result = await executor.execute(
+            "scope-a", "for _ in range(5):\n    await device.show_text('Ready')"
+        )
         self.assertEqual(result["status"], "error")
-        self.assertEqual(result["error"]["type"], "ResourceLimit")
-        self.assertFalse(result["calls_available"])
-        self.assertIn("do not replay", result["warning"])
-        self.assertEqual((await self.execute("async () => 2"))["result"], 2)
-
-    async def test_worker_arguments_call_budget_and_output_limits(self):
-        invalid = await self.execute("async () => await device.set_orb('blue', 99)")
-        self.assertEqual(invalid["status"], "error")
-        self.assertEqual(invalid["calls"], [])
-        self.assertEqual(self.requests, ["status"])
-        exhausted = await self.execute(
-            "async () => { for (let i = 0; i < 15; i++) "
-            "await device.show_text('Ready'); }"
+        self.assertIn("budget", result["error"]["message"])
+        self.assertEqual(
+            [call["status"] for call in result["calls"]], ["completed", "completed"]
         )
-        self.assertEqual(exhausted["status"], "error")
-        self.assertEqual(len(exhausted["calls"]), 12)
-        self.assertTrue(
-            all(call["status"] == "completed" for call in exhausted["calls"])
-        )
-        for code in (
-            "async () => 'x'.repeat(20000)",
-            "async () => { console.log('x'.repeat(20000)); return 1; }",
-        ):
-            with self.subTest(code=code):
-                result = await self.execute(code)
-                self.assertEqual(result["status"], "error")
-                self.assertIn("output limit", result["error"]["message"])
 
-    async def test_client_cancellation_closes_the_pending_device_http_connection(self):
-        self.block_orb = True
+    async def test_inactive_scope_runs_no_code(self):
+        def inactive(request):
+            self.requests.append(request)
+            return httpx.Response(409, json={"detail": "This device turn has ended"})
+
+        executor = await self.executor(self.setup_device(inactive))
+        result = await executor.execute("scope-a", "await device.set_orb('#112233')")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("ended", result["error"]["message"])
+        self.assertEqual(result["calls"], [])
+        self.assertEqual(self.sandbox.processes, [])
+
+    async def test_cancellation_stops_pending_call_and_discards_sandbox(self):
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def handle(request):
+            if request.url.path.endswith("/set_orb"):
+                entered.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    cancelled.set()
+            return httpx.Response(200, json=receipt())
+
+        executor = await self.executor(self.setup_device(handle))
         task = asyncio.create_task(
-            self.execute("async () => await device.set_orb('#112233', 24)")
+            executor.execute("scope-a", "await device.set_orb('#112233', 24)")
         )
         try:
-            await asyncio.wait_for(self.entered.wait(), 5)
+            await asyncio.wait_for(entered.wait(), 3)
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
-                await task
-            await asyncio.wait_for(self.disconnected.wait(), 3)
+                await asyncio.wait_for(task, 3)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(self.sandbox.terminated, 1)
+        self.assertEqual((await executor.execute("scope-a", "1 + 1"))["result"], 2)
 
 
 if __name__ == "__main__":

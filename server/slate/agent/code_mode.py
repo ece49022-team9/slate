@@ -2,14 +2,21 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
+from pathlib import Path
 
 import httpx
+import modal
 from pydantic_monty import AsyncMonty, ClassInstance, CollectStreams
 
 from slate.device import DeviceStatus, OrbRequest, TextRequest
 
 logger = logging.getLogger("slate.agent.code_mode")
+RUNNER_PATH = "/opt/slate/runner.py"
+SANDBOX_IMAGE = modal.Image.debian_slim(python_version="3.12").add_local_file(
+    Path(__file__).with_name("sandbox_runner.py"), RUNNER_PATH
+)
 DEVICE_STUBS = """from typing import TypedDict
 class DeviceReceipt(TypedDict):
     request_id: str
@@ -25,16 +32,6 @@ class ScopedDevice:
     async def show_text(self, text: str) -> DeviceReceipt: ...
     async def get_status(self) -> DeviceReceipt: ...
 device: ScopedDevice
-"""
-DEVICE_TYPESCRIPT = """interface DeviceReceipt {
-  request_id: string; operation: string; revision: number; state: number;
-  color: string; radius: number; text: string; custom: boolean;
-}
-declare const device: {
-  set_orb(color: string, radius?: number): Promise<DeviceReceipt>;
-  show_text(text: string): Promise<DeviceReceipt>;
-  get_status(): Promise<DeviceReceipt>;
-};
 """
 
 
@@ -138,6 +135,40 @@ class ScopedDevice:
         return await self._call("get_status", {})
 
 
+def validate_code(code: str) -> None:
+    if not code.strip() or len(code.encode()) > 16_384:
+        raise ValueError("Code must contain 1..16384 UTF-8 bytes")
+
+
+def completed(value, output: str, calls: list, scope_status: dict, limit: int) -> dict:
+    if len(json.dumps(value, allow_nan=False).encode()) > limit:
+        raise ValueError("Code result exceeds the output limit")
+    if len(output.encode()) > limit:
+        raise ValueError("Printed output exceeds the output limit")
+    return {
+        "status": "completed",
+        "result": value,
+        "output": output,
+        "calls": calls,
+        "scope_status": scope_status,
+        "state_reset": False,
+    }
+
+
+def failed(kind: str, message: str, output: str, calls: list, limit: int) -> dict:
+    logger.warning("Device code failed: error=%s", kind)
+    return {
+        "status": "error",
+        "error": {
+            "type": kind,
+            "message": message.encode()[:limit].decode(errors="ignore"),
+        },
+        "output": output.encode()[:limit].decode(errors="ignore"),
+        "calls": calls,
+        "state_reset": True,
+    }
+
+
 class MontyExecutor:
     def __init__(
         self,
@@ -184,8 +215,7 @@ class MontyExecutor:
             output = CollectStreams(max_bytes=self.max_output)
             try:
                 async with asyncio.timeout(self.timeout):
-                    if not code.strip() or len(code.encode()) > 16_384:
-                        raise ValueError("Code must contain 1..16384 UTF-8 bytes")
+                    validate_code(code)
                     scope_status = await self.device.get_status(scope)
                     if self.bound is None or self.bound.scope != scope:
                         await self._reset()
@@ -216,38 +246,25 @@ class MontyExecutor:
                         inputs={"device": self.wrapper},
                         print_callback=output,
                     )
-                    printed = "".join(text for _, text in output.output)
-                    if (
-                        len(json.dumps(value, allow_nan=False).encode())
-                        > self.max_output
-                    ):
-                        raise ValueError("Code result exceeds the output limit")
-                    return {
-                        "status": "completed",
-                        "result": value,
-                        "output": printed,
-                        "calls": calls,
-                        "scope_status": scope_status,
-                        "state_reset": False,
-                    }
+                    return completed(
+                        value,
+                        "".join(text for _, text in output.output),
+                        calls,
+                        scope_status,
+                        self.max_output,
+                    )
             except asyncio.CancelledError:
                 await self._reset()
                 raise
             except Exception as error:
-                logger.warning("Device code failed: error=%s", type(error).__name__)
                 await self._reset()
-                return {
-                    "status": "error",
-                    "error": {
-                        "type": type(error).__name__,
-                        "message": str(error)
-                        .encode()[: self.max_output]
-                        .decode(errors="ignore"),
-                    },
-                    "output": "".join(text for _, text in output.output),
-                    "calls": calls,
-                    "state_reset": True,
-                }
+                return failed(
+                    type(error).__name__,
+                    str(error),
+                    "".join(text for _, text in output.output),
+                    calls,
+                    self.max_output,
+                )
             finally:
                 if self.bound:
                     self.bound.active = False
@@ -259,26 +276,219 @@ class MontyExecutor:
             await self.pool_stack.aclose()
 
 
-class CloudflareExecutor:
-    def __init__(self, device: DeviceClient, client: httpx.AsyncClient) -> None:
+class RunnerFailure(Exception):
+    def __init__(self, error: dict, output: str) -> None:
+        super().__init__(error["message"])
+        self.kind = error["type"]
+        self.output = output
+
+
+class Runner:
+    def __init__(self, write, drain, chunks: AsyncIterator, close, limit: int) -> None:
+        self.write = write
+        self.drain = drain
+        self.chunks = chunks
+        self._close = close
+        self.limit = limit
+        self.buffer = ""
+
+    async def send(self, message: dict) -> None:
+        self.write(json.dumps(message, allow_nan=False) + "\n")
+        await self.drain()
+
+    async def receive(self) -> dict:
+        while "\n" not in self.buffer:
+            if len(self.buffer) > self.limit:
+                raise ValueError("Sandbox message exceeds the output limit")
+            try:
+                chunk = await anext(self.chunks)
+            except StopAsyncIteration:
+                raise RuntimeError("Sandbox runner exited") from None
+            self.buffer += chunk.decode() if isinstance(chunk, bytes) else chunk
+        line, self.buffer = self.buffer.split("\n", 1)
+        return json.loads(line)
+
+    async def close(self) -> None:
+        await self._close()
+
+
+class ModalSandbox:
+    def __init__(self, app_name: str = "slate-code", limit: int = 4 * 16_384) -> None:
+        self.app_name = app_name
+        self.limit = limit
+        self.sandbox: modal.Sandbox | None = None
+        self.spare: asyncio.Task[Runner] | None = None
+        self.lock = asyncio.Lock()
+
+    async def ensure(self) -> modal.Sandbox:
+        async with self.lock:
+            if self.sandbox is None:
+                app = await modal.App.lookup.aio(self.app_name, create_if_missing=True)
+                self.sandbox = await modal.Sandbox.create.aio(
+                    app=app,
+                    image=SANDBOX_IMAGE,
+                    block_network=True,
+                    cpu=1,
+                    memory=512,
+                    timeout=3600,
+                    idle_timeout=600,
+                )
+                logger.info("Modal sandbox ready: %s", self.sandbox.object_id)
+            return self.sandbox
+
+    async def _start(self) -> Runner:
+        sandbox = await self.ensure()
+        process = await sandbox.exec.aio("python", "-u", RUNNER_PATH, bufsize=1)
+
+        async def close() -> None:
+            process.stdin.write_eof()
+            await process.stdin.drain.aio()
+            await process.wait.aio()
+
+        return Runner(
+            process.stdin.write,
+            process.stdin.drain.aio,
+            aiter(process.stdout),
+            close,
+            self.limit,
+        )
+
+    async def spawn(self) -> Runner:
+        spare, self.spare = self.spare, None
+        try:
+            runner = await spare if spare is not None else await self._start()
+        except Exception:
+            logger.warning("Sandbox runner failed to start; recreating", exc_info=True)
+            await self.terminate()
+            runner = await self._start()
+        self.spare = asyncio.create_task(self._start())
+        return runner
+
+    async def terminate(self) -> None:
+        async with self.lock:
+            sandbox, self.sandbox = self.sandbox, None
+            spare, self.spare = self.spare, None
+        if spare is not None:
+            spare.cancel()
+            await asyncio.gather(spare, return_exceptions=True)
+        if sandbox is not None:
+            logger.warning("Terminating Modal sandbox %s", sandbox.object_id)
+            await sandbox.terminate.aio()
+
+
+class SandboxExecutor:
+    def __init__(
+        self,
+        device: DeviceClient,
+        sandbox,
+        *,
+        max_calls: int = 12,
+        max_output: int = 16_384,
+        timeout: float = 15,
+    ) -> None:
         self.device = device
-        self.client = client
+        self.sandbox = sandbox
+        self.max_calls = max_calls
+        self.max_output = max_output
+        self.timeout = timeout
+        self.runner: Runner | None = None
+        self.bound: ScopedDevice | None = None
+        self.closing: set[asyncio.Task] = set()
+        self.lock = asyncio.Lock()
+        self.closed = False
+
+    async def _close_runner(self, runner: Runner) -> None:
+        try:
+            async with asyncio.timeout(5):
+                await runner.close()
+        except Exception:
+            logger.exception("Idle sandbox runner did not exit after end of input")
+
+    async def _retire(self) -> None:
+        runner, self.runner = self.runner, None
+        if self.bound:
+            await self.bound.revoke()
+        self.bound = None
+        if runner is not None:
+            task = asyncio.create_task(self._close_runner(runner))
+            self.closing.add(task)
+            task.add_done_callback(self.closing.discard)
+
+    async def _discard(self) -> None:
+        self.runner = None
+        if self.bound:
+            await self.bound.revoke()
+        self.bound = None
+        for task in tuple(self.closing):
+            task.cancel()
+        await asyncio.gather(*self.closing, return_exceptions=True)
+        await self.sandbox.terminate()
+
+    async def _dispatch(self, message: dict) -> dict:
+        reply = {"id": message["id"]}
+        try:
+            if message["method"] not in ("set_orb", "show_text", "get_status"):
+                raise ValueError("Unknown device capability")
+            value = await getattr(self.bound, message["method"])(**message["args"])
+            return {**reply, "type": "result", "value": value}
+        except Exception as error:
+            return {
+                **reply,
+                "type": "error",
+                "error": f"{type(error).__name__}: {error}",
+            }
 
     async def execute(self, scope: str, code: str) -> dict:
-        await self.device.get_status(scope)
-        if not code.strip() or len(code.encode()) > 16_384:
-            raise ValueError("Code must contain 1..16384 UTF-8 bytes")
-        async with asyncio.timeout(15):
-            response = await self.client.post(
-                "/execute",
-                json={
-                    "scope": scope,
-                    "code": code,
-                    "device_url": str(self.device.client.base_url),
-                },
-                timeout=15,
-            )
-            response.raise_for_status()
-            if len(response.content) > 65_536:
-                raise ValueError("Cloudflare execution output exceeds the output limit")
-            return response.json()
+        async with self.lock:
+            if self.closed:
+                raise RuntimeError("Device code executor has closed")
+            calls: list[dict] = []
+            in_flight = False
+            try:
+                async with asyncio.timeout(self.timeout):
+                    validate_code(code)
+                    scope_status = await self.device.get_status(scope)
+                    if self.bound is None or self.bound.scope != scope:
+                        await self._retire()
+                        self.runner = await self.sandbox.spawn()
+                        self.bound = ScopedDevice(self.device, scope, self.max_calls)
+                    self.bound.calls = calls
+                    self.bound.active = True
+                    in_flight = True
+                    await self.runner.send({"type": "execute", "code": code})
+                    while (message := await self.runner.receive())["type"] == "call":
+                        await self.runner.send(await self._dispatch(message))
+                    in_flight = False
+                    if message["type"] == "failed":
+                        raise RunnerFailure(message["error"], message["output"])
+                    return completed(
+                        message["value"],
+                        message["output"],
+                        calls,
+                        scope_status,
+                        self.max_output,
+                    )
+            except asyncio.CancelledError:
+                await self._discard()
+                raise
+            except RunnerFailure as error:
+                await self._retire()
+                return failed(
+                    error.kind, str(error), error.output, calls, self.max_output
+                )
+            except Exception as error:
+                if in_flight:
+                    await self._discard()
+                else:
+                    await self._retire()
+                return failed(
+                    type(error).__name__, str(error), "", calls, self.max_output
+                )
+            finally:
+                if self.bound:
+                    self.bound.active = False
+
+    async def close(self) -> None:
+        async with self.lock:
+            self.closed = True
+            await self._discard()

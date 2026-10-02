@@ -1,5 +1,4 @@
 import asyncio
-import os
 import socket
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
@@ -9,7 +8,12 @@ from uuid import uuid4
 import httpx
 import uvicorn
 from fastapi import FastAPI
-from slate.agent.code_mode import CloudflareExecutor, DeviceClient, MontyExecutor
+from slate.agent.code_mode import (
+    DeviceClient,
+    ModalSandbox,
+    MontyExecutor,
+    SandboxExecutor,
+)
 from slate.breadboard import breadboard, build_image
 from slate.device import DeviceSDK, FirmwareDevice, router
 
@@ -41,38 +45,6 @@ async def device_http(voice):
             await asyncio.wait_for(task, 5)
 
 
-@asynccontextmanager
-async def workers_runtime(device_url):
-    if not (ROOT / ".local/cloudflare-code-mode/node_modules/miniflare").is_dir():
-        raise RuntimeError("Install the pinned local Cloudflare prototype dependencies")
-    process = await asyncio.create_subprocess_exec(
-        "node",
-        str(ROOT / "scripts/cloudflare_code_mode.mjs"),
-        env={
-            **os.environ,
-            "SLATE_DEVICE_URL": device_url,
-            "SLATE_CLOUDFLARE_CODE_PORT": "0",
-        },
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        line = await asyncio.wait_for(process.stdout.readline(), 5)
-        if b"listening" not in line:
-            raise RuntimeError("Cloudflare local Workers runtime did not start")
-        port = int(line.rsplit(b":", 1)[1])
-        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
-            yield client
-    finally:
-        if process.returncode is None:
-            process.terminate()
-        await asyncio.wait_for(process.communicate(), 5)
-
-
-def program(mode, python, javascript):
-    return python if mode == "monty" else javascript
-
-
 async def verify_mode(mode, bench, voice, device_url):
     turn = SimpleNamespace(scope=uuid4().hex, id=uuid4().hex)
     commands = []
@@ -90,20 +62,16 @@ async def verify_mode(mode, bench, voice, device_url):
             httpx.AsyncClient(base_url=device_url)
         )
         device = DeviceClient(client)
-        if mode == "monty":
-            executor = MontyExecutor(device)
-            resources.push_async_callback(executor.close)
-        else:
-            workers = await resources.enter_async_context(workers_runtime(device_url))
-            executor = CloudflareExecutor(device, workers)
+        executor = (
+            MontyExecutor(device)
+            if mode == "monty"
+            else SandboxExecutor(device, ModalSandbox())
+        )
+        resources.push_async_callback(executor.close)
         initial = await device.get_status(turn.scope)
         small = await executor.execute(
             turn.scope,
-            program(
-                mode,
-                "await device.set_orb('#0000ff', 12)",
-                "async () => await device.set_orb('#0000ff', 12)",
-            ),
+            "await device.set_orb('#0000ff', 12)",
         )
         assert small["status"] == "completed", small
         small_receipt = small["result"]
@@ -112,15 +80,9 @@ async def verify_mode(mode, bench, voice, device_url):
         assert small_pixels[63 * 128 + 63] == 0x001F, "Small orb did not turn blue"
         composed = await executor.execute(
             turn.scope,
-            program(
-                mode,
-                "orb = await device.set_orb('#0000ff', 40)\n"
-                "text = await device.show_text('A')\n"
-                "status = await device.get_status()\n[orb, text, status]",
-                "async () => { const orb = await device.set_orb('#0000ff', 40); "
-                "const text = await device.show_text('A'); "
-                "return [orb, text, await device.get_status()]; }",
-            ),
+            "orb = await device.set_orb('#0000ff', 40)\n"
+            "text = await device.show_text('A')\n"
+            "status = await device.get_status()\n[orb, text, status]",
         )
         assert composed["status"] == "completed", composed
         large, text, status = composed["result"]
@@ -129,6 +91,17 @@ async def verify_mode(mode, bench, voice, device_url):
         assert large["revision"] < text["revision"] == status["revision"]
         assert status["color"] == "#0000ff" and status["text"] == "A"
         assert status["radius"] == 40
+        if mode == "modal":
+            denied = await executor.execute(
+                turn.scope,
+                "import urllib.request\n"
+                "urllib.request.urlopen('https://example.com', timeout=3)",
+            )
+            assert denied["status"] == "error" and not denied["calls"], denied
+            looping = await executor.execute(turn.scope, "while True: pass")
+            assert looping["error"]["type"] == "TimeoutError", looping
+            recovered = await executor.execute(turn.scope, "sum(range(10))")
+            assert recovered["result"] == 45, recovered
         await bench.sleep(0.1)
         pixels = bench.oled.frames[-1].pixels
         assert sum(bool(pixel) for pixel in pixels[: 90 * 128]) > 2 * sum(
@@ -142,12 +115,7 @@ async def verify_mode(mode, bench, voice, device_url):
                 )
         partial = await executor.execute(
             turn.scope,
-            program(
-                mode,
-                "await device.set_orb('#00ff00', 20)\nawait device.show_text('\\n')",
-                "async () => { await device.set_orb('#00ff00', 20); "
-                "return await device.show_text('\\n'); }",
-            ),
+            "await device.set_orb('#00ff00', 20)\nawait device.show_text('\\n')",
         )
         assert partial["status"] == "error", partial
         acknowledged = partial["calls"][0]
@@ -165,9 +133,7 @@ async def verify_mode(mode, bench, voice, device_url):
         count = len(commands)
         voice.current = None
         try:
-            expired = await executor.execute(
-                turn.scope, program(mode, "123", "async () => 123")
-            )
+            expired = await executor.execute(turn.scope, "123")
         except RuntimeError as error:
             assert "ended" in str(error), error
         else:
@@ -183,11 +149,11 @@ async def verify_mode(mode, bench, voice, device_url):
 async def run():
     voice = SimpleNamespace(current=None)
     async with breadboard() as bench, device_http(voice) as device_url:
-        for mode in ("monty", "cloudflare"):
+        for mode in ("monty", "modal"):
             await verify_mode(mode, bench, voice, device_url)
     print(
         "slate.device_code: LiveKit transport was replaced by the fixture; "
-        "HTTP routes, typed SDK, both code runtimes and QEMU firmware were real"
+        "HTTP routes, typed SDK, Monty, the Modal sandbox and QEMU firmware were real"
     )
 
 

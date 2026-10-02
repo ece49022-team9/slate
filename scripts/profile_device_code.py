@@ -16,16 +16,21 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
-from check_device_code import device_http, workers_runtime
+from check_device_code import device_http
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from slate.agent.agent import Agent
-from slate.agent.code_mode import CloudflareExecutor, DeviceClient, MontyExecutor
+from slate.agent.code_mode import (
+    DeviceClient,
+    ModalSandbox,
+    MontyExecutor,
+    SandboxExecutor,
+)
 from slate.board import ROOT
 from slate.breadboard import breadboard, build_image
 from slate.device import DeviceSDK, FirmwareDevice, agent_context
 
-MODES = ("tools", "cloudflare", "monty")
+MODES = ("tools", "modal", "monty")
 HERMES_URL = "http://127.0.0.1:8642"
 AGENT_LOG = ROOT / ".local/hermes-home/logs/agent.log"
 COLORS = ("#0000ff", "#ff8800", "#00ff00", "#ff00ff", "#00ffff", "#ffff00")
@@ -45,17 +50,11 @@ def task(index: int) -> SimpleNamespace:
     )
 
 
-def program(mode: str, work: SimpleNamespace) -> str:
-    if mode == "monty":
-        return (
-            f"orb = await device.set_orb('{work.color}', {work.radius})\n"
-            f"text = await device.show_text('{work.label}')\n"
-            "status = await device.get_status()\n[orb, text, status]"
-        )
+def program(work: SimpleNamespace) -> str:
     return (
-        f"async () => {{ const orb = await device.set_orb('{work.color}', "
-        f"{work.radius}); const text = await device.show_text('{work.label}'); "
-        "return [orb, text, await device.get_status()]; }"
+        f"orb = await device.set_orb('{work.color}', {work.radius})\n"
+        f"text = await device.show_text('{work.label}')\n"
+        "status = await device.get_status()\n[orb, text, status]"
     )
 
 
@@ -108,17 +107,9 @@ async def device_fixture():
         sdk = DeviceSDK(turn.scope, turn.id, execute, lambda: voice.current is session)
         session.device_sdk = lambda current: sdk
         voice.current = session
-        async with (
-            workers_runtime(url) as workers,
-            httpx.AsyncClient(base_url=url) as client,
-        ):
+        async with httpx.AsyncClient(base_url=url) as client:
             yield SimpleNamespace(
-                url=url,
-                workers=workers,
-                workers_url=str(workers.base_url),
-                scope=turn.scope,
-                device=DeviceClient(client),
-                commands=commands,
+                url=url, turn=turn, device=DeviceClient(client), commands=commands
             )
 
 
@@ -127,7 +118,6 @@ def mcp_environment(mode: str, fixture) -> dict[str, str]:
         **os.environ,
         "SLATE_DEVICE_MODE": mode,
         "SLATE_DEVICE_URL": fixture.url,
-        "SLATE_CLOUDFLARE_CODE_URL": fixture.workers_url,
     }
 
 
@@ -141,12 +131,12 @@ def structured(result) -> dict:
 
 
 async def run_exec(args, fixture) -> list[dict]:
-    scope = fixture.scope
     device = fixture.device
     async with AsyncExitStack() as stack:
         monty = MontyExecutor(device)
         stack.push_async_callback(monty.close)
-        cloudflare = CloudflareExecutor(device, fixture.workers)
+        modal = SandboxExecutor(device, ModalSandbox())
+        stack.push_async_callback(modal.close)
         sessions = {}
         for mode in MODES:
             read, write = await stack.enter_async_context(
@@ -164,13 +154,14 @@ async def run_exec(args, fixture) -> list[dict]:
             sessions[mode] = session
 
         async def direct(work):
+            scope = fixture.turn.scope
             await device.set_orb(scope, work.color, work.radius)
             await device.show_text(scope, work.label)
             return await device.get_status(scope)
 
         async def mcp_tools(work):
             tools = sessions["tools"]
-            arguments = {"scope": scope}
+            arguments = {"scope": fixture.turn.scope}
             structured(
                 await tools.call_tool(
                     "device_set_orb",
@@ -188,25 +179,27 @@ async def run_exec(args, fixture) -> list[dict]:
             async def run(work):
                 result = await sessions[mode].call_tool(
                     "execute_device_code",
-                    {"scope": scope, "code": program(mode, work)},
+                    {"scope": fixture.turn.scope, "code": program(work)},
                 )
                 return code_status(structured(result))
 
             return run
 
-        async def in_process(executor, mode):
+        async def in_process(executor):
             async def run(work):
-                return code_status(await executor.execute(scope, program(mode, work)))
+                return code_status(
+                    await executor.execute(fixture.turn.scope, program(work))
+                )
 
             return run
 
         arms = {
             "exec/tools": direct,
-            "exec/monty": await in_process(monty, "monty"),
-            "exec/cloudflare": await in_process(cloudflare, "cloudflare"),
+            "exec/monty": await in_process(monty),
+            "exec/modal": await in_process(modal),
             "mcp/tools": mcp_tools,
             "mcp/monty": mcp_code("monty"),
-            "mcp/cloudflare": mcp_code("cloudflare"),
+            "mcp/modal": mcp_code("modal"),
         }
         names = list(arms)
         rows = []
@@ -228,24 +221,39 @@ async def run_exec(args, fixture) -> list[dict]:
                         "firmware_commands": len(fixture.commands) - before,
                     }
                 )
-        for trial in range(args.cold):
-            work = task(index)
-            index += 1
+
+        async def fresh(executor):
             async with AsyncExitStack() as cold_stack:
-                fresh = MontyExecutor(device)
-                cold_stack.push_async_callback(fresh.close)
-                elapsed, result = await timed(
-                    fresh.execute(scope, program("monty", work))
+                cold_stack.push_async_callback(executor.close)
+                return await executor.execute(fixture.turn.scope, program(work))
+
+        cold = {
+            "exec/monty-new-scope": lambda: monty.execute(
+                fixture.turn.scope, program(work)
+            ),
+            "exec/modal-new-scope": lambda: modal.execute(
+                fixture.turn.scope, program(work)
+            ),
+            "exec/monty-new-process": lambda: fresh(MontyExecutor(device)),
+            "exec/modal-new-sandbox": lambda: fresh(
+                SandboxExecutor(device, ModalSandbox())
+            ),
+        }
+        for trial in range(args.cold):
+            for name, start_run in cold.items():
+                work = task(index)
+                index += 1
+                fixture.turn.scope = uuid4().hex
+                elapsed, result = await timed(start_run())
+                rows.append(
+                    {
+                        "arm": name,
+                        "round": trial,
+                        "warmup": False,
+                        "ms": elapsed,
+                        "correct": matches(code_status(result), work),
+                    }
                 )
-            rows.append(
-                {
-                    "arm": "exec/monty-cold",
-                    "round": trial,
-                    "warmup": False,
-                    "ms": elapsed,
-                    "correct": matches(code_status(result), work),
-                }
-            )
         return rows
 
 
@@ -327,14 +335,14 @@ async def agent_turn(fixture, work) -> dict:
     before = len(fixture.commands)
     try:
         elapsed, reply = await timed(
-            agent.run(prompt, device_context=agent_context(fixture.scope))
+            agent.run(prompt, device_context=agent_context(fixture.turn.scope))
         )
         run = agent.last_run
         timings = agent.timings
     finally:
         await agent.close()
     commands = len(fixture.commands) - before
-    status = await fixture.device.get_status(fixture.scope)
+    status = await fixture.device.get_status(fixture.turn.scope)
     await asyncio.sleep(0.5)
     first_text = timings.get("first_text")
     return {
@@ -353,7 +361,8 @@ async def agent_turn(fixture, work) -> dict:
 async def run_agent(args, fixture, directory) -> list[dict]:
     rows = []
     index = 10_000
-    for block, mode in enumerate(MODES + MODES[::-1]):
+    modes = tuple(args.modes)
+    for block, mode in enumerate(modes + modes[::-1]):
         async with hermes(mode, fixture, directory / "hermes.log"):
             for trial in range(-1, args.turns):
                 work = task(index)
@@ -488,6 +497,7 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--cold", type=int, default=5)
     parser.add_argument("--turns", type=int, default=3)
+    parser.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
     args = parser.parse_args()
     build_image()
     asyncio.run(run(args))
