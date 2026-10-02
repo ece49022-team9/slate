@@ -116,10 +116,6 @@ class TextToSpeech:
                     output_audio=True,
                     return_dict_in_generate=True,
                     max_new_tokens=int(max_seconds * 12.5),
-                    do_sample=False,
-                    depth_decoder_do_sample=False,
-                    temperature=1.0,
-                    depth_decoder_temperature=1.0,
                     **({"streamer": observer} if observer is not None else {}),
                 )
             if observer is not None:
