@@ -279,6 +279,7 @@ class VoiceSession:
                         "server": turn.timing.snapshot(),
                         "agent": self.agent.timings,
                         "agent_runtime": self.agent.last_run.get("runtime"),
+                        "agent_usage": self.agent.last_run.get("usage"),
                         "stt": stt_timing,
                         "tts": tts_timing,
                     }

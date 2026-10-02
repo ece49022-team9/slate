@@ -369,7 +369,11 @@ class DeviceAudioTimingTests(unittest.IsolatedAsyncioTestCase):
         room.disconnect = AsyncMock()
         room.local_participant.publish_track = AsyncMock(return_value=publication)
 
-        def register(name: str):
+        def register(name: str, handler: Callable | None = None):
+            if handler is not None:
+                handlers[name] = handler
+                return handler
+
             def attach(handler):
                 handlers[name] = handler
                 return handler

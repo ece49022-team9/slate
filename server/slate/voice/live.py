@@ -171,6 +171,8 @@ class LiveConversation:
                 self.usage = event.usage.model_dump() if event.usage else None
                 self.timing.mark("live_closed")
                 return
+            elif kind == "session.usage.updated":
+                self.usage = event.usage.model_dump()
             elif kind == "info":
                 logger.info("GPT-Live info %s: %s", event.code, event.message)
         raise RuntimeError("slate.live: GPT-Live disconnected before session.closed")
@@ -216,6 +218,7 @@ class LiveConversation:
             reply = await self.agent.run(BACKEND_CONTEXT + request)
             record["agent_completed_ns"] = time.monotonic_ns()
             record["agent"] = self.agent.timings
+            record["usage"] = self.agent.last_run.get("usage")
             record["reply"] = reply
         except asyncio.CancelledError:
             raise
@@ -260,6 +263,7 @@ class LiveSession:
         self.close_done = asyncio.Event()
         self.tasks: set[asyncio.Task] = set()
         self.call: asyncio.Task | None = None
+        self.ending = False
 
     def spawn(self, work: Coroutine[Any, Any, None]) -> asyncio.Task:
         task = asyncio.create_task(work)
@@ -280,6 +284,9 @@ class LiveSession:
             await self.room.local_participant.publish_track(track)
             self.room.local_participant.register_rpc_method(
                 "live_report", self.live_report
+            )
+            self.room.local_participant.register_rpc_method(
+                "live_finish", self.live_finish
             )
             self.spawn(self.play())
             self.spawn(self.expire())
@@ -324,6 +331,8 @@ class LiveSession:
 
         async def microphone() -> AsyncIterator[bytes]:
             async for event in stream:
+                if self.ending:
+                    return
                 yield event.frame.data.tobytes()
 
         try:
@@ -350,6 +359,14 @@ class LiveSession:
     async def live_report(self, data: rtc.RpcInvocationData) -> str:
         if data.caller_identity != self.device_identity:
             raise rtc.RpcError(1501, "This session belongs to another device")
+        return json.dumps(self.conversation.report())
+
+    async def live_finish(self, data: rtc.RpcInvocationData) -> str:
+        if data.caller_identity != self.device_identity:
+            raise rtc.RpcError(1501, "This session belongs to another device")
+        self.ending = True
+        if self.call:
+            await asyncio.wait_for(asyncio.shield(self.call), timeout=20)
         return json.dumps(self.conversation.report())
 
     async def publish(self, topic: str, **fields: Any) -> None:

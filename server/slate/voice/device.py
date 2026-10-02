@@ -4,7 +4,7 @@ import struct
 import time
 from collections.abc import AsyncIterator
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 from urllib.request import Request, urlopen
@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from livekit import rtc
 
 from slate.voice.audio import (
+    AUDIBLE_PEAK,
     SAMPLE_BYTES,
     SAMPLE_RATE,
     SPEECH_PEAK,
@@ -81,147 +82,189 @@ async def transcribe_audio(
     *,
     profile: bool = False,
 ) -> VoiceResult:
-    timing = Timeline()
-    timing.mark("session_requested")
-    session = await asyncio.to_thread(
-        session_request,
-        f"{api_url}/api/voice/sessions",
-        "POST",
-        json.dumps({"profile": profile}).encode(),
-    )
-    timing.mark("session_ready")
-    room = rtc.Room()
-    source = rtc.AudioSource(sample_rate, 1, queue_size_ms=100)
-    result: asyncio.Future[tuple[str, str]] = asyncio.get_running_loop().create_future()
-    transcript = ""
-    reply = ""
-    receiving_reply = False
-    reply_audio = bytearray()
-    reader: asyncio.Task | None = None
-    turn = ""
-    server_timing = {}
+    async with CascadeCall(api_url, sample_rate, profile=profile) as call:
+        return await call.turn(audio)
 
-    @room.on("track_subscribed")
-    def on_track(track: rtc.RemoteTrack, _publication, participant) -> None:
-        nonlocal reader
-        if (
-            participant.identity != session["worker_identity"]
-            or track.kind != rtc.TrackKind.KIND_AUDIO
-        ):
-            return
 
-        async def read_track() -> None:
-            stream = rtc.AudioStream(
-                track, sample_rate=SAMPLE_RATE, num_channels=1, frame_size_ms=20
+@dataclass
+class CascadeTurn:
+    timing: Timeline
+    result: asyncio.Future
+    id: str = ""
+    transcript: str = ""
+    reply: str = ""
+    receiving_reply: bool = False
+    audio: bytearray = field(default_factory=bytearray)
+    server: dict = field(default_factory=dict)
+
+
+class CascadeCall:
+    """The device's side of a push-to-talk session: one LiveKit connection that
+    carries any number of start, speak, and end turns."""
+
+    def __init__(self, api_url: str, sample_rate: int, *, profile: bool = False):
+        self.api_url = api_url
+        self.sample_rate = sample_rate
+        self.profile = profile
+        self.room = rtc.Room()
+        self.source = rtc.AudioSource(sample_rate, 1, queue_size_ms=100)
+        self.timing = Timeline()
+        self.session: dict = {}
+        self.current: CascadeTurn | None = None
+        self.reader: asyncio.Task | None = None
+
+    async def __aenter__(self) -> Self:
+        self.timing.mark("session_requested")
+        self.session = await asyncio.to_thread(
+            session_request,
+            f"{self.api_url}/api/voice/sessions",
+            "POST",
+            json.dumps({"profile": self.profile}).encode(),
+        )
+        self.timing.mark("session_ready")
+        self.room.on("track_subscribed", self.track_subscribed)
+        self.room.on("data_received", self.data_received)
+        try:
+            self.timing.mark("livekit_connect_requested")
+            await self.room.connect(
+                self.session["server_url"], self.session["participant_token"]
             )
-            try:
-                async for event in stream:
-                    if receiving_reply:
-                        chunk = event.frame.data.tobytes()
-                        timing.mark("reply_first_frame")
-                        if "reply_first_audible" not in timing.marks and any(
-                            abs(sample) > 96
-                            for (sample,) in struct.iter_unpack("<h", chunk)
-                        ):
-                            timing.mark("reply_first_audible")
-                        reply_audio.extend(chunk)
-            finally:
-                await stream.aclose()
+            self.timing.mark("livekit_connected")
+            track = rtc.LocalAudioTrack.create_audio_track("microphone", self.source)
+            options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+            publication = await self.room.local_participant.publish_track(
+                track, options
+            )
+            await asyncio.wait_for(publication.wait_for_subscription(), timeout=10)
+            self.timing.mark("mic_subscribed")
+        except BaseException:
+            await self.close()
+            raise
+        return self
 
-        reader = asyncio.create_task(read_track())
+    async def __aexit__(self, *_) -> None:
+        await self.close()
 
-    @room.on("data_received")
-    def on_data(packet: rtc.DataPacket) -> None:
-        nonlocal transcript, reply, receiving_reply, server_timing
+    def track_subscribed(self, track: rtc.RemoteTrack, _publication, participant):
         if (
-            packet.topic not in (TRANSCRIPT_TOPIC, REPLY_TOPIC)
+            participant.identity == self.session["worker_identity"]
+            and track.kind == rtc.TrackKind.KIND_AUDIO
+            and self.reader is None
+        ):
+            self.reader = asyncio.create_task(self.read_reply(track))
+
+    async def read_reply(self, track: rtc.RemoteTrack) -> None:
+        stream = rtc.AudioStream(
+            track, sample_rate=SAMPLE_RATE, num_channels=1, frame_size_ms=20
+        )
+        try:
+            async for event in stream:
+                turn = self.current
+                if turn is None or not turn.receiving_reply:
+                    continue
+                chunk = event.frame.data.tobytes()
+                turn.timing.mark("reply_first_frame")
+                if peak(chunk) > AUDIBLE_PEAK:
+                    turn.timing.mark("reply_first_audible")
+                turn.audio.extend(chunk)
+        finally:
+            await stream.aclose()
+
+    def data_received(self, packet: rtc.DataPacket) -> None:
+        turn = self.current
+        if (
+            turn is None
+            or packet.topic not in (TRANSCRIPT_TOPIC, REPLY_TOPIC)
             or packet.participant is None
-            or packet.participant.identity != session["worker_identity"]
-            or result.done()
+            or packet.participant.identity != self.session["worker_identity"]
+            or turn.result.done()
         ):
             return
         event = json.loads(packet.data)
-        if event["turn_id"] != turn:
+        if event["turn_id"] != turn.id:
             return
         if "error" in event:
-            result.set_exception(RuntimeError(event["error"]))
+            turn.result.set_exception(RuntimeError(event["error"]))
         elif packet.topic == TRANSCRIPT_TOPIC:
             if event.get("text", "").strip():
-                timing.mark("stt_first_text")
+                turn.timing.mark("stt_first_text")
             if event.get("final"):
-                timing.mark("transcript_received")
-                transcript = event["text"]
-                if not transcript:
-                    result.set_result(("", ""))
+                turn.timing.mark("transcript_received")
+                turn.transcript = event["text"]
+                if not turn.transcript:
+                    turn.result.set_result(None)
         else:
-            timing.mark("reply_text_received")
-            reply = event["text"]
-            receiving_reply = True
+            turn.timing.mark("reply_text_received")
+            turn.reply = event["text"]
+            turn.receiving_reply = True
             if event.get("final"):
-                timing.mark("reply_complete_received")
-                server_timing = event.get("timing", {})
-                result.set_result((transcript, reply))
+                turn.timing.mark("reply_complete_received")
+                turn.server = event.get("timing", {})
+                turn.result.set_result(None)
 
-    try:
-        timing.mark("livekit_connect_requested")
-        await room.connect(session["server_url"], session["participant_token"])
-        timing.mark("livekit_connected")
-        track = rtc.LocalAudioTrack.create_audio_track("microphone", source)
-        options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
-        publication = await room.local_participant.publish_track(track, options)
-        await asyncio.wait_for(publication.wait_for_subscription(), timeout=10)
-        timing.mark("mic_subscribed")
-        timing.mark("turn_requested")
-        turn = await room.local_participant.perform_rpc(
-            destination_identity=session["worker_identity"],
-            method="start_turn",
-            payload="",
-        )
-        timing.mark("turn_ready")
-        async with aclosing(aiter(audio)) as chunks:
-            async for chunk in chunks:
-                if not chunk or len(chunk) % SAMPLE_BYTES:
-                    raise ValueError("slate.voice: incomplete PCM samples")
-                frame = rtc.AudioFrame(
-                    chunk, sample_rate, 1, len(chunk) // SAMPLE_BYTES
-                )
-                timing.mark("input_first_capture")
-                if peak(chunk) > SPEECH_PEAK:
-                    timing.mark("input_speech_last", replace=True)
-                await source.capture_frame(frame)
-                timing.mark("input_last_capture", replace=True)
-        timing.mark("input_drain_requested")
-        await source.wait_for_playout()
-        timing.mark("end_requested")
-        await room.local_participant.perform_rpc(
-            destination_identity=session["worker_identity"],
-            method="end_turn",
-            payload=turn,
-        )
-        timing.mark("end_acknowledged")
-        transcript, reply = await asyncio.wait_for(result, timeout=360)
-        if reply:
-            await asyncio.sleep(0.5)
-            timing.mark("receive_drain_done")
-            if not reply_audio:
-                raise RuntimeError("Slate spoke, but no LiveKit reply audio arrived")
-        return VoiceResult(
-            transcript,
-            reply,
-            write_wav(trim_transport_silence(bytes(reply_audio))) if reply else b"",
-            {**server_timing, "device": timing.snapshot()},
-        )
-    finally:
-        if reader:
-            reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
-        await source.aclose()
-        await room.disconnect()
-        await asyncio.to_thread(
-            session_request,
-            f"{api_url}/api/voice/sessions/{session['session_id']}",
-            "DELETE",
-        )
+    async def turn(self, audio: AsyncIterator[bytes]) -> VoiceResult:
+        turn = CascadeTurn(Timeline(), asyncio.get_running_loop().create_future())
+        self.current = turn
+        try:
+            turn.timing.mark("turn_requested")
+            turn.id = await self.room.local_participant.perform_rpc(
+                destination_identity=self.session["worker_identity"],
+                method="start_turn",
+                payload="",
+            )
+            turn.timing.mark("turn_ready")
+            async with aclosing(aiter(audio)) as chunks:
+                async for chunk in chunks:
+                    if not chunk or len(chunk) % SAMPLE_BYTES:
+                        raise ValueError("slate.voice: incomplete PCM samples")
+                    frame = rtc.AudioFrame(
+                        chunk, self.sample_rate, 1, len(chunk) // SAMPLE_BYTES
+                    )
+                    turn.timing.mark("input_first_capture")
+                    if peak(chunk) > SPEECH_PEAK:
+                        turn.timing.mark("input_speech_last", replace=True)
+                    await self.source.capture_frame(frame)
+                    turn.timing.mark("input_last_capture", replace=True)
+            turn.timing.mark("input_drain_requested")
+            await self.source.wait_for_playout()
+            turn.timing.mark("end_requested")
+            await self.room.local_participant.perform_rpc(
+                destination_identity=self.session["worker_identity"],
+                method="end_turn",
+                payload=turn.id,
+            )
+            turn.timing.mark("end_acknowledged")
+            await asyncio.wait_for(turn.result, timeout=360)
+            if turn.reply:
+                await asyncio.sleep(0.5)
+                turn.timing.mark("receive_drain_done")
+                if not turn.audio:
+                    raise RuntimeError("Slate spoke, but no reply audio arrived")
+            device = turn.timing.snapshot()
+            device["marks_ns"] = {**self.timing.marks, **device["marks_ns"]}
+            return VoiceResult(
+                turn.transcript,
+                turn.reply,
+                write_wav(trim_transport_silence(bytes(turn.audio)))
+                if turn.reply
+                else b"",
+                {**turn.server, "device": device},
+            )
+        finally:
+            self.current = None
+
+    async def close(self) -> None:
+        if self.reader:
+            self.reader.cancel()
+            await asyncio.gather(self.reader, return_exceptions=True)
+        await self.source.aclose()
+        await self.room.disconnect()
+        if self.session:
+            await asyncio.to_thread(
+                session_request,
+                f"{self.api_url}/api/voice/sessions/{self.session['session_id']}",
+                "DELETE",
+            )
 
 
 class LiveCall:
@@ -314,6 +357,17 @@ class LiveCall:
                 destination_identity=self.session["worker_identity"],
                 method="live_report",
                 payload="",
+            )
+        )
+
+    async def finish(self) -> dict:
+        """Close GPT-Live cleanly so the report includes its billed seconds."""
+        return json.loads(
+            await self.room.local_participant.perform_rpc(
+                destination_identity=self.session["worker_identity"],
+                method="live_finish",
+                payload="",
+                response_timeout=30,
             )
         )
 

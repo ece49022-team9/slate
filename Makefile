@@ -1,6 +1,7 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile server-duplex duplex-profile
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile server-duplex duplex-profile cost-deploy cost-profile
 
 MODAL_PROFILE ?= sudarshan-1
+MODAL_ENVIRONMENT ?= main
 INPUT ?= .local/voice-check.wav
 ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
 PORT ?= $(if $(filter 1,$(words $(ESP32_PORTS))),$(firstword $(ESP32_PORTS)))
@@ -92,10 +93,17 @@ voice-profile:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_voice.py --repeats $(or $(REPEATS),3)
 
 server-duplex:
-	MODAL_PROFILE=$(MODAL_PROFILE) doppler run -- uv run uvicorn slate.app:app --host 127.0.0.1 --port 8002
+	MODAL_PROFILE=$(MODAL_PROFILE) MODAL_ENVIRONMENT=$(MODAL_ENVIRONMENT) doppler run -- uv run uvicorn slate.app:app --host 127.0.0.1 --port 8002
 
 duplex-profile:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m scripts.profile_live --repeats $(or $(REPEATS),4) --interruptions $(or $(INTERRUPTIONS),3)
+
+cost-deploy:
+	MODAL_PROFILE=$(MODAL_PROFILE) MODAL_ENVIRONMENT=slate-cost uv run modal deploy -m slate.voice.stt
+	MODAL_PROFILE=$(MODAL_PROFILE) MODAL_ENVIRONMENT=slate-cost uv run modal deploy -m slate.voice.tts
+
+cost-profile:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -u -m scripts.profile_cost
 
 agent-e2e:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --browser --memory --voice
