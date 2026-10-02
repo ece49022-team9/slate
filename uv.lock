@@ -1605,6 +1605,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "livekit" },
     { name = "livekit-api" },
     { name = "modal" },
@@ -1619,11 +1620,13 @@ dev = [
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "ruff" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1,<0.142" },
+    { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "livekit", specifier = "==1.1.18" },
     { name = "livekit-api", specifier = "==1.2.1" },
     { name = "modal", specifier = "==1.5.5" },
@@ -1638,6 +1641,7 @@ dev = [
     { name = "httpx", specifier = ">=0.28,<0.29" },
     { name = "hypothesis", specifier = ">=6.168.1" },
     { name = "ruff", specifier = ">=0.15,<0.16" },
+    { name = "websockets", specifier = ">=17.1,<18" },
 ]
 
 [[package]]

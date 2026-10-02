@@ -2,13 +2,13 @@ import asyncio
 import json
 import logging
 from collections.abc import Coroutine
-from contextlib import aclosing
+from contextlib import AsyncExitStack, aclosing
 from typing import Any
 from uuid import uuid4
 
 from livekit import rtc
 
-from slate.agent.agent import Agent
+from slate.agent import create_agent
 from slate.voice.audio import SAMPLE_RATE, read_wav
 from slate.voice.client import speak, transcribe_stream
 from slate.voice.settings import (
@@ -29,7 +29,7 @@ class VoiceSession:
         self.room_name = f"slate-{self.id}"
         self.device_identity = f"device-{self.id}"
         self.room = rtc.Room()
-        self.agent = Agent()
+        self.agent = create_agent()
         self.speaker = rtc.AudioSource(SAMPLE_RATE, 1, queue_size_ms=100)
         self.closed = False
         self.close_done = asyncio.Event()
@@ -68,6 +68,9 @@ class VoiceSession:
             self.room.local_participant.register_rpc_method("end_turn", self.end_turn)
             self.room.local_participant.register_rpc_method(
                 "cancel_turn", self.cancel_turn
+            )
+            self.room.local_participant.register_rpc_method(
+                "approve_tool", self.approve_tool
             )
             self.spawn(self.expire())
         except BaseException:
@@ -175,6 +178,37 @@ class VoiceSession:
         await self.abort()
         return "ok"
 
+    async def approve_tool(self, data: rtc.RpcInvocationData) -> str:
+        self.authorize(data)
+        try:
+            payload = json.loads(data.payload)
+            if self.turn is None or payload["turn_id"] != self.turn.id:
+                raise ValueError("This recording has ended")
+            await self.agent.approve(
+                payload["run_id"], payload["request_id"], payload["choice"]
+            )
+        except (ValueError, KeyError, TypeError) as error:
+            raise rtc.RpcError(1502, str(error)) from error
+        return "ok"
+
+    async def agent_progress(self, turn: Turn, event: dict) -> None:
+        if self.turn is not turn:
+            return
+        if event["type"] == "approval.request":
+            await self.publish(
+                turn,
+                topic="slate.agent",
+                approval={
+                    "run_id": event["run_id"],
+                    "request_id": event["request_id"],
+                    "command": event.get("command", "Tool permission requested"),
+                },
+            )
+        elif event["type"] == "tool.started":
+            await self.publish(
+                turn, topic="slate.agent", tool=event.get("tool", "tool")
+            )
+
     async def publish(
         self, turn: Turn, topic: str = TRANSCRIPT_TOPIC, **fields: Any
     ) -> None:
@@ -209,8 +243,10 @@ class VoiceSession:
             await self.publish(turn, text=text.strip(), final=True)
             if text.strip():
                 stage = "agent reply"
-                async with asyncio.timeout(45):
-                    reply = await self.agent.run(text.strip())
+                async with asyncio.timeout(310):
+                    reply = await self.agent.run(
+                        text.strip(), lambda event: self.agent_progress(turn, event)
+                    )
                 logger.info("Agent replied for turn %s", turn.id)
                 await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=False)
                 stage = "speech generation"
@@ -235,6 +271,7 @@ class VoiceSession:
                 self.turn = None
 
     async def abort(self, message: str | None = None) -> None:
+        self.speaker.clear_queue()
         turn = self.turn
         if turn is None:
             return
@@ -262,9 +299,11 @@ class VoiceSession:
         for task in tasks:
             task.cancel()
         try:
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await self.speaker.aclose()
-            await self.room.disconnect()
+            async with AsyncExitStack() as cleanup:
+                cleanup.push_async_callback(self.room.disconnect)
+                cleanup.push_async_callback(self.speaker.aclose)
+                cleanup.push_async_callback(self.agent.close)
+                await asyncio.gather(*tasks, return_exceptions=True)
         finally:
             self.close_done.set()
 

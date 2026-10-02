@@ -30,7 +30,7 @@ REVISION = "c92a71e1c419772e25be7dc14d952c2521a740ab"
 
 @app.cls(
     image=image,
-    gpu="L4",
+    gpu=["L4", "A10", "L40S"],
     volumes={"/models": cache},
     secrets=[modal.Secret.from_name("slate-huggingface", required_keys=["HF_TOKEN"])],
     max_containers=1,

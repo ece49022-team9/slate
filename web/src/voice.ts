@@ -10,6 +10,7 @@ type Session = {
 }
 
 type Transcript = { turn_id: string; text?: string; final?: boolean; error?: string }
+export type Approval = { run_id: string; request_id: string; command: string }
 
 export class VoiceConnection {
   private room = new Room()
@@ -25,6 +26,7 @@ export class VoiceConnection {
   private onReply: (text: string) => void
   private onPlayback: (blocked: boolean) => void
   private onError: (message: string) => void
+  private onAgent: (tool: string, approval?: Approval) => void
   private speaker?: HTMLAudioElement
 
   constructor(
@@ -33,12 +35,14 @@ export class VoiceConnection {
     onReply: (text: string) => void,
     onPlayback: (blocked: boolean) => void,
     onError: (message: string) => void,
+    onAgent: (tool: string, approval?: Approval) => void,
   ) {
     this.onState = onState
     this.onTranscript = onTranscript
     this.onReply = onReply
     this.onPlayback = onPlayback
     this.onError = onError
+    this.onAgent = onAgent
   }
 
   async connect(): Promise<void> {
@@ -92,10 +96,14 @@ export class VoiceConnection {
   }
 
   private receiveEvent(payload: Uint8Array, identity?: string, topic?: string): void {
-    if ((topic !== 'slate.transcript' && topic !== 'slate.reply') || identity !== this.session?.worker_identity) return
+    if (!['slate.transcript', 'slate.reply', 'slate.agent'].includes(topic ?? '') || identity !== this.session?.worker_identity) return
     try {
-      const event = JSON.parse(new TextDecoder().decode(payload)) as Transcript
+      const event = JSON.parse(new TextDecoder().decode(payload)) as Transcript & { tool?: string; approval?: Approval }
       if (event.turn_id !== this.turn || this.closed) return
+      if (topic === 'slate.agent') {
+        this.onAgent(event.tool ?? '', event.approval)
+        return
+      }
       if (event.error) this.onError(event.error)
       if (topic === 'slate.transcript' && typeof event.text === 'string') {
         this.onTranscript(event.text, event.final === true)
@@ -108,6 +116,7 @@ export class VoiceConnection {
         clearTimeout(this.timer)
         void this.microphone?.mute().catch((error) => this.fail(error))
         this.onState('ready')
+        this.onAgent('')
       }
     } catch (error) {
       console.error('[slate.voice] Invalid transcript event', error)
@@ -139,6 +148,7 @@ export class VoiceConnection {
     this.onError('')
     this.onTranscript('', false)
     this.onReply('')
+    this.onAgent('')
     this.onState('starting')
     this.turn = await this.rpc('start_turn')
     if (this.closed) return
@@ -175,6 +185,7 @@ export class VoiceConnection {
       await this.microphone?.mute()
       await this.rpc('cancel_turn', turn)
       this.onTranscript('', false)
+      this.onAgent('')
       this.onState('ready')
     } catch (error) {
       await this.fail(error)
@@ -185,6 +196,16 @@ export class VoiceConnection {
     console.error('[slate.voice] Microphone session failed', error)
     if (!this.closed) this.onError(error instanceof Error ? error.message : 'Microphone session failed')
     await this.disconnect()
+  }
+
+  async approve(approval: Approval, choice: 'once' | 'deny'): Promise<void> {
+    try {
+      if (!this.turn) throw new Error('This recording has ended')
+      await this.rpc('approve_tool', JSON.stringify({ turn_id: this.turn, ...approval, choice }))
+      this.onAgent('')
+    } catch (error) {
+      this.onError(error instanceof Error ? error.message : 'Could not resolve approval')
+    }
   }
 
   async enableAudio(): Promise<void> {
@@ -205,6 +226,7 @@ export class VoiceConnection {
     this.speaker?.remove()
     this.speaker = undefined
     this.onPlayback(false)
+    this.onAgent('')
     await this.room.disconnect()
     const session = this.session
     this.session = undefined
