@@ -23,8 +23,9 @@ logger = logging.getLogger("slate.voice.session")
 
 
 class VoiceSession:
-    def __init__(self, settings: VoiceSettings) -> None:
+    def __init__(self, settings: VoiceSettings, *, profile: bool = False) -> None:
         self.settings = settings
+        self.profile = profile
         self.id = uuid4().hex
         self.room_name = f"slate-{self.id}"
         self.device_identity = f"device-{self.id}"
@@ -166,6 +167,7 @@ class VoiceSession:
         turn = self.requested_turn(data)
         if not turn.ending:
             turn.ending = True
+            turn.timing.mark("end_requested")
             await asyncio.sleep(0.3)
             turn.finish()
         return turn.id
@@ -219,43 +221,69 @@ class VoiceSession:
             topic=topic,
         )
 
-    async def play(self, wav: bytes) -> None:
+    async def play(self, wav: bytes, turn: Turn) -> None:
         pcm = read_wav(wav)
         frame_bytes = SAMPLE_RATE * 2 // 50
         for offset in range(0, len(pcm), frame_bytes):
             chunk = pcm[offset : offset + frame_bytes]
+            turn.timing.mark("reply_first_enqueue")
             await self.speaker.capture_frame(
                 rtc.AudioFrame(chunk, SAMPLE_RATE, 1, len(chunk) // 2)
             )
         await self.speaker.wait_for_playout()
+        turn.timing.mark("reply_playout_done")
 
     async def transcribe(self, turn: Turn) -> None:
         text = ""
         stage = "transcription"
+        stt_timing = {} if self.profile else None
+        tts_timing = {} if self.profile else None
         try:
             logger.info("Transcription started for turn %s", turn.id)
+            turn.timing.mark("stt_requested")
             async with asyncio.timeout(180):
-                async with aclosing(transcribe_stream(turn.chunks())) as stream:
+                async with aclosing(
+                    transcribe_stream(turn.chunks(), timings=stt_timing)
+                ) as stream:
                     async for piece in stream:
+                        turn.timing.mark("stt_first_text")
                         text += piece
                         await self.publish(turn, text=text.strip(), final=False)
+            turn.timing.mark("stt_completed")
             logger.info("Transcription finished for turn %s", turn.id)
             await self.publish(turn, text=text.strip(), final=True)
+            turn.timing.mark("transcript_published")
             if text.strip():
                 stage = "agent reply"
+                turn.timing.mark("agent_requested")
                 async with asyncio.timeout(310):
                     reply = await self.agent.run(
                         text.strip(), lambda event: self.agent_progress(turn, event)
                     )
+                turn.timing.mark("agent_completed")
                 logger.info("Agent replied for turn %s", turn.id)
                 await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=False)
+                turn.timing.mark("reply_text_published")
                 stage = "speech generation"
                 async with asyncio.timeout(180):
-                    audio = await speak(reply)
+                    turn.timing.mark("tts_requested")
+                    audio = await speak(reply, timings=tts_timing)
+                    turn.timing.mark("tts_completed")
                     logger.info("Speech generated for turn %s", turn.id)
-                    await self.play(audio)
+                    await self.play(audio, turn)
                 logger.info("Speech played for turn %s", turn.id)
-                await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=True)
+                fields = {}
+                if self.profile:
+                    fields["timing"] = {
+                        "server": turn.timing.snapshot(),
+                        "agent": self.agent.timings,
+                        "agent_runtime": self.agent.last_run.get("runtime"),
+                        "stt": stt_timing,
+                        "tts": tts_timing,
+                    }
+                await self.publish(
+                    turn, topic=REPLY_TOPIC, text=reply, final=True, **fields
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -313,11 +341,11 @@ class VoiceSessions:
         self.current: VoiceSession | None = None
         self.lock = asyncio.Lock()
 
-    async def create(self) -> dict[str, str]:
+    async def create(self, *, profile: bool = False) -> dict[str, str]:
         async with self.lock:
             if self.current is not None and not self.current.closed:
                 raise ValueError("A microphone session is already connected")
-            session = VoiceSession(VoiceSettings.from_env())
+            session = VoiceSession(VoiceSettings.from_env(), profile=profile)
             result = await session.connect()
             self.current = session
             return result

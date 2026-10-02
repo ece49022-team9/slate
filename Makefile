@@ -1,4 +1,4 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-speaker-check bench voice-deploy voice-check livekit sim-voice agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-speaker-check bench voice-deploy voice-check livekit sim-voice agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile
 
 FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
@@ -92,6 +92,9 @@ agent-check:
 
 agent-status:
 	uv run python scripts/check_agent.py --status
+
+voice-profile:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_voice.py --repeats $(or $(REPEATS),3)
 
 agent-e2e:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --browser --memory --voice

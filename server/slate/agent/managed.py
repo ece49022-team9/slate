@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from time import monotonic_ns
 from uuid import uuid4
 
 from openai import AsyncOpenAI, NotFoundError
@@ -30,6 +31,7 @@ class ManagedAgent:
         self.timeout = timeout
         self.run_id: str | None = None
         self.last_run: dict = {}
+        self._timings: dict[str, int] = {}
         self.lock = asyncio.Lock()
         self._pending: dict[str, dict] = {}
         self._active_task: asyncio.Task | None = None
@@ -37,8 +39,17 @@ class ManagedAgent:
         self._needs_cleanup = False
         self._observed_model: str | None = None
 
+    @property
+    def timings(self) -> dict[str, int]:
+        return dict(self._timings)
+
     async def run(self, message: str, progress: Progress | None = None) -> str:
+        requested = monotonic_ns()
         async with self.lock:
+            self._timings = {
+                "requested": requested,
+                "lock_acquired": monotonic_ns(),
+            }
             if self._closed:
                 raise RuntimeError("This managed agent has closed")
             if not message.strip():
@@ -73,18 +84,29 @@ class ManagedAgent:
                             stream=True,
                             timeout=self.timeout,
                         )
+                        self._timings["session_ready"] = monotonic_ns()
                     else:
                         session = await sessions.retrieve(self.session_id)
                         self._verify_model(session.agent.model)
+                        self._timings["session_ready"] = monotonic_ns()
                         stream = sessions.stream(
                             self.session_id, input=message, timeout=self.timeout
                         )
+                    self._timings["admitted"] = monotonic_ns()
                     stream.with_result_collection()
                     terminal_turn = False
                     async with stream:
                         async for event in stream:
                             body = event.model_dump(mode="json")
                             kind = body["type"]
+                            observed = monotonic_ns()
+                            self._timings.setdefault("first_event", observed)
+                            if kind == "agent.session.turn.output_text.delta" and (
+                                body.get("turn_id") in (None, self.run_id)
+                                and body["delta"].strip()
+                            ):
+                                self._timings.setdefault("first_text", observed)
+                                self._timings["last_text"] = observed
                             if kind == "agent.session.created":
                                 self.session_id = body["session"]["id"]
                                 self._verify_model(body["session"]["agent"]["model"])
@@ -101,6 +123,9 @@ class ManagedAgent:
                                 and body["turn_id"] == self.run_id
                             ):
                                 terminal_turn = True
+                                self._timings.setdefault("terminal", observed)
+                            if kind == "agent.session.failed":
+                                self._timings.setdefault("terminal", observed)
                             await self._progress(body, progress)
                             if kind == "agent.session.failed" or (
                                 kind == "agent.session.idle" and terminal_turn
@@ -152,6 +177,7 @@ class ManagedAgent:
                 self.run_id = None
                 self._pending.clear()
                 self._active_task = None
+                self._timings["completed"] = monotonic_ns()
 
     def _verify_model(self, model: str) -> None:
         self._observed_model = model

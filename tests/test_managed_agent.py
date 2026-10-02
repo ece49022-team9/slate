@@ -27,6 +27,15 @@ from openai.types.beta.agent_session_turn_failed_event import (
 from openai.types.beta.agent_session_turn_item_done_event import (
     AgentSessionTurnItemDoneEvent,
 )
+from openai.types.beta.agent_session_turn_output_text_delta_event import (
+    AgentSessionTurnOutputTextDeltaEvent,
+)
+from openai.types.beta.agent_session_turn_output_text_done_event import (
+    AgentSessionTurnOutputTextDoneEvent,
+)
+from openai.types.beta.agent_session_turn_reasoning_summary_text_delta_event import (
+    AgentSessionTurnReasoningSummaryTextDeltaEvent,
+)
 from openai.types.beta.agents.sessions.turn import Turn as ManagedTurn
 from openai.types.beta.output_text import OutputText
 from slate.agent.managed import ManagedAgent
@@ -176,6 +185,108 @@ def client_for(*streams):
 
 
 class ManagedAgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_timings_use_root_visible_deltas_not_reasoning_done_or_subagents(
+        self,
+    ):
+        items = events()
+        extra = [
+            AgentSessionTurnReasoningSummaryTextDeltaEvent(
+                type="agent.session.turn.reasoning_summary_text.delta",
+                event_id="reasoning",
+                session_id="sess-a",
+                turn_id="turn-a",
+                item_id="reasoning-a",
+                output_index=0,
+                summary_index=0,
+                delta="Private",
+            ),
+            AgentSessionTurnOutputTextDoneEvent(
+                type="agent.session.turn.output_text.done",
+                event_id="text-done",
+                session_id="sess-a",
+                turn_id="turn-a",
+                item_id="message-1",
+                output_index=1,
+                content_index=0,
+                text="Whole text",
+            ),
+            AgentSessionTurnCompletedEvent(
+                type="agent.session.turn.completed",
+                event_id="child-terminal",
+                session_id="sess-a",
+                turn_id="turn-child",
+                turn=turn("completed", "turn-child"),
+            ),
+        ]
+        for index, (turn_id, delta) in enumerate(
+            [
+                ("turn-child", "Child"),
+                ("turn-a", ""),
+                ("turn-a", " "),
+                ("turn-a", "Hello"),
+                ("turn-a", " again"),
+            ]
+        ):
+            extra.append(
+                AgentSessionTurnOutputTextDeltaEvent(
+                    type="agent.session.turn.output_text.delta",
+                    event_id=f"delta-{index}",
+                    session_id="sess-a",
+                    turn_id=turn_id,
+                    item_id="message-1",
+                    output_index=1,
+                    content_index=0,
+                    delta=delta,
+                )
+            )
+        items[3:3] = extra
+        snapshots = {}
+        client = client_for(FakeStream(items), FakeStream(events()[1:]))
+        agent = ManagedAgent(client=client)
+
+        async def progress(event):
+            snapshots[event["event_id"]] = agent.timings
+
+        await agent.run("Hello", progress)
+        measured = agent.timings
+        self.assertEqual(
+            set(measured),
+            {
+                "requested",
+                "lock_acquired",
+                "session_ready",
+                "admitted",
+                "first_event",
+                "first_text",
+                "last_text",
+                "terminal",
+                "completed",
+            },
+        )
+        self.assertTrue(all(isinstance(value, int) for value in measured.values()))
+        self.assertEqual(list(measured.values()), sorted(measured.values()))
+        for event_id in (
+            "reasoning",
+            "text-done",
+            "child-terminal",
+            "delta-0",
+            "delta-1",
+            "delta-2",
+        ):
+            self.assertNotIn("first_text", snapshots[event_id])
+        self.assertNotIn("terminal", snapshots["child-terminal"])
+        self.assertEqual(measured["first_event"], snapshots["created"]["first_event"])
+        self.assertEqual(measured["first_text"], snapshots["delta-3"]["first_text"])
+        self.assertEqual(measured["last_text"], snapshots["delta-4"]["last_text"])
+        self.assertGreater(measured["last_text"], measured["first_text"])
+        self.assertEqual(measured["terminal"], snapshots["terminal"]["terminal"])
+        measured.clear()
+        self.assertIn("completed", agent.timings)
+        await agent.run("Again")
+        self.assertNotIn("first_text", agent.timings)
+        self.assertNotIn("last_text", agent.timings)
+        await agent.close()
+
     async def test_final_result_excludes_commentary_and_keeps_session(self):
         first = FakeStream(events(text="Remember copper"))
         second = FakeStream(events(text="copper")[1:])
@@ -219,6 +330,9 @@ class ManagedAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.reason, "failed")
         self.assertEqual(agent.last_run["status"], "failed")
         self.assertIsNone(agent.session_id)
+        self.assertIn("terminal", agent.timings)
+        self.assertIn("completed", agent.timings)
+        self.assertNotIn("first_text", agent.timings)
 
     async def test_broken_stream_cancels_and_deletes_session(self):
         stream = FakeStream(events()[:3], failure=ConnectionError("disconnected"))

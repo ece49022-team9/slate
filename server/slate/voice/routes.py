@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 logger = logging.getLogger("slate.voice.api")
 router = APIRouter(prefix="/voice", tags=["voice"])
@@ -9,6 +9,7 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 
 class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    profile: StrictBool = False
 
 
 class SessionResponse(BaseModel):
@@ -33,7 +34,7 @@ async def create_session(body: SessionRequest, request: Request, response: Respo
     require_local(request)
     response.headers["Cache-Control"] = "no-store"
     try:
-        return await request.app.state.voice.create()
+        return await request.app.state.voice.create(profile=body.profile)
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
     except Exception as error:

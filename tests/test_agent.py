@@ -2,6 +2,7 @@ import asyncio
 import json
 import unittest
 from collections.abc import AsyncIterator, Callable
+from time import monotonic_ns
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -72,6 +73,92 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(agent.close)
         return agent
 
+    async def test_timings_count_only_visible_deltas_and_keep_first_observations(self):
+        snapshots = []
+        subscription = 0
+
+        async def progress(event):
+            snapshots.append((event["seq"], agent.timings))
+
+        def handle(request):
+            nonlocal subscription
+            if request.url.path == "/v1/runs":
+                return httpx.Response(202, json={"run_id": "run-a"})
+            if request.url.path.endswith("/events"):
+                subscription += 1
+                return httpx.Response(
+                    200,
+                    content=events(
+                        {"event": "tool.started", "seq": 0},
+                        {"event": "reasoning.delta", "seq": 1, "delta": "Private"},
+                        {"event": "message.interim", "seq": 2, "text": "Working"},
+                        {"event": "message.delta", "seq": 3, "delta": ""},
+                        {"event": "message.delta", "seq": 4, "delta": " "},
+                        {"event": "message.delta", "seq": 5, "delta": {"text": "Bad"}},
+                        {"event": "message.delta", "seq": 6, "delta": "Hello"},
+                        {"event": "message.delta", "seq": 7, "delta": " again"},
+                        {"event": "run.completed", "seq": 8, "output": "Final"},
+                    )
+                    if subscription == 1
+                    else events(
+                        {"event": "run.completed", "seq": 0, "output": "Final"}
+                    ),
+                )
+            return httpx.Response(200, json=completed())
+
+        agent = self.agent(handle)
+        await agent.lock.acquire()
+        running = asyncio.create_task(agent.run("Hello", progress))
+        await asyncio.sleep(0)
+        unlocked = monotonic_ns()
+        agent.lock.release()
+        await running
+        measured = agent.timings
+        self.assertLessEqual(measured["requested"], unlocked)
+        self.assertLessEqual(unlocked, measured["lock_acquired"])
+        self.assertEqual(
+            list(measured),
+            [
+                "requested",
+                "lock_acquired",
+                "session_ready",
+                "admitted",
+                "first_event",
+                "first_text",
+                "last_text",
+                "terminal",
+                "completed",
+            ],
+        )
+        self.assertTrue(all(isinstance(value, int) for value in measured.values()))
+        self.assertEqual(list(measured.values()), sorted(measured.values()))
+        self.assertTrue(all("first_text" not in values for _, values in snapshots[:6]))
+        self.assertEqual(measured["first_event"], snapshots[0][1]["first_event"])
+        self.assertEqual(measured["first_text"], snapshots[6][1]["first_text"])
+        self.assertEqual(measured["last_text"], snapshots[7][1]["last_text"])
+        self.assertGreater(measured["last_text"], measured["first_text"])
+        self.assertEqual(measured["terminal"], snapshots[8][1]["terminal"])
+        measured.clear()
+        self.assertIn("completed", agent.timings)
+        await agent.run("Again")
+        self.assertNotIn("first_text", agent.timings)
+        self.assertNotIn("last_text", agent.timings)
+
+    async def test_polled_terminal_without_stream_text_does_not_fabricate_ttft(self):
+        def handle(request):
+            if request.url.path == "/v1/runs":
+                return httpx.Response(202, json={"run_id": "run-a"})
+            if request.url.path.endswith("/events"):
+                return httpx.Response(200, content=b": no events\n\n")
+            return httpx.Response(200, json=completed())
+
+        agent = self.agent(handle)
+        await agent.run("Hello")
+        self.assertIn("terminal", agent.timings)
+        self.assertIn("completed", agent.timings)
+        self.assertNotIn("first_event", agent.timings)
+        self.assertNotIn("first_text", agent.timings)
+
     async def test_lost_creation_ack_retries_same_work_and_new_turn_has_new_key(self):
         admitted: dict[str, str] = {}
         attempts: list[tuple[str, dict]] = []
@@ -130,6 +217,9 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stopped, ["/v1/runs/run-a/stop"])
         self.assertEqual(len(attempts), 1)
         self.assertIsNone(agent.run_id)
+        self.assertIn("admitted", agent.timings)
+        self.assertIn("completed", agent.timings)
+        self.assertNotIn("first_text", agent.timings)
 
     async def test_cancel_recovers_stalled_receipt_with_same_key(self):
         accepted = asyncio.Event()

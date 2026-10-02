@@ -10,6 +10,7 @@ from slate.breadboard import breadboard, build_image
 from slate.link import Link, open_board
 from slate.voice.audio import MAX_AUDIO_SECONDS
 from slate.voice.device import VoiceResult, transcribe_audio
+from slate.voice.timing import Timeline
 
 RATE = 16_000
 KEYS = {"left": "l", "right": "r", "mix": "m"}
@@ -69,13 +70,19 @@ async def capture(
 
 
 async def simulate_firmware(
-    input_file: Path, api_url: str, channel: str
+    input_file: Path, api_url: str, channel: str, *, profile: bool = False
 ) -> VoiceResult:
+    timing = Timeline()
+    timing.mark("build_requested")
     await asyncio.to_thread(build_image)
+    timing.mark("build_completed")
     async with breadboard(realtime=True) as bench:
+        timing.mark("board_ready")
         stereo = stereo_pcm(input_file, bench.slot)
         audio = capture(bench.link, channel, len(stereo) // 4, bench.play(stereo))
-        return await transcribe_audio(audio, api_url, RATE)
+        result = await transcribe_audio(audio, api_url, RATE, profile=profile)
+        result.timings["simulator"] = timing.snapshot()
+        return result
 
 
 async def speaker(path: Path) -> None:
