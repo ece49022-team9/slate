@@ -7,6 +7,7 @@ from livekit import api
 
 WORKER_IDENTITY = "slate-transcriber"
 TRANSCRIPT_TOPIC = "slate.transcript"
+REPLY_TOPIC = "slate.reply"
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,7 @@ class VoiceSettings:
         grants = api.VideoGrants(
             room_join=True,
             room=room,
-            can_publish=not worker,
+            can_publish=True,
             can_publish_sources=[] if worker else ["microphone"],
             can_subscribe=True,
             can_publish_data=True,

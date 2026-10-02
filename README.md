@@ -26,19 +26,19 @@ make setup
 
 Run `make livekit`, `make server`, and `make web` in separate terminals.
 
-Open [localhost:5173](http://127.0.0.1:5173), connect your microphone, and hold Talk. Release it to finish; Cancel discards the recording. This test shows transcripts only.
+Open [localhost:5173](http://127.0.0.1:5173), connect your microphone, and hold Talk. Release it to finish; Cancel discards the recording. The page shows the transcript and Slate's reply and plays the reply over LiveKit.
 
 `make check` runs lint, formatting, tests and the web build. [API docs](http://127.0.0.1:8000/api/docs) come from the backend.
 
 ## Microphone connection
 
-The browser sends a LiveKit microphone track. The backend converts it to mono 24 kHz PCM, streams it to Kyutai, and sends text back. To use a recording as the device:
+The browser sends a LiveKit microphone track. The backend converts it to mono 24 kHz PCM, streams it to Kyutai, sends the final transcript to the agent, and speaks its answer with CSM. Set `OPENROUTER_API_KEY` on the backend for the agent model. `SLATE_MODEL` overrides the default `openrouter/free`. The voice path uses Suharsha's OpenRouter model and conversation loop from PR #1, without its browser or account tools. To use a recording as the device:
 
 ```sh
 uv run python -m slate.voice simulate .local/voice-check.wav
 ```
 
-The simulator reads a mono 24 kHz, 16-bit WAV and publishes 16 kHz audio by default. `--sample-rate 48000` tests a browser-rate stream. It uses the same room, audio track, and controls as the browser.
+The simulator reads a mono 24 kHz, 16-bit WAV and publishes 16 kHz audio by default. `--sample-rate 48000` tests a browser-rate stream. It uses the same room, audio track, and controls as the browser. It prints the transcript and answer and saves LiveKit's returned speech to `.local/reply.wav`.
 
 The firmware will use the same contract:
 
@@ -50,6 +50,7 @@ The firmware will use the same contract:
 | Finish | Stop sending audio, then call `end_turn` with that ID |
 | Cancel | Call `cancel_turn` with that ID |
 | Read text | Receive `slate.transcript` packets: `{turn_id, text, final}` or `{turn_id, error}` |
+| Read reply | Receive `slate.reply` packets and subscribe to the worker's audio track |
 
 Development allows one connected device at a time. Sessions last ten minutes; recordings are limited to two minutes. The token endpoint is local-only until device pairing is built. For another LiveKit server, set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` together on the backend.
 
@@ -114,13 +115,13 @@ QEMU boots the exact image `make flash` writes. Python plays the parts on the br
 
 `make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
 
-To send audio through the firmware and the real transcription service, start `make livekit` and `make server`, then run:
+To send audio through the simulated firmware, agent, and real speech services, start `make livekit` and `make server`, then run:
 
 ```sh
-MODAL_PROFILE=sudarshan-1 uv run python -m slate.voice firmware .local/voice-check.wav
+make sim-voice
 ```
 
-The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` picks left (default), right, or mix. The command boots the simulator, plays the WAV into the mic, reads the firmware's streamed audio, and publishes it as a LiveKit microphone track using the start/end-turn RPCs. The same serial audio stream works on the real board; the firmware does not connect to LiveKit over Wi-Fi yet. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover that later step. Haptics are not started until their pins are confirmed.
+Pass `INPUT=path/to/speech.wav` to use a different recording. The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` on the underlying Python command picks left (default), right, or mix. The command boots QEMU, plays the WAV into its mic model, reads the firmware's streamed audio, and publishes it as a LiveKit microphone track. It prints the transcript and agent reply and saves the received CSM speech to `.local/reply.wav`. The reply is heard by the host LiveKit client; the firmware has no speaker output path yet. The same serial mic stream works on the real board, but the firmware does not connect to LiveKit over Wi-Fi yet. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover that later step. Haptics are not started until their pins are confirmed.
 
 
 ### Bench

@@ -9,7 +9,7 @@ from slate.board import ROOT
 from slate.breadboard import breadboard, build_image
 from slate.link import Link, open_board
 from slate.voice.audio import MAX_AUDIO_SECONDS
-from slate.voice.device import transcribe_audio
+from slate.voice.device import VoiceResult, transcribe_audio
 
 RATE = 16_000
 KEYS = {"left": "l", "right": "r", "mix": "m"}
@@ -68,7 +68,9 @@ async def capture(
         link.type("x0")
 
 
-async def simulate_firmware(input_file: Path, api_url: str, channel: str) -> str:
+async def simulate_firmware(
+    input_file: Path, api_url: str, channel: str
+) -> VoiceResult:
     await asyncio.to_thread(build_image)
     async with breadboard(realtime=True) as bench:
         stereo = stereo_pcm(input_file, bench.slot)
@@ -86,7 +88,7 @@ async def speaker(path: Path) -> None:
 
 async def board_firmware(
     input_file: Path, api_url: str, channel: str, port: str
-) -> str:
+) -> VoiceResult:
     with wave.open(str(input_file), "rb") as audio:
         seconds = audio.getnframes() / audio.getframerate()
     link, task = await open_board(port, ROOT / ".local/bench-serial.log")

@@ -8,9 +8,15 @@ from uuid import uuid4
 
 from livekit import rtc
 
-from slate.voice.audio import SAMPLE_RATE
-from slate.voice.client import transcribe_stream
-from slate.voice.settings import TRANSCRIPT_TOPIC, WORKER_IDENTITY, VoiceSettings
+from slate.agent.agent import Agent
+from slate.voice.audio import SAMPLE_RATE, read_wav
+from slate.voice.client import speak, transcribe_stream
+from slate.voice.settings import (
+    REPLY_TOPIC,
+    TRANSCRIPT_TOPIC,
+    WORKER_IDENTITY,
+    VoiceSettings,
+)
 from slate.voice.turn import Turn
 
 logger = logging.getLogger("slate.voice.session")
@@ -23,6 +29,8 @@ class VoiceSession:
         self.room_name = f"slate-{self.id}"
         self.device_identity = f"device-{self.id}"
         self.room = rtc.Room()
+        self.agent = Agent()
+        self.speaker = rtc.AudioSource(SAMPLE_RATE, 1, queue_size_ms=100)
         self.closed = False
         self.close_done = asyncio.Event()
         self.audio_ready = asyncio.Event()
@@ -52,6 +60,8 @@ class VoiceSession:
             await self.room.connect(
                 self.settings.url, token, rtc.RoomOptions(connect_timeout=10)
             )
+            track = rtc.LocalAudioTrack.create_audio_track("slate-reply", self.speaker)
+            await self.room.local_participant.publish_track(track)
             self.room.local_participant.register_rpc_method(
                 "start_turn", self.start_turn
             )
@@ -165,32 +175,59 @@ class VoiceSession:
         await self.abort()
         return "ok"
 
-    async def publish(self, turn: Turn, **fields: Any) -> None:
+    async def publish(
+        self, turn: Turn, topic: str = TRANSCRIPT_TOPIC, **fields: Any
+    ) -> None:
         await self.room.local_participant.publish_data(
             json.dumps({"turn_id": turn.id, **fields}),
             reliable=True,
             destination_identities=[self.device_identity],
-            topic=TRANSCRIPT_TOPIC,
+            topic=topic,
         )
+
+    async def play(self, wav: bytes) -> None:
+        pcm = read_wav(wav)
+        frame_bytes = SAMPLE_RATE * 2 // 50
+        for offset in range(0, len(pcm), frame_bytes):
+            chunk = pcm[offset : offset + frame_bytes]
+            await self.speaker.capture_frame(
+                rtc.AudioFrame(chunk, SAMPLE_RATE, 1, len(chunk) // 2)
+            )
+        await self.speaker.wait_for_playout()
 
     async def transcribe(self, turn: Turn) -> None:
         text = ""
+        stage = "transcription"
         try:
-            async with aclosing(transcribe_stream(turn.chunks())) as stream:
-                async for piece in stream:
-                    text += piece
-                    await self.publish(turn, text=text.strip(), final=False)
-            if self.turn is turn:
-                self.turn = None
+            logger.info("Transcription started for turn %s", turn.id)
+            async with asyncio.timeout(180):
+                async with aclosing(transcribe_stream(turn.chunks())) as stream:
+                    async for piece in stream:
+                        text += piece
+                        await self.publish(turn, text=text.strip(), final=False)
+            logger.info("Transcription finished for turn %s", turn.id)
             await self.publish(turn, text=text.strip(), final=True)
+            if text.strip():
+                stage = "agent reply"
+                async with asyncio.timeout(45):
+                    reply = await self.agent.run(text.strip())
+                logger.info("Agent replied for turn %s", turn.id)
+                await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=False)
+                stage = "speech generation"
+                async with asyncio.timeout(180):
+                    audio = await speak(reply)
+                    logger.info("Speech generated for turn %s", turn.id)
+                    await self.play(audio)
+                logger.info("Speech played for turn %s", turn.id)
+                await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=True)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Transcription failed for turn %s", turn.id)
-            if self.turn is turn:
-                self.turn = None
+            logger.exception("%s failed for turn %s", stage, turn.id)
             await self.publish(
-                turn, error="Transcription failed. Try another recording."
+                turn,
+                topic=TRANSCRIPT_TOPIC if stage == "transcription" else REPLY_TOPIC,
+                error=f"{stage.capitalize()} failed. Try another recording.",
             )
         finally:
             turn.finish()
@@ -226,6 +263,7 @@ class VoiceSession:
             task.cancel()
         try:
             await asyncio.gather(*tasks, return_exceptions=True)
+            await self.speaker.aclose()
             await self.room.disconnect()
         finally:
             self.close_done.set()
