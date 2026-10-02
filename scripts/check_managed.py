@@ -153,10 +153,10 @@ async def run(args: argparse.Namespace) -> None:
             results.append(
                 await check(
                     "browser",
-                    "Use the browser to open this synthetic test page: "
+                    "Use the browser to open this test page: "
                     + fixture_url
-                    + ". Read the code on the page, enter it into the Code field, "
-                    "click Apply, and report the value shown in the result.",
+                    + ". Read the code on the page, type it into the Code field, "
+                    "click Apply, and tell me the value shown in the result.",
                     fixture["test_code"],
                     agent,
                     browser=True,
@@ -168,11 +168,10 @@ async def run(args: argparse.Namespace) -> None:
                 results.append(
                     await check(
                         "browser-readback",
-                        "Use the browser to inspect the synthetic test page that "
-                        "is already open. Read the text in the element with id "
-                        "result after Apply. Take a fresh screenshot after the "
-                        "page has updated. Report that result text and do not "
-                        "change the form again.",
+                        "Use the browser to look at the test page that is "
+                        "already open. Read the text in the element with id "
+                        "result. Take a new screenshot after the page updates. "
+                        "Tell me that text, and don't change the form again.",
                         fixture["test_code"],
                         agent,
                         browser=True,
