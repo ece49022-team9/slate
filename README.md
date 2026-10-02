@@ -171,19 +171,22 @@ Current wiring: OLED clock GPIO18, MOSI GPIO23, CS GPIO5, D/C GPIO16, reset GPIO
 
 ### Simulator
 
-`make sim-setup` builds Espressif's QEMU with [sim/qemu.patch](sim/qemu.patch). The patch adds working GPIO output registers, an I2S0 receiver with DMA for the PDM mic, an I2S1 transmitter with DMA for the speaker, and a bridge to Python. It also fixes a QEMU bug that sent a stray command byte before every SPI transfer, which byte-swapped the OLED's pixels.
+`make sim-setup` builds Espressif's QEMU with [sim/qemu.patch](sim/qemu.patch). The patch adds working GPIO output registers, an I2S0 receiver with DMA for the PDM mic, an I2S1 transmitter with DMA for the speaker, and a bridge to Python. It also fixes a QEMU bug that sent a stray command byte before every SPI transfer, which byte-swapped the OLED's pixels, and holds each SPI transfer busy for the bits it clocks out at the programmed rate, so a full OLED frame takes about 18 ms at 16 MHz as it does on the bus.
 
 QEMU counts time by instructions (4 ns each, close to the ESP32's 240 MHz) instead of following the Mac's clock. The bridge sends pin changes, SPI bytes, and serial output to Python in order, and every emulated millisecond it stops and waits. Python answers with any serial keys or mic audio due at that moment, then lets it continue. Tests wait on emulated time, so the same inputs give the same run: `check_breadboard.py` runs twice and requires identical serial output and identical frames. The checks run as fast as the Mac allows; `make sim` and the LiveKit command pace emulated time to the wall clock.
 
 QEMU boots the exact image `make flash` writes. Python plays the parts on the breadboard: an SSD1351 that decodes the Adafruit library's SPI commands into display memory, and a mic that feeds PCM into the slot set by `slot` in `board.toml`. The host talks to the emulated serial port the same way it would talk to the board.
 
-`make sim-check` runs the display and microphone checks against the normal
+`make sim-check` runs the display, microphone, and resource checks against the normal
 image, then checks speaker output in both the dedicated and normal images:
 
 - [check_breadboard.py](scripts/check_breadboard.py): two identical runs; the idle orb is drawn; a 440 Hz tone on the mic's slot reaches the meter within 5% RMS; the other slot stays silent; the orb grows and brightens while it hears sound; the panel runs at about 33 fps.
 - [check_mic.py](scripts/check_mic.py): Hypothesis generates stereo audio for each channel. The streamed output must match an independent DC-filter calculation within one step, replay identically, and start clean after a muted turn. Failures are shrunk and saved for replay.
 - [check_display.py](scripts/check_display.py): all six state colors, a blank panel on mute, a centered orb that fits the panel, smooth breathing, and 15 generated state sequences. It saves a frame to `.local/display-listen.png`.
 - [check_speaker.py](scripts/check_speaker.py): a full second of 440 Hz stereo output through I2S1 DMA in the dedicated and normal firmware, followed by silence; checks channel agreement, frequency, and amplitude, then saves `.local/speaker.wav`. Run it alone with `make sim-speaker-check`.
+- [check_resources.py](scripts/check_resources.py): while listening to a tone, the firmware's `slate.perf` report must show a frame (render plus SPI) within 30 ms, each 20 ms audio block processed in time, at least 32 KB of heap left with a 16 KB free block, and 512 bytes of stack left in every task.
+
+QEMU runs the same 520 KB SRAM map, the WROOM-32's 4 MB flash, and no PSRAM, so heap and stack limits are the real ones. Its CPU is not cycle-accurate: every instruction costs 4 ns, with no flash cache misses or wait states. `make calibrate-sim` runs the same workload on the board and in QEMU and writes the hardware/QEMU timing ratios to `firmware/sim_calibration.toml`; the simulator check scales its timings by those ratios. Until then it reports timing as uncalibrated. `make bench` applies the same budgets to the board's own report.
 
 `make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Click **Enable speaker audio** to hear firmware output through your computer, or **Test speaker output** to capture and play the full test tone. Speaker mute and volume are independent of mic input. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
 

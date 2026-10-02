@@ -11,6 +11,7 @@
 #include "speaker.h"
 #include "power.h"
 #include "display.h"
+#include "perf.h"
 
 static std::atomic<bool> speaker_test_running{false};
 
@@ -236,6 +237,7 @@ void loop() {
     meter_peak = 0;
     last_meter = millis();
   }
+  perf_stack(PerfTask::LOOP);
   delay(20);
 }
 #endif

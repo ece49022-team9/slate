@@ -6,6 +6,7 @@
 #include "slate_state.h"
 #include "display.h"
 #include "mic.h"
+#include "perf.h"
 
 static QueueHandle_t state_queue;
 static std::atomic<SlateState> current_state{IDLE};
@@ -39,6 +40,7 @@ static void control_task(void*) {
         state != current_state.load()) {
       apply_state(state);
     }
+    perf_stack(PerfTask::CONTROL);
   }
 }
 
