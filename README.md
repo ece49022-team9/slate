@@ -71,9 +71,12 @@ Monty runs locally as a bounded subprocess with explicitly exposed methods. It h
 make device-check       # real firmware commands and OLED SPI pixels
 make code-setup         # install the pinned local Workers prototype
 make device-code-check  # Monty and Workers against QEMU through HTTP
+make device-code-profile  # time tools, Monty and Workers; LAYER=agent for Hermes turns
 make code-worker        # Workers endpoint for Hermes's cloudflare mode
 make voice-controls-check
 ```
+
+The profile runs one composed task (set the orb, show text, read status) against QEMU firmware. `LAYER=exec` times each runtime in-process and through the MCP stdio boundary. `LAYER=agent` restarts Hermes once per mode in ABC/CBA order and times full turns with fresh sessions; stop the running gateway first, and restart it afterwards. Results append to the experiment log.
 
 The code-runtime check replaces the LiveKit boundary with a fixture and verifies actual firmware state, pixels, partial failures, and expired scopes. The voice-controls check uses the live speech/agent services and LiveKit. Pressing Talk while a reply is in progress interrupts it: the browser mutes playback immediately, and the server revokes device access, cancels transcription/agent/speech work, and clears its audio queue before starting another turn. This is button-triggered interruption; automatic speech detection is not implemented. Managed final-answer deltas feed sentence synthesis; Hermes waits for its final answer because its run stream does not preserve the phase labels needed to safely speak deltas. Both paths stream CSM's decoded PCM. CSM uses its pinned upstream sampling defaults; reaching the generation limit without an end token remains an error.
 
