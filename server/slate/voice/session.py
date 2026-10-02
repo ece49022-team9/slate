@@ -9,8 +9,10 @@ from uuid import uuid4
 from livekit import rtc
 
 from slate.agent import create_agent
-from slate.voice.audio import SAMPLE_RATE, read_wav
-from slate.voice.client import speak, transcribe_stream
+from slate.device import DeviceCommand, DeviceSDK
+from slate.voice.audio import SAMPLE_RATE
+from slate.voice.client import speak_stream, transcribe_stream
+from slate.voice.reply import Sentences
 from slate.voice.settings import (
     REPLY_TOPIC,
     TRANSCRIPT_TOPIC,
@@ -20,6 +22,7 @@ from slate.voice.settings import (
 from slate.voice.turn import Turn
 
 logger = logging.getLogger("slate.voice.session")
+CAPTURE_DRAIN_SECONDS = 1.0
 
 
 class VoiceSession:
@@ -39,6 +42,7 @@ class VoiceSession:
         self.turn: Turn | None = None
         self.turn_task: asyncio.Task | None = None
         self.reader: asyncio.Task | None = None
+        self.turn_lock = asyncio.Lock()
 
     def spawn(self, work: Coroutine[Any, Any, None]) -> asyncio.Task:
         task = asyncio.create_task(work)
@@ -156,12 +160,14 @@ class VoiceSession:
         except TimeoutError as error:
             raise rtc.RpcError(1503, "Publish a microphone track first") from error
         self.authorize(data)
-        if self.turn is not None:
-            raise rtc.RpcError(1504, "Finish or cancel the current recording first")
-        turn = Turn()
-        self.turn = turn
-        self.turn_task = self.spawn(self.transcribe(turn))
-        return turn.id
+        async with self.turn_lock:
+            self.authorize(data)
+            await self._abort()
+            self.authorize(data)
+            turn = Turn()
+            self.turn = turn
+            self.turn_task = self.spawn(self.transcribe(turn))
+            return turn.id
 
     async def end_turn(self, data: rtc.RpcInvocationData) -> str:
         turn = self.requested_turn(data)
@@ -173,11 +179,12 @@ class VoiceSession:
         return turn.id
 
     async def cancel_turn(self, data: rtc.RpcInvocationData) -> str:
-        self.authorize(data)
-        if self.turn is None:
-            return "ok"
-        self.requested_turn(data)
-        await self.abort()
+        async with self.turn_lock:
+            self.authorize(data)
+            if self.turn is None:
+                return "ok"
+            self.requested_turn(data)
+            await self._abort()
         return "ok"
 
     async def approve_tool(self, data: rtc.RpcInvocationData) -> str:
@@ -214,6 +221,8 @@ class VoiceSession:
     async def publish(
         self, turn: Turn, topic: str = TRANSCRIPT_TOPIC, **fields: Any
     ) -> None:
+        if self.closed or self.turn is not turn:
+            return
         await self.room.local_participant.publish_data(
             json.dumps({"turn_id": turn.id, **fields}),
             reliable=True,
@@ -221,23 +230,141 @@ class VoiceSession:
             topic=topic,
         )
 
-    async def play(self, wav: bytes, turn: Turn) -> None:
-        pcm = read_wav(wav)
+    def device_sdk(self, turn: Turn) -> DeviceSDK:
+        async def execute(command: DeviceCommand) -> dict:
+            result = await self.room.local_participant.perform_rpc(
+                destination_identity=self.device_identity,
+                method="device.command",
+                payload=command.model_dump_json(),
+                response_timeout=5,
+            )
+            return json.loads(result)
+
+        return DeviceSDK(
+            turn.scope,
+            turn.id,
+            execute,
+            lambda: not self.closed and self.turn is turn,
+        )
+
+    async def play(self, pcm: bytes, turn: Turn) -> None:
         frame_bytes = SAMPLE_RATE * 2 // 50
         for offset in range(0, len(pcm), frame_bytes):
+            if self.closed or self.turn is not turn:
+                return
             chunk = pcm[offset : offset + frame_bytes]
             turn.timing.mark("reply_first_enqueue")
-            await self.speaker.capture_frame(
-                rtc.AudioFrame(chunk, SAMPLE_RATE, 1, len(chunk) // 2)
+            capture = asyncio.create_task(
+                self.speaker.capture_frame(
+                    rtc.AudioFrame(chunk, SAMPLE_RATE, 1, len(chunk) // 2)
+                )
             )
-        await self.speaker.wait_for_playout()
-        turn.timing.mark("reply_playout_done")
+            try:
+                await asyncio.shield(capture)
+            except asyncio.CancelledError:
+                deadline = asyncio.get_running_loop().time() + CAPTURE_DRAIN_SECONDS
+                while not capture.done():
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(capture),
+                            max(0, deadline - asyncio.get_running_loop().time()),
+                        )
+                    except asyncio.CancelledError:
+                        continue
+                    except TimeoutError:
+                        logger.error("Native audio capture stalled; retiring session")
+                        closing = self.closed
+                        if not closing:
+                            self._stop()
+                        try:
+                            await self._close_audio()
+                        finally:
+                            capture.cancel()
+                            if not closing:
+                                self.spawn(self._finish_close())
+                            await asyncio.gather(capture, return_exceptions=True)
+                        raise asyncio.CancelledError from None
+                capture.result()
+                raise
+
+    async def respond(self, turn: Turn, text: str, tts_timing: list) -> str:
+        queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
+        sentences = Sentences()
+        streamed = ""
+        complete = False
+
+        async def enqueue(pieces: list[str]) -> None:
+            for piece in pieces:
+                await queue.put(piece)
+
+        async def progress(event: dict) -> None:
+            nonlocal streamed, complete
+            if self.turn is not turn:
+                return
+            await self.agent_progress(turn, event)
+            if event["type"] == "reply.delta":
+                piece = event["delta"]
+                streamed += piece
+                await self.publish(turn, topic=REPLY_TOPIC, text=streamed, final=False)
+                turn.timing.mark("reply_text_published")
+                await enqueue(sentences.feed(piece))
+            elif event["type"] == "answer.complete":
+                answer = event["text"]
+                if streamed and streamed.strip() != answer.strip():
+                    raise RuntimeError("Final agent answer differs from spoken deltas")
+                if not streamed:
+                    streamed = answer
+                    await self.publish(
+                        turn, topic=REPLY_TOPIC, text=answer, final=False
+                    )
+                    turn.timing.mark("reply_text_published")
+                    await enqueue(sentences.feed(answer))
+                await enqueue(sentences.feed("", final=True))
+                complete = True
+
+        async def generate() -> str:
+            context = (
+                f"This turn controls a Slate device. Its opaque scope is {turn.scope}. "
+                "Use the slate-device MCP SDK to control it when requested. "
+                "Only report device changes after a successful acknowledgment. "
+                "Device text is printable ASCII, at most 64 characters. "
+                "Orb color is #RRGGBB and radius is 10 through 45 pixels. "
+                "The scope expires when this turn ends."
+            )
+            turn.timing.mark("agent_requested")
+            async with asyncio.timeout(310):
+                answer = await self.agent.run(text, progress, device_context=context)
+            turn.timing.mark("agent_completed")
+            if not complete:
+                await progress({"type": "answer.complete", "text": answer})
+            await queue.put(None)
+            return answer
+
+        async def synthesize() -> None:
+            while (piece := await queue.get()) is not None:
+                timing = {} if self.profile else None
+                if timing is not None:
+                    tts_timing.append(timing)
+                turn.timing.mark("tts_requested")
+                async with asyncio.timeout(180):
+                    async with aclosing(speak_stream(piece, timings=timing)) as stream:
+                        async for pcm in stream:
+                            turn.timing.mark("tts_first_audio")
+                            await self.play(pcm, turn)
+            turn.timing.mark("tts_completed")
+            await self.speaker.wait_for_playout()
+            turn.timing.mark("reply_playout_done")
+
+        async with asyncio.TaskGroup() as tasks:
+            answer = tasks.create_task(generate())
+            tasks.create_task(synthesize())
+        return answer.result()
 
     async def transcribe(self, turn: Turn) -> None:
         text = ""
         stage = "transcription"
         stt_timing = {} if self.profile else None
-        tts_timing = {} if self.profile else None
+        tts_timing = []
         try:
             logger.info("Transcription started for turn %s", turn.id)
             turn.timing.mark("stt_requested")
@@ -254,23 +381,8 @@ class VoiceSession:
             await self.publish(turn, text=text.strip(), final=True)
             turn.timing.mark("transcript_published")
             if text.strip():
-                stage = "agent reply"
-                turn.timing.mark("agent_requested")
-                async with asyncio.timeout(310):
-                    reply = await self.agent.run(
-                        text.strip(), lambda event: self.agent_progress(turn, event)
-                    )
-                turn.timing.mark("agent_completed")
-                logger.info("Agent replied for turn %s", turn.id)
-                await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=False)
-                turn.timing.mark("reply_text_published")
-                stage = "speech generation"
-                async with asyncio.timeout(180):
-                    turn.timing.mark("tts_requested")
-                    audio = await speak(reply, timings=tts_timing)
-                    turn.timing.mark("tts_completed")
-                    logger.info("Speech generated for turn %s", turn.id)
-                    await self.play(audio, turn)
+                stage = "assistant response"
+                reply = await self.respond(turn, text.strip(), tts_timing)
                 logger.info("Speech played for turn %s", turn.id)
                 fields = {}
                 if self.profile:
@@ -279,7 +391,7 @@ class VoiceSession:
                         "agent": self.agent.timings,
                         "agent_runtime": self.agent.last_run.get("runtime"),
                         "stt": stt_timing,
-                        "tts": tts_timing,
+                        "tts": {"segments": tts_timing},
                     }
                 await self.publish(
                     turn, topic=REPLY_TOPIC, text=reply, final=True, **fields
@@ -288,6 +400,8 @@ class VoiceSession:
             raise
         except Exception:
             logger.exception("%s failed for turn %s", stage, turn.id)
+            if self.turn is turn:
+                self.speaker.clear_queue()
             await self.publish(
                 turn,
                 topic=TRANSCRIPT_TOPIC if stage == "transcription" else REPLY_TOPIC,
@@ -299,41 +413,75 @@ class VoiceSession:
                 self.turn = None
 
     async def abort(self, message: str | None = None) -> None:
-        self.speaker.clear_queue()
+        async with self.turn_lock:
+            await self._abort(message)
+
+    async def _abort(self, message: str | None = None) -> None:
         turn = self.turn
+        task = self.turn_task
+        self.turn = None
+        self.turn_task = None
+        if not self.closed:
+            self.speaker.clear_queue()
         if turn is None:
             return
         turn.finish()
-        if self.turn_task:
-            self.turn_task.cancel()
-            await asyncio.gather(self.turn_task, return_exceptions=True)
-        if self.turn is turn:
-            self.turn = None
-        if message and not self.closed:
-            await self.publish(turn, error=message)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if not self.closed:
+            self.speaker.clear_queue()
+            await self.room.local_participant.publish_data(
+                json.dumps(
+                    {
+                        "turn_id": turn.id,
+                        "cancelled": True,
+                        **({"error": message} if message else {}),
+                    }
+                ),
+                reliable=True,
+                destination_identities=[self.device_identity],
+                topic=REPLY_TOPIC,
+            )
 
     async def expire(self) -> None:
         await asyncio.sleep(600)
         await self.close()
 
-    async def close(self) -> None:
-        if self.closed:
-            await self.close_done.wait()
-            return
+    def _stop(self) -> None:
         self.closed = True
+        self._audio_retired = False
+        self.speaker.clear_queue()
         if self.turn:
             self.turn.finish()
+            self.turn = None
+
+    async def _close_audio(self) -> None:
+        if not self._audio_retired:
+            self._audio_retired = True
+            await self.speaker.aclose()
+
+    async def _finish_close(self) -> None:
         tasks = [task for task in self.tasks if task is not asyncio.current_task()]
         for task in tasks:
             task.cancel()
         try:
             async with AsyncExitStack() as cleanup:
                 cleanup.push_async_callback(self.room.disconnect)
-                cleanup.push_async_callback(self.speaker.aclose)
+                cleanup.push_async_callback(self._close_audio)
                 cleanup.push_async_callback(self.agent.close)
                 await asyncio.gather(*tasks, return_exceptions=True)
+                if not self._audio_retired:
+                    self.speaker.clear_queue()
         finally:
             self.close_done.set()
+
+    async def close(self) -> None:
+        if self.closed:
+            await self.close_done.wait()
+            return
+        self._stop()
+        await self._finish_close()
 
 
 class VoiceSessions:

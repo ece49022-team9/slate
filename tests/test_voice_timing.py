@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from livekit import rtc
-from slate.voice.audio import SAMPLE_RATE, write_wav
+from slate.voice.audio import SAMPLE_RATE
 from slate.voice.device import transcribe_audio
 from slate.voice.session import VoiceSession
 from slate.voice.settings import REPLY_TOPIC, TRANSCRIPT_TOPIC
@@ -26,7 +26,10 @@ def profile_fixture() -> dict:
 
     return {
         "device": clock(
-            end_requested=1000, end_acknowledged=1001, reply_first_audible=2000
+            end_requested=1000,
+            end_acknowledged=1001,
+            reply_first_frame=1615,
+            reply_first_audible=1640,
         ),
         "server": clock(
             end_requested=1002,
@@ -35,9 +38,11 @@ def profile_fixture() -> dict:
             stt_first_text=600,
             stt_completed=1400,
             agent_requested=1410,
-            agent_completed=1500,
+            agent_completed=1800,
             tts_requested=1510,
-            tts_completed=1900,
+            tts_first_audio=1600,
+            reply_first_enqueue=1605,
+            tts_completed=2100,
         ),
         "agent": {
             key: value * 1_000_000
@@ -46,14 +51,45 @@ def profile_fixture() -> dict:
                 "admitted": 1420,
                 "first_text": 1430,
                 "last_text": 1490,
-                "completed": 1500,
+                "completed": 1800,
             }.items()
         },
         "simulator": clock(build_requested=0, build_completed=20, board_ready=25),
         "stt": {
             "remote": {"tail_decode_ms": 10.0, "tail_decode_after_first_text_ms": 5.0}
         },
-        "tts": {"remote": {"generate_ms": 100.0, "first_token_ms": 20.0}},
+        "tts": {
+            "segments": [
+                {
+                    "client": {
+                        key: value * 1_000_000
+                        for key, value in {
+                            "requested": 1510,
+                            "queues_ready": 1520,
+                            "spawned": 1530,
+                            "first_pcm": 1600,
+                            "completed": 1750,
+                        }.items()
+                    },
+                    "remote": {
+                        "generate_ms": 200.0,
+                        "first_token_ms": 20.0,
+                        "first_pcm_ms": 40.0,
+                        "remote_total_ms": 230.0,
+                        "model_age_ms": 10000.0,
+                    },
+                },
+                {
+                    "remote": {
+                        "generate_ms": 250.0,
+                        "first_token_ms": 30.0,
+                        "first_pcm_ms": 50.0,
+                        "remote_total_ms": 280.0,
+                        "model_age_ms": 10777.0,
+                    }
+                },
+            ]
+        },
     }
 
 
@@ -64,7 +100,7 @@ class ProfileReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "one host"):
             summarize(timing)
 
-    def test_unknown_ttft_stays_unavailable_and_prevents_retained_estimate(self):
+    def test_unknown_ttft_stays_unavailable_without_inference_removed_estimate(self):
         for value in ("missing", None):
             with self.subTest(value=value):
                 timing = profile_fixture()
@@ -75,8 +111,8 @@ class ProfileReportTests(unittest.TestCase):
                 report = summarize(timing)
                 self.assertIsNone(report["agent_ttft_ms"])
                 self.assertIsNone(report["agent_text_delivery_ms"])
-                self.assertIsNone(report["retained_ttft_ms"])
-                self.assertEqual(report["end_to_audible_ms"], 1000.0)
+                self.assertNotIn("retained_ttft_ms", report)
+                self.assertEqual(report["end_to_audible_ms"], 640.0)
 
     def test_missing_critical_path_endpoints_leave_only_affected_metrics_unavailable(
         self,
@@ -84,8 +120,10 @@ class ProfileReportTests(unittest.TestCase):
         for stage, name, metric in (
             ("device", "end_requested", "end_to_audible_ms"),
             ("server", "stt_completed", "end_to_stt_ms"),
-            ("server", "tts_completed", "tts_to_audible_ms"),
+            ("server", "tts_completed", "tts_total_ms"),
             ("server", "tts_requested", "tts_total_ms"),
+            ("server", "tts_first_audio", "end_to_first_pcm_ms"),
+            ("device", "reply_first_audible", "reply_enqueue_to_audible_ms"),
         ):
             for missing in (True, False):
                 with self.subTest(stage=stage, name=name, missing=missing):
@@ -96,49 +134,79 @@ class ProfileReportTests(unittest.TestCase):
                         timing[stage]["marks_ns"][name] = None
                     report = summarize(timing)
                     self.assertIsNone(report[metric])
-                    if metric == "tts_total_ms":
-                        self.assertIsNone(report["tts_outside_generate_ms"])
+                    if name == "tts_completed":
+                        self.assertEqual(report["end_to_first_pcm_ms"], 600.0)
 
-    def test_measured_critical_path_sums_without_counting_overlapping_stt_twice(self):
+    def test_first_audio_path_sums_while_agent_and_tts_continue_after_audible(self):
         timing = profile_fixture()
         original = copy.deepcopy(timing)
         report = summarize(timing)
         intervals = (
-            "end_to_stt_ms",
-            "stt_to_agent_ms",
-            "agent_total_ms",
-            "agent_to_tts_ms",
-            "tts_total_ms",
-            "tts_to_audible_ms",
+            "end_to_first_pcm_ms",
+            "tts_first_pcm_to_enqueue_ms",
+            "reply_enqueue_to_audible_ms",
         )
         self.assertEqual(
             sum(report[name] for name in intervals), report["end_to_audible_ms"]
         )
         self.assertEqual(report["stt_first_text_ms"], 100.0)
         self.assertEqual(report["stt_flush_ms"], 98.0)
-        self.assertEqual(report["retained_ttft_ms"], 855.0)
+        self.assertEqual(report["agent_total_ms"], 390.0)
+        self.assertEqual(report["tts_total_ms"], 590.0)
+        self.assertNotIn("retained_ttft_ms", report)
+        self.assertNotIn("tts_after_first_token_ms", report)
+        self.assertNotIn("agent_to_tts_ms", report)
         self.assertEqual(timing, original)
 
-    def test_impossible_generation_duration_rejects_negative_residual(self):
-        timing = profile_fixture()
-        timing["tts"]["remote"]["first_token_ms"] = 101.0
-        with self.assertRaisesRegex(ValueError, "negative"):
-            summarize(timing)
+    def test_remote_generation_offsets_must_follow_token_pcm_completion_order(self):
+        for key, value in (
+            ("first_token_ms", 201.0),
+            ("first_pcm_ms", 201.0),
+            ("first_token_ms", 41.0),
+        ):
+            with self.subTest(key=key, value=value):
+                timing = profile_fixture()
+                timing["tts"]["segments"][0]["remote"][key] = value
+                with self.assertRaisesRegex(ValueError, "reversed"):
+                    summarize(timing)
 
-    def test_remote_elapsed_time_is_separated_from_local_transport_residual(self):
+    def test_remote_offsets_and_client_spans_describe_first_segment_only(self):
         timing = profile_fixture()
-        timing["tts"]["remote"]["remote_total_ms"] = 360.0
         report = summarize(timing)
-        self.assertEqual(report["tts_total_ms"], 390.0)
-        self.assertEqual(report["tts_transport_startup_ms"], 30.0)
-        timing["tts"]["remote"]["remote_total_ms"] = None
-        self.assertIsNone(summarize(timing)["tts_transport_startup_ms"])
+        self.assertEqual(report["tts_first_segment_remote_total_ms"], 230.0)
+        self.assertEqual(report["tts_first_segment_client_total_ms"], 240.0)
+        self.assertEqual(report["tts_first_segment_first_pcm_ms"], 40.0)
+        self.assertEqual(report["tts_first_segment_client_first_pcm_ms"], 90.0)
+        self.assertEqual(report["tts_model_age_ms"], 10000.0)
+        timing["tts"]["segments"][0]["remote"]["first_pcm_ms"] = None
+        self.assertIsNone(summarize(timing)["tts_first_segment_first_pcm_ms"])
 
-    def test_remote_duration_exceeding_local_interval_cannot_be_labeled_transport(self):
+    def test_enqueue_to_audible_includes_transport_and_leading_silence(self):
+        report = summarize(profile_fixture())
+        self.assertEqual(report["reply_enqueue_to_audible_ms"], 35.0)
+        self.assertEqual(report["tts_first_pcm_to_audible_ms"], 40.0)
+        self.assertNotIn("tts_transport_startup_ms", report)
+        self.assertNotIn("tts_outside_generate_ms", report)
+
+    def test_livekit_silence_before_synthesis_is_not_counted_as_generated_pcm(self):
         timing = profile_fixture()
-        timing["tts"]["remote"]["remote_total_ms"] = 391.0
-        with self.assertRaisesRegex(ValueError, "negative"):
+        timing["device"]["marks_ns"]["reply_first_frame"] = 1604 * 1_000_000
+        self.assertEqual(summarize(timing)["reply_enqueue_to_audible_ms"], 35.0)
+
+    def test_audible_pcm_before_enqueue_rejects_reversed_same_host_marks(self):
+        timing = profile_fixture()
+        timing["device"]["marks_ns"]["reply_first_audible"] = 1604 * 1_000_000
+        with self.assertRaisesRegex(ValueError, "follows"):
             summarize(timing)
+
+    def test_unmeasured_segments_do_not_invent_remote_timing(self):
+        timing = profile_fixture()
+        timing["tts"]["segments"] = []
+        report = summarize(timing)
+        self.assertIsNone(report["tts_first_segment_first_pcm_ms"])
+        self.assertIsNone(report["tts_first_segment_client_total_ms"])
+        self.assertIsNone(report["tts_model_age_ms"])
+        self.assertEqual(report["end_to_audible_ms"], 640.0)
 
 
 class TimingTests(unittest.TestCase):
@@ -206,6 +274,7 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
     def session(self, *, profile: bool) -> VoiceSession:
         session = object.__new__(VoiceSession)
         session.profile = profile
+        session.closed = False
         session.turn = Turn()
         session.turn.push(b"\x01\x00")
         session.turn.finish()
@@ -227,7 +296,7 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
                 turn = session.turn
                 stt_calls: list[dict | None] = []
                 tts_calls: list[dict | None] = []
-                wave = write_wav(b"\x80\x01" * (SAMPLE_RATE // 50))
+                pcm = b"\x80\x01" * (SAMPLE_RATE // 50)
 
                 async def transcribe(
                     audio: AsyncIterator[bytes],
@@ -243,17 +312,17 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
                     yield "heading."
 
                 async def speak(
-                    text: str, *, timings: dict | None, calls=tts_calls, audio=wave
-                ) -> bytes:
+                    text: str, *, timings: dict | None, calls=tts_calls, audio=pcm
+                ) -> AsyncIterator[bytes]:
                     self.assertEqual(text, "The heading is Slate.")
                     calls.append(timings)
                     if timings is not None:
                         timings.update({"model_ms": 8.0})
-                    return audio
+                    yield audio
 
                 with (
                     patch("slate.voice.session.transcribe_stream", transcribe),
-                    patch("slate.voice.session.speak", speak),
+                    patch("slate.voice.session.speak_stream", speak),
                 ):
                     await session.transcribe(turn)
                 session.agent.run.assert_awaited_once()
@@ -274,7 +343,7 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
                     continue
                 report = final["timing"]
                 self.assertEqual(report["stt"], {"model_ms": 4.0})
-                self.assertEqual(report["tts"], {"model_ms": 8.0})
+                self.assertEqual(report["tts"], {"segments": [{"model_ms": 8.0}]})
                 self.assertEqual(report["agent"], {"duration_ms": 12.5})
                 self.assertEqual(report["agent_runtime"]["model"], "test-model")
                 marks = report["server"]["marks_ns"]
@@ -291,8 +360,9 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
                     "agent_completed",
                     "reply_text_published",
                     "tts_requested",
-                    "tts_completed",
+                    "tts_first_audio",
                     "reply_first_enqueue",
+                    "tts_completed",
                     "reply_playout_done",
                 ]
                 self.assertEqual(

@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import subprocess
 import tarfile
 import tomllib
@@ -25,6 +26,37 @@ def settings() -> dict:
 
 def command() -> list[str]:
     return ["uv", "tool", "run", "--from", f"uv=={settings()['uv_version']}", "uv"]
+
+
+def configure_device_tools(config: dict) -> None:
+    uv = shutil.which("uv")
+    if uv is None:
+        raise RuntimeError("Slate device MCP requires uv on PATH")
+    toolsets = config.setdefault("platform_toolsets", {}).setdefault("api_server", [])
+    if "mcp-slate-device" not in toolsets:
+        toolsets.append("mcp-slate-device")
+    server = config.setdefault("mcp_servers", {}).setdefault("slate-device", {})
+    server.update(
+        {
+            "command": str(Path(uv).resolve()),
+            "args": [
+                "--directory",
+                str(ROOT),
+                "run",
+                "--no-sync",
+                "python",
+                "-m",
+                "slate.agent.device_mcp",
+            ],
+        }
+    )
+    server.setdefault("env", {}).update(
+        SLATE_DEVICE_MODE=os.getenv("SLATE_DEVICE_MODE", "monty"),
+        SLATE_DEVICE_URL=os.getenv("SLATE_DEVICE_URL", "http://127.0.0.1:8000"),
+        SLATE_CLOUDFLARE_CODE_URL=os.getenv(
+            "SLATE_CLOUDFLARE_CODE_URL", "http://127.0.0.1:8650"
+        ),
+    )
 
 
 def environment() -> dict[str, str]:
@@ -119,6 +151,7 @@ def setup() -> None:
         },
         "auth": {"adopt_external_logins": False},
     }
+    configure_device_tools(config)
     (PROFILE / "config.yaml").write_text(json.dumps(config, indent=2))
     subprocess.run(
         [*command(), "run", "--no-sync", "hermes", "pm", "install", "agent-browser"],
@@ -139,6 +172,11 @@ def main() -> None:
         setup()
         return
     verify_source()
+    if args.command == "start":
+        config_path = PROFILE / "config.yaml"
+        config = json.loads(config_path.read_text())
+        configure_device_tools(config)
+        config_path.write_text(json.dumps(config, indent=2))
     hermes_args = (
         ["gateway"] if args.command == "start" else ["auth", "add", "openai-codex"]
     )

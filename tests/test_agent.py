@@ -2,10 +2,12 @@ import asyncio
 import json
 import unittest
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from time import monotonic_ns
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+from slate.agent import runtime as agent_runtime
 from slate.agent.agent import Agent
 from slate.voice.session import VoiceSession
 from slate.voice.turn import Turn
@@ -73,12 +75,77 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(agent.close)
         return agent
 
+    async def test_unphased_deltas_only_emit_a_verified_complete_answer(self):
+        progress = AsyncMock()
+        admitted = []
+
+        def handle(request):
+            if request.url.path == "/v1/runs":
+                admitted.append(json.loads(request.content))
+                return httpx.Response(202, json={"run_id": "run-a"})
+            if request.url.path.endswith("/events"):
+                return httpx.Response(
+                    200,
+                    content=events(
+                        {"event": "message.delta", "delta": "I'll use tools."},
+                        {"event": "message.interim", "text": "I'll use tools."},
+                        {"event": "tool.started", "tool": "slate_device"},
+                        {"event": "message.delta", "delta": "Device changed."},
+                        {"event": "run.completed", "output": "Unverified stream"},
+                    ),
+                )
+            return httpx.Response(200, json=completed(output="Device changed."))
+
+        agent = self.agent(handle)
+        self.assertEqual(
+            await agent.run("Adjust it", progress, device_context="scope=current"),
+            "Device changed.",
+        )
+        replies = [
+            call.args[0]
+            for call in progress.await_args_list
+            if call.args[0]["type"] in ("reply.delta", "answer.complete")
+        ]
+        self.assertEqual(
+            replies, [{"type": "answer.complete", "text": "Device changed."}]
+        )
+        self.assertEqual(admitted[0]["input"], "Adjust it")
+        self.assertTrue(admitted[0]["instructions"].endswith("scope=current"))
+        await agent.run("Another turn")
+        self.assertEqual(admitted[1]["instructions"], agent.instructions)
+        self.assertNotIn("scope=current", repr(agent.timings))
+
+    async def test_failed_run_with_deltas_cannot_emit_a_complete_answer(self):
+        progress = AsyncMock()
+
+        def handle(request):
+            if request.url.path == "/v1/runs":
+                return httpx.Response(202, json={"run_id": "run-a"})
+            if request.url.path.endswith("/events"):
+                return httpx.Response(
+                    200, content=events({"event": "message.delta", "delta": "Partial"})
+                )
+            if request.url.path.endswith("/stop"):
+                return httpx.Response(200, json={})
+            return httpx.Response(200, json=completed(status="failed"))
+
+        agent = self.agent(handle)
+        with self.assertRaises(RuntimeError):
+            await agent.run("Change it", progress)
+        self.assertFalse(
+            any(
+                call.args[0]["type"] in ("reply.delta", "answer.complete")
+                for call in progress.await_args_list
+            )
+        )
+
     async def test_timings_count_only_visible_deltas_and_keep_first_observations(self):
         snapshots = []
         subscription = 0
 
         async def progress(event):
-            snapshots.append((event["seq"], agent.timings))
+            if "seq" in event:
+                snapshots.append((event["seq"], agent.timings))
 
         def handle(request):
             nonlocal subscription
@@ -301,7 +368,7 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             [call.args[0]["type"] for call in progress.await_args_list],
-            ["tool.started", "assistant.message", "run.completed"],
+            ["tool.started", "assistant.message", "run.completed", "answer.complete"],
         )
         self.assertEqual(agent.last_run["output"], "  The heading is Slate.  ")
 
@@ -345,7 +412,12 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
             ["/v1/runs/run-a/events", "/v1/runs/run-a/events"],
         )
         self.assertEqual(
-            [call.args[0]["seq"] for call in progress.await_args_list], [0, 1]
+            [
+                call.args[0]["seq"]
+                for call in progress.await_args_list
+                if "seq" in call.args[0]
+            ],
+            [0, 1],
         )
 
     async def test_server_route_mismatch_is_rejected_and_remote_run_is_stopped(self):
@@ -514,12 +586,73 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(approvals, [{"request_id": "stale-request", "choice": "once"}])
 
 
+class AgentRuntimeTests(unittest.TestCase):
+    def test_device_mcp_missing_launcher_does_not_partially_change_config(self):
+        config = {"gateway": {"api_server": {"key": "existing-credential"}}}
+        with patch("slate.agent.runtime.shutil.which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Slate device MCP requires uv"):
+                agent_runtime.configure_device_tools(config)
+        self.assertEqual(
+            config, {"gateway": {"api_server": {"key": "existing-credential"}}}
+        )
+
+    def test_device_mcp_config_preserves_credentials_and_other_servers(self):
+        config = {
+            "gateway": {"api_server": {"key": "existing-credential"}},
+            "auth": {"adopt_external_logins": False},
+            "platform_toolsets": {"api_server": ["memory", "browser"]},
+            "mcp_servers": {
+                "other": {"command": "other-program"},
+                "slate-device": {"env": {"DEVICE_AUTH": "existing-device-credential"}},
+            },
+        }
+        with (
+            patch("slate.agent.runtime.shutil.which", return_value="/opt/tools/uv"),
+            patch.dict("os.environ", {"SLATE_DEVICE_MODE": "monty"}),
+        ):
+            agent_runtime.configure_device_tools(config)
+            agent_runtime.configure_device_tools(config)
+        self.assertEqual(config["gateway"]["api_server"]["key"], "existing-credential")
+        self.assertEqual(config["mcp_servers"]["other"], {"command": "other-program"})
+        self.assertEqual(
+            config["platform_toolsets"]["api_server"],
+            ["memory", "browser", "mcp-slate-device"],
+        )
+        device = config["mcp_servers"]["slate-device"]
+        self.assertTrue(Path(device["command"]).is_absolute())
+        self.assertEqual(
+            device["args"],
+            [
+                "--directory",
+                str(agent_runtime.ROOT),
+                "run",
+                "--no-sync",
+                "python",
+                "-m",
+                "slate.agent.device_mcp",
+            ],
+        )
+        self.assertEqual(
+            device["env"],
+            {
+                "DEVICE_AUTH": "existing-device-credential",
+                "SLATE_DEVICE_MODE": "monty",
+                "SLATE_DEVICE_URL": "http://127.0.0.1:8000",
+                "SLATE_CLOUDFLARE_CODE_URL": "http://127.0.0.1:8650",
+            },
+        )
+
+
 class VoiceSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
     async def test_abort_clears_queued_audio_before_waiting_for_agent_cancellation(
         self,
     ):
         session = object.__new__(VoiceSession)
         order: list[str] = []
+        session.turn_lock = asyncio.Lock()
+        session.closed = False
+        session.device_identity = "device-test"
+        session.room = Mock(local_participant=Mock(publish_data=AsyncMock()))
         running = asyncio.Event()
         cancelled = asyncio.Event()
         release = asyncio.Event()

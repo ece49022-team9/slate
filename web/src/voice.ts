@@ -9,7 +9,7 @@ type Session = {
   worker_identity: string
 }
 
-type Transcript = { turn_id: string; text?: string; final?: boolean; error?: string }
+type Transcript = { turn_id: string; text?: string; final?: boolean; error?: string; cancelled?: boolean }
 export type Approval = { run_id: string; request_id: string; command: string }
 
 export class VoiceConnection {
@@ -18,6 +18,10 @@ export class VoiceConnection {
   private session?: Session
   private turn?: string
   private starting?: Promise<void>
+  private generation = 0
+  private approval?: Approval
+  private playbackMuted = true
+  private microphoneChanges: Promise<void> = Promise.resolve()
   private recording = false
   private closed = false
   private timer?: ReturnType<typeof setTimeout>
@@ -71,6 +75,7 @@ export class VoiceConnection {
       this.room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
         if (participant.identity !== this.session?.worker_identity || track.kind !== Track.Kind.Audio) return
         this.speaker = track.attach() as HTMLAudioElement
+        this.speaker.muted = this.playbackMuted
         this.speaker.hidden = true
         document.body.appendChild(this.speaker)
       })
@@ -99,8 +104,9 @@ export class VoiceConnection {
     if (!['slate.transcript', 'slate.reply', 'slate.agent'].includes(topic ?? '') || identity !== this.session?.worker_identity) return
     try {
       const event = JSON.parse(new TextDecoder().decode(payload)) as Transcript & { tool?: string; approval?: Approval }
-      if (event.turn_id !== this.turn || this.closed) return
+      if (!this.turn || event.turn_id !== this.turn || this.closed) return
       if (topic === 'slate.agent') {
+        this.approval = event.approval
         this.onAgent(event.tool ?? '', event.approval)
         return
       }
@@ -109,12 +115,20 @@ export class VoiceConnection {
         this.onTranscript(event.text, event.final === true)
         if (event.final && event.text) this.onState('responding')
       }
-      if (topic === 'slate.reply' && typeof event.text === 'string') this.onReply(event.text)
-      if ((topic === 'slate.reply' && event.final) || event.error || (topic === 'slate.transcript' && event.final && !event.text)) {
+      if (topic === 'slate.reply' && typeof event.text === 'string') {
+        if (event.text && !event.error && !event.cancelled) this.mutePlayback(false)
+        this.onReply(event.text)
+      }
+      if ((topic === 'slate.reply' && (event.final || event.cancelled)) || event.error || (topic === 'slate.transcript' && event.final && !event.text)) {
+        if (event.cancelled || event.error) this.mutePlayback(true)
+        const generation = ++this.generation
         this.turn = undefined
+        this.approval = undefined
         this.recording = false
         clearTimeout(this.timer)
-        void this.microphone?.mute().catch((error) => this.fail(error))
+        void this.setMicrophone(false).catch((error) => {
+          if (this.generation === generation && !this.closed) return this.fail(error)
+        })
         this.onState('ready')
         this.onAgent('')
       }
@@ -132,63 +146,95 @@ export class VoiceConnection {
     })
   }
 
-  async start(): Promise<void> {
-    if (this.starting || this.turn || this.closed) return
-    this.starting = this.begin()
-    try {
-      await this.starting
-    } catch (error) {
-      await this.fail(error)
-    } finally {
-      this.starting = undefined
-    }
+  private mutePlayback(muted: boolean): void {
+    this.playbackMuted = muted
+    if (this.speaker) this.speaker.muted = muted
   }
 
-  private async begin(): Promise<void> {
+  private setMicrophone(open: boolean, generation = this.generation): Promise<void> {
+    const change = this.microphoneChanges.then(async () => {
+      if (this.closed || (open && generation !== this.generation)) return
+      if (open) await this.microphone?.unmute()
+      else await this.microphone?.mute()
+    })
+    this.microphoneChanges = change.catch(() => {})
+    return change
+  }
+
+  async start(): Promise<void> {
+    if (this.starting || this.recording || this.closed) return
+    const generation = ++this.generation
+    this.turn = undefined
+    this.approval = undefined
+    clearTimeout(this.timer)
+    this.mutePlayback(true)
     this.onError('')
     this.onTranscript('', false)
     this.onReply('')
     this.onAgent('')
     this.onState('starting')
-    this.turn = await this.rpc('start_turn')
+    const starting = this.begin(generation)
+    this.starting = starting
+    try {
+      await starting
+    } catch (error) {
+      if (generation === this.generation && !this.closed) await this.fail(error)
+    } finally {
+      if (this.starting === starting) this.starting = undefined
+    }
+  }
+
+  private async begin(generation: number): Promise<void> {
+    const turn = await this.rpc('start_turn')
     if (this.closed) return
-    await this.microphone?.unmute()
-    if (!this.turn || this.closed) return
+    if (generation !== this.generation) {
+      await this.rpc('cancel_turn', turn)
+      return
+    }
+    this.turn = turn
+    await this.setMicrophone(true, generation)
+    if (generation !== this.generation || this.turn !== turn || this.closed) return
     this.recording = true
     this.onState('recording')
     this.timer = setTimeout(() => void this.finish(), 120000)
   }
 
   async finish(): Promise<void> {
+    const generation = this.generation
     try {
       await this.starting
-      if (!this.turn || !this.recording || this.closed) return
+      if (generation !== this.generation || !this.turn || !this.recording || this.closed) return
       const turn = this.turn
       this.recording = false
       clearTimeout(this.timer)
       this.onState('transcribing')
-      await this.microphone?.mute()
-      if (this.turn === turn) await this.rpc('end_turn', turn)
+      await this.setMicrophone(false)
+      if (generation === this.generation && this.turn === turn) await this.rpc('end_turn', turn)
     } catch (error) {
-      await this.fail(error)
+      if (generation === this.generation && !this.closed) await this.fail(error)
     }
   }
 
   async cancel(): Promise<void> {
+    if (this.closed) return
+    const generation = ++this.generation
+    const turn = this.turn
+    const starting = this.starting
+    this.turn = undefined
+    this.approval = undefined
+    this.recording = false
+    clearTimeout(this.timer)
+    this.mutePlayback(true)
+    this.onTranscript('', false)
+    this.onReply('')
+    this.onAgent('')
     try {
-      await this.starting
-      const turn = this.turn
-      if (!turn || this.closed) return
-      this.turn = undefined
-      this.recording = false
-      clearTimeout(this.timer)
-      await this.microphone?.mute()
-      await this.rpc('cancel_turn', turn)
-      this.onTranscript('', false)
-      this.onAgent('')
-      this.onState('ready')
+      await this.setMicrophone(false)
+      if (turn) await this.rpc('cancel_turn', turn)
+      await starting
+      if (generation === this.generation && !this.closed) this.onState('ready')
     } catch (error) {
-      await this.fail(error)
+      if (generation === this.generation && !this.closed) await this.fail(error)
     }
   }
 
@@ -199,12 +245,20 @@ export class VoiceConnection {
   }
 
   async approve(approval: Approval, choice: 'once' | 'deny'): Promise<void> {
+    const turn = this.turn
+    const generation = this.generation
+    const request = this.approval
+    if (!turn || this.closed || this.approval?.run_id !== approval.run_id || this.approval.request_id !== approval.request_id) return
     try {
-      if (!this.turn) throw new Error('This recording has ended')
-      await this.rpc('approve_tool', JSON.stringify({ turn_id: this.turn, ...approval, choice }))
-      this.onAgent('')
+      await this.rpc('approve_tool', JSON.stringify({ turn_id: turn, ...approval, choice }))
+      if (this.turn === turn && generation === this.generation && this.approval === request) {
+        this.approval = undefined
+        this.onAgent('')
+      }
     } catch (error) {
-      this.onError(error instanceof Error ? error.message : 'Could not resolve approval')
+      if (this.turn === turn && generation === this.generation && this.approval === request) {
+        this.onError(error instanceof Error ? error.message : 'Could not resolve approval')
+      }
     }
   }
 
@@ -219,6 +273,9 @@ export class VoiceConnection {
 
   async disconnect(): Promise<void> {
     this.closed = true
+    ++this.generation
+    this.mutePlayback(true)
+    this.approval = undefined
     this.turn = undefined
     this.recording = false
     clearTimeout(this.timer)

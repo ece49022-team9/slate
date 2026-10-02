@@ -9,6 +9,8 @@ from urllib.request import Request, urlopen
 
 from livekit import rtc
 
+from slate.device import FirmwareDevice
+from slate.link import Link
 from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE, read_wav, write_wav
 from slate.voice.settings import REPLY_TOPIC, TRANSCRIPT_TOPIC
 from slate.voice.timing import Timeline
@@ -71,6 +73,7 @@ async def transcribe_audio(
     sample_rate: int,
     *,
     profile: bool = False,
+    device_link: Link | None = None,
 ) -> VoiceResult:
     timing = Timeline()
     timing.mark("session_requested")
@@ -123,7 +126,7 @@ async def transcribe_audio(
 
     @room.on("data_received")
     def on_data(packet: rtc.DataPacket) -> None:
-        nonlocal transcript, reply, receiving_reply, server_timing
+        nonlocal transcript, reply, receiving_reply, server_timing, turn
         if (
             packet.topic not in (TRANSCRIPT_TOPIC, REPLY_TOPIC)
             or packet.participant is None
@@ -134,7 +137,11 @@ async def transcribe_audio(
         event = json.loads(packet.data)
         if event["turn_id"] != turn:
             return
-        if "error" in event:
+        if event.get("cancelled"):
+            turn = ""
+            receiving_reply = False
+            result.set_exception(RuntimeError("Voice turn interrupted"))
+        elif "error" in event:
             result.set_exception(RuntimeError(event["error"]))
         elif packet.topic == TRANSCRIPT_TOPIC:
             if event.get("text", "").strip():
@@ -157,6 +164,9 @@ async def transcribe_audio(
         timing.mark("livekit_connect_requested")
         await room.connect(session["server_url"], session["participant_token"])
         timing.mark("livekit_connected")
+        if device_link is not None:
+            peer = FirmwareDevice(device_link, lambda: turn)
+            room.local_participant.register_rpc_method("device.command", peer.rpc)
         track = rtc.LocalAudioTrack.create_audio_track("microphone", source)
         options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
         publication = await room.local_participant.publish_track(track, options)

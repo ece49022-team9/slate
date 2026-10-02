@@ -1,4 +1,4 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-speaker-check bench voice-deploy voice-check livekit sim-voice agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-speaker-check bench voice-deploy voice-check livekit sim-voice agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check code-setup code-worker voice-controls-check
 
 FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
@@ -23,6 +23,7 @@ check:
 	uv run python -m unittest discover -s tests
 	npm --prefix web run lint
 	npm --prefix web run build
+	node --experimental-strip-types --test web/tests/*.test.mjs
 
 board:
 	uv run python -m slate.board
@@ -55,9 +56,25 @@ sim-check:
 	uv run python scripts/check_mic.py
 	uv run python scripts/check_display.py
 	uv run python scripts/check_speaker.py
+	uv run python scripts/check_device.py
 
 sim-speaker-check:
 	uv run python scripts/check_speaker.py
+
+device-check:
+	uv run python scripts/check_device.py
+
+code-setup:
+	npm install --prefix .local/cloudflare-code-mode --no-save --package-lock=false @cloudflare/codemode@0.5.3 miniflare@4.20260730.0 esbuild@0.28.2
+
+code-worker:
+	node scripts/cloudflare_code_mode.mjs
+
+device-code-check:
+	uv run python scripts/check_device_code.py
+
+voice-controls-check:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_voice_controls.py
 
 sim-voice:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.voice firmware "$(INPUT)"
