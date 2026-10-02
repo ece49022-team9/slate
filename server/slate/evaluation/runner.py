@@ -632,8 +632,8 @@ def main() -> None:
     tau.add_argument(
         "--arms",
         nargs="+",
-        choices=["hermes", "managed"],
-        default=["hermes", "managed"],
+        choices=["hermes"],
+        default=["hermes"],
     )
     tau.add_argument("--port", type=int, default=8643)
     tau.add_argument("--fixture-port", type=int, default=8644)

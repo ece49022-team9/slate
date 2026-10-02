@@ -6,6 +6,7 @@ from typing import Self
 from livekit import api
 
 WORKER_IDENTITY = "slate-transcriber"
+LIVE_AGENT = "slate-live"
 TRANSCRIPT_TOPIC = "slate.transcript"
 REPLY_TOPIC = "slate.reply"
 
@@ -30,7 +31,14 @@ class VoiceSettings:
             )
         return cls(*values)
 
-    def token(self, room: str, identity: str, *, worker: bool = False) -> str:
+    def token(
+        self,
+        room: str,
+        identity: str,
+        *,
+        worker: bool = False,
+        agent: str | None = None,
+    ) -> str:
         grants = api.VideoGrants(
             room_join=True,
             room=room,
@@ -39,10 +47,14 @@ class VoiceSettings:
             can_subscribe=True,
             can_publish_data=True,
         )
-        return (
+        token = (
             api.AccessToken(self.api_key, self.api_secret)
             .with_identity(identity)
             .with_ttl(timedelta(minutes=10))
             .with_grants(grants)
-            .to_jwt()
         )
+        if agent:
+            token = token.with_room_config(
+                api.RoomConfiguration(agents=[api.RoomAgentDispatch(agent_name=agent)])
+            )
+        return token.to_jwt()

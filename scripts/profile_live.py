@@ -76,7 +76,7 @@ def stopped(reply: list, after: int) -> int | None:
 
 async def wait_started(call: LiveCall) -> None:
     async with asyncio.timeout(20):
-        while not (await call.report())["session_id"]:
+        while not (await call.report())["ready"]:
             await asyncio.sleep(0.2)
 
 
@@ -126,11 +126,11 @@ def analyze(call: LiveCall, report: dict, asked: int, interrupted: int | None) -
     first = delegations[0] if delegations else {}
     agent = first.get("agent", {})
     answer = first_audible(call.reply, first.get("commentary_sent_ns", speech_end))
-    since = first.get("offset_ms", -1)
+    since = first.get("created_ns", asked)
     spoken = "".join(
         part["text"]
         for part in report["words"]
-        if part["role"] == "Slate" and part["start_ms"] >= since
+        if part["role"] == "Slate" and part["at_ns"] >= since
     )
     metrics = {
         "delegated": bool(first),
@@ -140,16 +140,10 @@ def analyze(call: LiveCall, report: dict, asked: int, interrupted: int | None) -
         ),
         "speech_end_to_answer_audio_ms": elapsed(speech_end, answer),
         "speech_end_to_delegation_ms": elapsed(speech_end, first.get("created_ns")),
-        "transcript_settle_ms": elapsed(
-            first.get("created_ns"), first.get("transcript_ready_ns")
-        ),
         "agent_total_ms": elapsed(
             first.get("agent_requested_ns"), first.get("agent_completed_ns")
         ),
         "agent_ttft_ms": elapsed(agent.get("requested"), agent.get("first_text")),
-        "commentary_ack_ms": elapsed(
-            first.get("commentary_sent_ns"), first.get("appended_ns")
-        ),
         "commentary_to_answer_audio_ms": elapsed(
             first.get("commentary_sent_ns"), answer
         ),
@@ -176,9 +170,11 @@ def analyze(call: LiveCall, report: dict, asked: int, interrupted: int | None) -
             interruption_stop_ms=elapsed(onset, stop),
             resumed_after_stop_ms=elapsed(stop, resumed),
         )
-        result["said_after_interruption"] = "".join(
-            text for ns, text in call.said if onset and ns > onset
-        ).strip()
+        result["said_after_interruption"] = " ".join(
+            part["text"]
+            for part in report["words"]
+            if part["role"] == "Slate" and onset and part["at_ns"] > onset
+        )
         result["correct"] = bool(first.get("reply")) and not first.get("error")
     return result
 
@@ -209,17 +205,14 @@ async def live_trial(api_url: str, clip: Path, interrupt: bool, raw: Path) -> di
                 streamer.cancel()
                 await asyncio.gather(streamer, return_exceptions=True)
                 trace = {"report": report or await call.report()}
-                trace |= {"mic": call.mic, "reply": call.reply, "said": call.said}
+                trace |= {"mic": call.mic, "reply": call.reply}
                 raw.with_suffix(".trace.json").write_text(json.dumps(trace))
                 if call.reply_audio:
                     raw.with_suffix(".wav").write_bytes(
                         write_wav(bytes(call.reply_audio))
                     )
-            if call.errors:
-                raise RuntimeError(f"slate.profile: live session errors {call.errors}")
             return analyze(call, report, asked, interrupted) | {
                 "runtime": report["agent_runtime"],
-                "live_session": report["session_id"],
                 "usage": report["usage"],
             }
 

@@ -1,4 +1,4 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit voice-profile server-duplex duplex-profile cost-deploy cost-profile
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile server-duplex worker duplex-profile cost-deploy cost-profile
 
 MODAL_PROFILE ?= sudarshan-1
 MODAL_ENVIRONMENT ?= main
@@ -93,7 +93,10 @@ voice-profile:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_voice.py --repeats $(or $(REPEATS),3)
 
 server-duplex:
-	MODAL_PROFILE=$(MODAL_PROFILE) MODAL_ENVIRONMENT=$(MODAL_ENVIRONMENT) doppler run -- uv run uvicorn slate.app:app --host 127.0.0.1 --port 8002
+	MODAL_PROFILE=$(MODAL_PROFILE) MODAL_ENVIRONMENT=$(MODAL_ENVIRONMENT) uv run uvicorn slate.app:app --host 127.0.0.1 --port 8002
+
+worker:
+	doppler run -- uv run python -m slate.voice.worker dev
 
 duplex-profile:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m scripts.profile_live --repeats $(or $(REPEATS),4) --interruptions $(or $(INTERRUPTIONS),3)
@@ -107,13 +110,6 @@ cost-profile:
 
 agent-e2e:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --browser --memory --voice
-
-server-managed:
-	SLATE_HARNESS=openai MODAL_PROFILE=$(MODAL_PROFILE) doppler run -- uv run uvicorn slate.app:app --host 127.0.0.1 --port 8001
-
-agent-managed:
-	doppler run -- uv run python scripts/check_managed.py --browser
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --voice-only --api-url http://127.0.0.1:8001 --harness openai
 
 eval-setup:
 	uv run python scripts/eval_agent.py setup

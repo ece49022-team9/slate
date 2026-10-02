@@ -3,102 +3,62 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from slate.voice.live import BACKEND_CONTEXT, FAILED_REPLY, LiveConversation
+from livekit.agents import ChatMessage
+from livekit.plugins.openai.realtime import GPTLiveDelegation
+from slate.voice.worker import BACKEND_CONTEXT, FAILED_REPLY, Handoffs
 
 
-def words(kind: str, start_ms: int, text: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        type=f"session.{kind}_transcript.delta",
-        start_ms=start_ms,
-        end_ms=start_ms + 200,
-        delta=text,
-    )
+def said(role: str, text: str) -> SimpleNamespace:
+    return SimpleNamespace(item=ChatMessage(role=role, content=[text]))
 
 
-def delegation(delegation_id: str, offset_ms: int) -> SimpleNamespace:
-    return SimpleNamespace(
-        type="session.delegation.created",
-        offset_ms=offset_ms,
-        delegation=SimpleNamespace(id=delegation_id, target="client"),
-    )
+class HandoffTests(unittest.IsolatedAsyncioTestCase):
+    def handoffs(self, run: AsyncMock) -> tuple[Handoffs, Mock]:
+        agent = Mock(run=run, timings={}, last_run={}, close=AsyncMock())
+        return Handoffs(agent), Mock()
 
-
-class FakeConnection:
-    def __init__(self, events: list) -> None:
-        self.events = events
-        self.session = SimpleNamespace(commentary=SimpleNamespace(append=AsyncMock()))
-
-    def __aiter__(self):
-        return self.stream()
-
-    async def stream(self):
-        for event in self.events:
-            yield event
-        yield SimpleNamespace(type="session.closed", usage=None)
-
-
-class LiveConversationTests(unittest.IsolatedAsyncioTestCase):
-    def conversation(self, events: list, agent) -> LiveConversation:
-        live = LiveConversation(agent, speak=Mock(), publish=AsyncMock())
-        live.connection = FakeConnection(events)
-        return live
-
-    async def finish(self, live: LiveConversation) -> None:
-        await live.receive()
-        await asyncio.gather(*live.tasks)
-
-    async def test_each_delegation_sends_new_speech_and_returns_under_its_id(self):
-        agent = Mock(
-            run=AsyncMock(side_effect=["Twelve.", "Fifteen."]),
-            timings={},
-            last_run={},
-        )
-        live = self.conversation(
-            [
-                words("input", 1000, " What is seven"),
-                words("input", 1200, " plus five?"),
-                delegation("first", 1600),
-                words("output", 1800, " Twelve."),
-                words("input", 3000, " And plus three?"),
-                delegation("second", 3400),
-            ],
-            agent,
-        )
-        await self.finish(live)
+    async def test_each_handoff_sends_only_new_speech_under_its_own_id(self):
+        replies = AsyncMock(side_effect=["Twelve.", "Fifteen."])
+        handoffs, session = self.handoffs(replies)
+        question = "What is seven plus five?"
+        handoffs.delegate(session, GPTLiveDelegation("first", question))
+        await asyncio.gather(*handoffs.tasks)
+        handoffs.heard(said("user", question))
+        handoffs.heard(said("assistant", "Twelve."))
+        handoffs.delegate(session, GPTLiveDelegation("second", "And plus three?"))
+        await asyncio.gather(*handoffs.tasks)
         self.assertEqual(
-            [call.args[0] for call in agent.run.await_args_list],
+            [call.args[0] for call in handoffs.agent.run.await_args_list],
             [
                 BACKEND_CONTEXT + "User: What is seven plus five?",
                 BACKEND_CONTEXT + "Slate: Twelve.\nUser: And plus three?",
             ],
         )
-        sent = live.connection.session.commentary.append.await_args_list
+        sent = session.append_commentary.call_args_list
         self.assertEqual(
-            [(call.kwargs["delegation_id"], call.kwargs["content"]) for call in sent],
+            [(call.kwargs["delegation_id"], call.args[0]) for call in sent],
             [("first", "Twelve."), ("second", "Fifteen.")],
         )
 
-    async def test_agent_failure_still_answers_the_waiting_delegation(self):
-        agent = Mock(run=AsyncMock(side_effect=RuntimeError), timings={}, last_run={})
-        live = self.conversation(
-            [words("input", 1000, " What time is it?"), delegation("only", 1400)],
-            agent,
-        )
-        await self.finish(live)
-        live.connection.session.commentary.append.assert_awaited_once_with(
-            event_id="result-0", delegation_id="only", content=FAILED_REPLY
-        )
-        self.assertEqual(live.delegations[0]["error"], "RuntimeError")
+    async def test_handoffs_reach_hermes_in_the_order_they_arrived(self):
+        started = []
 
-    async def test_only_session_errors_end_the_conversation(self):
-        def error(client_event_id):
-            return SimpleNamespace(
-                type="error",
-                client_event_id=client_event_id,
-                error=SimpleNamespace(code="bad", message="rejected"),
-            )
+        async def run(message: str) -> str:
+            started.append(message.rsplit("User: ", 1)[1])
+            await asyncio.sleep(0.01 if message.endswith("first?") else 0)
+            return "ok"
 
-        agent = Mock(timings={}, last_run={})
-        await self.conversation([error("result-0")], agent).receive()
-        with self.assertRaisesRegex(RuntimeError, "slate.live: bad"):
-            await self.conversation([error(None)], agent).receive()
+        handoffs, session = self.handoffs(AsyncMock(side_effect=run))
+        handoffs.delegate(session, GPTLiveDelegation("a", "first?"))
+        handoffs.delegate(session, GPTLiveDelegation("b", "second?"))
+        await asyncio.gather(*handoffs.tasks)
+        self.assertEqual(started, ["first?", "second?"])
+
+    async def test_hermes_failure_still_answers_the_waiting_delegation(self):
+        handoffs, session = self.handoffs(AsyncMock(side_effect=RuntimeError))
+        handoffs.delegate(session, GPTLiveDelegation("only", "What time is it?"))
+        await asyncio.gather(*handoffs.tasks)
+        session.append_commentary.assert_called_once_with(
+            FAILED_REPLY, delegation_id="only"
+        )
+        self.assertEqual(handoffs.records[0]["error"], "RuntimeError")

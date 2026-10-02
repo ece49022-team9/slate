@@ -162,9 +162,7 @@ async def check(
         return False
 
 
-async def voice(
-    api_url: str = "http://127.0.0.1:8000", harness: str = "hermes"
-) -> bool:
+async def voice(api_url: str = "http://127.0.0.1:8000") -> bool:
     started = time.monotonic()
     try:
         prompt = ARTIFACTS / "spoken-input.wav"
@@ -172,14 +170,14 @@ async def voice(
         if not prompt.exists():
             prompt.write_bytes(await speak("What is seven plus five?"))
         result = await simulate_firmware(prompt, api_url, "left")
-        reply_path = ARTIFACTS / f"spoken-reply-{harness}.wav"
+        reply_path = ARTIFACTS / "spoken-reply-hermes.wav"
         reply_path.write_bytes(result.audio)
         if not result.transcript or not result.audio:
             raise AssertionError("Voice turn did not return a transcript and audio")
         if not any(answer in result.reply.casefold() for answer in ("12", "twelve")):
             raise AssertionError("Voice reply did not contain twelve")
         record(
-            f"qemu-livekit-{harness}-csm",
+            "qemu-livekit-hermes-csm",
             "passed",
             started,
             transcript=result.transcript,
@@ -191,7 +189,7 @@ async def voice(
         return True
     except Exception as error:
         record(
-            f"qemu-livekit-{harness}-csm",
+            "qemu-livekit-hermes-csm",
             "failed",
             started,
             error_type=type(error).__name__,
@@ -262,7 +260,7 @@ async def run(args: argparse.Namespace) -> None:
     finally:
         await agent.close()
     if args.voice:
-        results.append(await voice(args.api_url, args.harness))
+        results.append(await voice(args.api_url))
     if not all(results):
         raise SystemExit(1)
 
@@ -275,11 +273,10 @@ if __name__ == "__main__":
     parser.add_argument("--voice", action="store_true")
     parser.add_argument("--voice-only", action="store_true")
     parser.add_argument("--api-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--harness", choices=["hermes", "openai"], default="hermes")
     arguments = parser.parse_args()
     if arguments.status:
         status()
     elif arguments.voice_only:
-        asyncio.run(voice(arguments.api_url, arguments.harness))
+        asyncio.run(voice(arguments.api_url))
     else:
         asyncio.run(run(arguments))

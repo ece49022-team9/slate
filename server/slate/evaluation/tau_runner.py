@@ -7,12 +7,10 @@ import shutil
 import socket
 import subprocess
 import time
-from importlib.metadata import version
 from pathlib import Path
 from uuid import uuid4
 
 import httpx
-from openai import AsyncOpenAI
 
 from slate.agent.agent import Agent
 from slate.agent.runtime import SOURCE, command
@@ -32,45 +30,6 @@ async def stop(process) -> None:
             await asyncio.to_thread(process.wait)
 
 
-async def managed_turn(client, session, message, handlers, events, event_log) -> str:
-    stream = client.beta.agents.sessions.stream(
-        session.id,
-        input=message,
-        tool_handlers=handlers,
-        timeout=300,
-    )
-    stream.with_result_collection()
-    turn_id = None
-    terminal = False
-    async with stream:
-        async for event in stream:
-            body = event.model_dump(mode="json")
-            events.append(body)
-            event_log.write(json.dumps(body) + "\n")
-            event_log.flush()
-            if body["type"] == "agent.session.turn.created":
-                if body["turn"].get("subagent_id") is None:
-                    turn_id = body["turn_id"]
-            if (
-                body["type"]
-                in (
-                    "agent.session.turn.completed",
-                    "agent.session.turn.failed",
-                    "agent.session.turn.cancelled",
-                )
-                and body["turn_id"] == turn_id
-            ):
-                terminal = True
-            if body["type"] == "agent.session.failed" or (
-                body["type"] == "agent.session.idle" and terminal
-            ):
-                break
-        result = await stream.get_final_result()
-    if result.turn.status != "completed":
-        raise RuntimeError(f"Managed turn failed: {result.turn.status}")
-    return result.output_text.strip()
-
-
 async def trial(args, arm, directory, profile_config, hermes_environment, wait_ready):
     for port in (args.fixture_port, args.port):
         with socket.socket() as listener:
@@ -79,8 +38,6 @@ async def trial(args, arm, directory, profile_config, hermes_environment, wait_r
     fixture = None
     gateway = None
     agent = None
-    managed = None
-    session = None
     started = time.monotonic()
     turns = []
     fixture_url = f"http://127.0.0.1:{args.fixture_port}"
@@ -122,91 +79,58 @@ async def trial(args, arm, directory, profile_config, hermes_environment, wait_r
                 response.raise_for_status()
                 public = response.json()
                 instructions = public["policy"]
-                if arm == "hermes":
-                    profile = directory / "profile"
-                    key = profile_config(
-                        profile, "tau", args.model, "openai-codex", args.port
-                    )
-                    config = json.loads((profile / "config.yaml").read_text())
-                    config["platform_toolsets"]["api_server"] = ["mcp-tau"]
-                    config["agent"]["max_turns"] = args.max_steps
-                    config["terminal"] = {"cwd": str(directory)}
-                    config["mcp_servers"] = {
-                        "tau": {
-                            "command": shutil.which("uv"),
-                            "args": [
-                                "tool",
-                                "run",
-                                "--from",
-                                "uv==0.12.22",
-                                "uv",
-                                "run",
-                                "--project",
-                                str(SOURCE),
-                                "--no-sync",
-                                "python",
-                                str(frozen_helpers / "tau_mcp.py"),
-                                str(directory / "public-fixture.json"),
-                                "--url",
-                                fixture_url,
-                            ],
-                        }
+                profile = directory / "profile"
+                key = profile_config(
+                    profile, "tau", args.model, "openai-codex", args.port
+                )
+                config = json.loads((profile / "config.yaml").read_text())
+                config["platform_toolsets"]["api_server"] = ["mcp-tau"]
+                config["agent"]["max_turns"] = args.max_steps
+                config["terminal"] = {"cwd": str(directory)}
+                config["mcp_servers"] = {
+                    "tau": {
+                        "command": shutil.which("uv"),
+                        "args": [
+                            "tool",
+                            "run",
+                            "--from",
+                            "uv==0.12.22",
+                            "uv",
+                            "run",
+                            "--project",
+                            str(SOURCE),
+                            "--no-sync",
+                            "python",
+                            str(frozen_helpers / "tau_mcp.py"),
+                            str(directory / "public-fixture.json"),
+                            "--url",
+                            fixture_url,
+                        ],
                     }
-                    (profile / "config.yaml").write_text(json.dumps(config))
-                    env = hermes_environment(profile)
-                    env["TERMINAL_CWD"] = str(directory)
-                    gateway_log = stack.enter_context(
-                        (directory / "gateway.log").open("w")
-                    )
-                    gateway = subprocess.Popen(
-                        [*command(), "run", "--no-sync", "hermes", "gateway"],
-                        cwd=SOURCE,
-                        env=env,
-                        stdout=gateway_log,
-                        stderr=subprocess.STDOUT,
-                    )
-                    gateway_client = httpx.AsyncClient(
-                        base_url=f"http://127.0.0.1:{args.port}",
-                        headers={"Authorization": "Bearer " + key},
-                        timeout=30,
-                    )
-                    await wait_ready(gateway_client, gateway)
-                    agent = Agent(
-                        client=gateway_client,
-                        model=args.model,
-                        provider="openai-codex",
-                        instructions=instructions,
-                    )
-                else:
-                    managed = AsyncOpenAI(max_retries=0)
-                    session = await managed.beta.agents.sessions.create(
-                        environment={
-                            "type": "openai_hosted",
-                            "network": {"access": "disabled"},
-                        },
-                        agent={
-                            "model": args.model,
-                            "instructions": instructions,
-                            "tools": [
-                                {"type": "function", **tool} for tool in public["tools"]
-                            ],
-                        },
-                    )
-                    if session.agent.model != args.model:
-                        raise RuntimeError(
-                            f"Managed model differs: {session.agent.model}"
-                        )
-                handlers = {}
-                for tool in public["tools"]:
-
-                    async def handler(arguments, name=tool["name"]):
-                        result = await boundary.post(
-                            "/step", json={"tool": name, "arguments": arguments}
-                        )
-                        result.raise_for_status()
-                        return result.json()["observation"]
-
-                    handlers[tool["name"]] = handler
+                }
+                (profile / "config.yaml").write_text(json.dumps(config))
+                env = hermes_environment(profile)
+                env["TERMINAL_CWD"] = str(directory)
+                gateway_log = stack.enter_context((directory / "gateway.log").open("w"))
+                gateway = subprocess.Popen(
+                    [*command(), "run", "--no-sync", "hermes", "gateway"],
+                    cwd=SOURCE,
+                    env=env,
+                    stdout=gateway_log,
+                    stderr=subprocess.STDOUT,
+                )
+                gateway_client = httpx.AsyncClient(
+                    base_url=f"http://127.0.0.1:{args.port}",
+                    headers={"Authorization": "Bearer " + key},
+                    timeout=30,
+                )
+                await wait_ready(gateway_client, gateway)
+                agent = Agent(
+                    client=gateway_client,
+                    model=args.model,
+                    provider="openai-codex",
+                    instructions=instructions,
+                )
                 observation = public["observation"]
                 for turn in range(args.max_steps):
                     events = []
@@ -216,23 +140,8 @@ async def trial(args, arm, directory, profile_config, hermes_environment, wait_r
                         event_log.write(json.dumps(event) + "\n")
                         event_log.flush()
 
-                    if arm == "hermes":
-                        output = await agent.run(observation, progress)
-                        runtime = agent.last_run
-                    else:
-                        async with asyncio.timeout(300):
-                            output = await managed_turn(
-                                managed,
-                                session,
-                                observation,
-                                handlers,
-                                events,
-                                event_log,
-                            )
-                        runtime = {
-                            "model": session.agent.model,
-                            "provider": "openai-managed",
-                        }
+                    output = await agent.run(observation, progress)
+                    runtime = agent.last_run
                     turns.append(
                         {
                             "turn": turn,
@@ -289,12 +198,6 @@ async def trial(args, arm, directory, profile_config, hermes_environment, wait_r
                 if agent is not None:
                     await agent.close()
                     await gateway_client.aclose()
-                if managed is not None:
-                    try:
-                        if session is not None:
-                            await managed.beta.agents.sessions.delete(session.id)
-                    finally:
-                        await managed.close()
             finally:
                 try:
                     await stop(gateway)
@@ -323,19 +226,11 @@ async def tau_pilot(args, cfg, record, profile_config, hermes_environment, wait_
         "max_steps": args.max_steps,
         "reader_turn_timeout_seconds": 300,
         "trial_timeout_seconds": 1800,
-        "reader_routes": {"hermes": "openai-codex", "managed": "openai-managed"},
-        "managed_environment": {
-            "type": "openai_hosted",
-            "network": {"access": "disabled"},
-        },
-        "managed_sdk_version": version("openai"),
+        "reader_route": "openai-codex",
         "arms": args.arms,
         "trials_per_arm": 1,
         "evaluation": "official AgentGymEnv ALL; custom reader and user models",
-        "native_tool_transport": {
-            "hermes": "MCP 2.0.0 stdio",
-            "managed": "Agents sessions.stream tool_handlers",
-        },
+        "native_tool_transport": "MCP 2.0.0 stdio",
         "source_sha256": {
             path.name: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in source.glob("*.py")

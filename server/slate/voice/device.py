@@ -280,8 +280,6 @@ class LiveCall:
         self.mic: list[tuple[int, int]] = []
         self.reply: list[tuple[int, int]] = []
         self.reply_audio = bytearray()
-        self.said: list[tuple[int, str]] = []
-        self.errors: list[str] = []
         self.reader: asyncio.Task | None = None
 
     async def __aenter__(self) -> Self:
@@ -292,7 +290,6 @@ class LiveCall:
             json.dumps({"live": True}).encode(),
         )
         self.room.on("track_subscribed", self.track_subscribed)
-        self.room.on("data_received", self.data_received)
         try:
             await self.room.connect(
                 self.session["server_url"], self.session["participant_token"]
@@ -302,7 +299,7 @@ class LiveCall:
             publication = await self.room.local_participant.publish_track(
                 track, options
             )
-            await asyncio.wait_for(publication.wait_for_subscription(), timeout=10)
+            await asyncio.wait_for(publication.wait_for_subscription(), timeout=30)
         except BaseException:
             await self.close()
             raise
@@ -330,18 +327,6 @@ class LiveCall:
                 self.reply_audio.extend(chunk)
         finally:
             await stream.aclose()
-
-    def data_received(self, packet: rtc.DataPacket) -> None:
-        if (
-            packet.participant is None
-            or packet.participant.identity != self.session["worker_identity"]
-        ):
-            return
-        event = json.loads(packet.data)
-        if "error" in event:
-            self.errors.append(event["error"])
-        elif packet.topic == REPLY_TOPIC:
-            self.said.append((time.monotonic_ns(), event["text"]))
 
     async def send(self, chunk: bytes) -> None:
         if not chunk or len(chunk) % SAMPLE_BYTES:

@@ -8,10 +8,10 @@ from uuid import uuid4
 
 from livekit import rtc
 
-from slate.agent import create_agent
+from slate.agent import Agent
 from slate.voice.audio import SAMPLE_RATE, read_wav
 from slate.voice.client import speak, transcribe_stream
-from slate.voice.live import LiveSession
+from slate.voice.live import LiveRoom
 from slate.voice.settings import (
     REPLY_TOPIC,
     TRANSCRIPT_TOPIC,
@@ -31,7 +31,7 @@ class VoiceSession:
         self.room_name = f"slate-{self.id}"
         self.device_identity = f"device-{self.id}"
         self.room = rtc.Room()
-        self.agent = create_agent()
+        self.agent = Agent()
         self.speaker = rtc.AudioSource(SAMPLE_RATE, 1, queue_size_ms=100)
         self.closed = False
         self.close_done = asyncio.Event()
@@ -340,7 +340,7 @@ class VoiceSession:
 
 class VoiceSessions:
     def __init__(self) -> None:
-        self.current: VoiceSession | LiveSession | None = None
+        self.current: VoiceSession | LiveRoom | None = None
         self.lock = asyncio.Lock()
 
     async def create(
@@ -351,9 +351,7 @@ class VoiceSessions:
                 raise ValueError("A microphone session is already connected")
             settings = VoiceSettings.from_env()
             session = (
-                LiveSession(settings)
-                if live
-                else VoiceSession(settings, profile=profile)
+                LiveRoom(settings) if live else VoiceSession(settings, profile=profile)
             )
             result = await session.connect()
             self.current = session

@@ -173,59 +173,56 @@ async def run(args: argparse.Namespace) -> None:
     directory = ROOT / CONFIG["tracking"]["raw_runs"] / metadata["profile_id"]
     directory.mkdir(parents=True)
     rows = []
+    arm = "hermes"
     for trial in range(args.repeats):
-        arms = [("hermes", args.hermes_url), ("openai", args.managed_url)]
-        if trial % 2:
-            arms.reverse()
-        for arm, url in arms:
-            started = time.monotonic()
-            entry = {
-                **metadata,
-                "arm": arm,
-                "trial": trial,
-                "at": datetime.now(UTC).isoformat(),
-            }
-            try:
-                result = await simulate_firmware(args.input, url, "left", profile=True)
-                if not result.audio or not any(
-                    value in result.reply.casefold() for value in ("12", "twelve")
-                ):
-                    raise ValueError("Spoken fixture did not return twelve and audio")
-                runtime = result.timings["agent_runtime"]
-                if runtime["model"] != CONFIG["hermes"]["model"]:
-                    raise ValueError("Profile model differs from the pinned comparison")
-                entry.update(
-                    status="passed",
-                    runtime=runtime,
-                    seconds=time.monotonic() - started,
-                    timings=result.timings,
-                    transcript=result.transcript,
-                    reply=result.reply,
-                )
-                entry["metrics"] = summarize(result.timings)
-                (directory / f"{arm}-{trial}.wav").write_bytes(result.audio)
-                rows.append(entry)
-                print(
-                    f"slate.profile: {arm} trial={trial} "
-                    f"end-to-audible={entry['metrics']['end_to_audible_ms']:.1f}ms "
-                    f"agent-ttft={entry['metrics']['agent_ttft_ms']}ms",
-                    flush=True,
-                )
-            except Exception as error:
-                entry.update(
-                    status="failed",
-                    error_type=type(error).__name__,
-                    reason=str(error) if isinstance(error, ValueError) else None,
-                    seconds=time.monotonic() - started,
-                )
-                raise
-            finally:
-                (directory / f"{arm}-{trial}.json").write_text(
-                    json.dumps(entry, indent=2)
-                )
-                append(entry)
+        started = time.monotonic()
+        entry = {
+            **metadata,
+            "arm": arm,
+            "trial": trial,
+            "at": datetime.now(UTC).isoformat(),
+        }
+        try:
+            result = await simulate_firmware(
+                args.input, args.api_url, "left", profile=True
+            )
+            if not result.audio or not any(
+                value in result.reply.casefold() for value in ("12", "twelve")
+            ):
+                raise ValueError("Spoken fixture did not return twelve and audio")
+            runtime = result.timings["agent_runtime"]
+            if runtime["model"] != CONFIG["hermes"]["model"]:
+                raise ValueError("Profile model differs from the pinned comparison")
+            entry.update(
+                status="passed",
+                runtime=runtime,
+                seconds=time.monotonic() - started,
+                timings=result.timings,
+                transcript=result.transcript,
+                reply=result.reply,
+            )
+            entry["metrics"] = summarize(result.timings)
+            (directory / f"{arm}-{trial}.wav").write_bytes(result.audio)
+            rows.append(entry)
+            print(
+                f"slate.profile: {arm} trial={trial} "
+                f"end-to-audible={entry['metrics']['end_to_audible_ms']:.1f}ms "
+                f"agent-ttft={entry['metrics']['agent_ttft_ms']}ms",
+                flush=True,
+            )
+        except Exception as error:
+            entry.update(
+                status="failed",
+                error_type=type(error).__name__,
+                reason=str(error) if isinstance(error, ValueError) else None,
+                seconds=time.monotonic() - started,
+            )
+            raise
+        finally:
+            (directory / f"{arm}-{trial}.json").write_text(json.dumps(entry, indent=2))
+            append(entry)
     summary = {}
-    for arm in ("hermes", "openai"):
+    for arm in ("hermes",):
         group = [entry for entry in rows if entry["arm"] == arm]
         summary[arm] = {
             "all": aggregate(group),
@@ -249,8 +246,7 @@ def main() -> None:
     parser.add_argument(
         "--input", type=Path, default=ROOT / ".local/agent-runs/spoken-input.wav"
     )
-    parser.add_argument("--hermes-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--managed-url", default="http://127.0.0.1:8001")
+    parser.add_argument("--api-url", default="http://127.0.0.1:8000")
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     if args.repeats < 1:

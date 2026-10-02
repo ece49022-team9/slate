@@ -229,7 +229,6 @@ async def live(api_url: str, clips: list[Path], model: str) -> dict:
         "agent_usd": agent_usd,
         "total_usd": agent_usd + live_usd,
         "slate_said": "".join(part["text"] for part in spoken_text).strip(),
-        "live_session": report["session_id"],
     }
 
 
