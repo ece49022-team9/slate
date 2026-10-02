@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 from livekit import api
@@ -71,6 +71,51 @@ class VoiceAccessTests(unittest.TestCase):
         with TestClient(app, client=("127.0.0.1", 1234)) as client:
             response = client.post("/api/voice/sessions", json={"room": "other-room"})
         self.assertEqual(response.status_code, 422)
+
+    def test_profile_option_is_forwarded_and_defaults_to_disabled(self):
+        for body, profile in (
+            ({}, False),
+            ({"profile": False}, False),
+            ({"profile": True}, True),
+        ):
+            with self.subTest(body=body):
+                with TestClient(app, client=("127.0.0.1", 1234)) as client:
+                    voice = Mock(
+                        create=AsyncMock(
+                            return_value={
+                                "session_id": "session-a",
+                                "server_url": "ws://127.0.0.1:7880",
+                                "participant_token": "test-token",
+                                "worker_identity": "worker-a",
+                            }
+                        ),
+                        close=AsyncMock(),
+                    )
+                    app.state.voice = voice
+                    response = client.post("/api/voice/sessions", json=body)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                voice.create.assert_awaited_once_with(profile=profile)
+
+    def test_profile_requires_a_boolean_and_never_admits_extra_fields(self):
+        for body in (
+            {"profile": "true"},
+            {"profile": 1},
+            {"profile": None},
+            {"profile": True, "room": "other-room"},
+        ):
+            with self.subTest(body=body):
+                with TestClient(app, client=("127.0.0.1", 1234)) as client:
+                    voice = Mock(
+                        create=AsyncMock(
+                            side_effect=ValueError("Connection attempted")
+                        ),
+                        close=AsyncMock(),
+                    )
+                    app.state.voice = voice
+                    response = client.post("/api/voice/sessions", json=body)
+                self.assertEqual(response.status_code, 422)
+                voice.create.assert_not_awaited()
 
 
 if __name__ == "__main__":

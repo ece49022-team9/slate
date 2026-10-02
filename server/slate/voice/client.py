@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import aclosing
 
@@ -23,15 +24,24 @@ async def transcribe(pcm: bytes) -> AsyncIterator[str]:
             yield piece
 
 
-async def transcribe_stream(audio: AsyncIterable[bytes]) -> AsyncIterator[str]:
+async def transcribe_stream(
+    audio: AsyncIterable[bytes], *, timings: dict | None = None
+) -> AsyncIterator[str]:
+    marks = {"requested": time.monotonic_ns()} if timings is not None else None
     model = modal.Cls.from_name("slate-stt", "SpeechToText")()
     async with modal.Queue.ephemeral() as incoming, modal.Queue.ephemeral() as outgoing:
-        call = await model.transcribe.spawn.aio(incoming, outgoing)
+        if marks is not None:
+            marks["queues_ready"] = time.monotonic_ns()
+        call = await model.transcribe.spawn.aio(incoming, outgoing, timings is not None)
+        if marks is not None:
+            marks["spawned"] = time.monotonic_ns()
         completed = False
 
         async def wait_for_result() -> None:
             nonlocal completed
-            await call.get.aio()
+            remote = await call.get.aio()
+            if timings is not None:
+                timings["remote"] = remote
             completed = True
 
         async def exchange() -> None:
@@ -45,8 +55,13 @@ async def transcribe_stream(audio: AsyncIterable[bytes]) -> AsyncIterator[str]:
         transfer = asyncio.create_task(exchange())
         try:
             while (piece := await outgoing.get.aio()) is not None:
+                if marks is not None:
+                    marks.setdefault("first_text", time.monotonic_ns())
                 yield piece
             await transfer
+            if marks is not None:
+                marks["completed"] = time.monotonic_ns()
+                timings["client"] = marks
         finally:
             transfer.cancel()
             await asyncio.gather(transfer, return_exceptions=True)
@@ -54,8 +69,15 @@ async def transcribe_stream(audio: AsyncIterable[bytes]) -> AsyncIterator[str]:
                 await call.cancel.aio()
 
 
-async def speak(text: str, max_seconds: int = 15) -> bytes:
+async def speak(
+    text: str, max_seconds: int = 15, *, timings: dict | None = None
+) -> bytes:
+    marks = {"requested": time.monotonic_ns()} if timings is not None else None
     model = modal.Cls.from_name("slate-tts", "TextToSpeech")()
-    audio = await model.speak.remote.aio(text, max_seconds)
+    result = await model.speak.remote.aio(text, max_seconds, timings is not None)
+    audio = result["audio"]
     read_wav(audio)
+    if marks is not None:
+        marks["completed"] = time.monotonic_ns()
+        timings.update(client=marks, remote=result["timings"])
     return audio

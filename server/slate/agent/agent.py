@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from time import monotonic_ns
 from uuid import uuid4
 
 import httpx
@@ -47,7 +48,12 @@ class Agent:
         self.instructions = instructions
         self.run_id: str | None = None
         self.last_run: dict = {}
+        self._timings: dict[str, int] = {}
         self.lock = asyncio.Lock()
+
+    @property
+    def timings(self) -> dict[str, int]:
+        return dict(self._timings)
 
     async def request(self, method: str, path: str, **kwargs) -> dict:
         response = await self.client.request(method, path, **kwargs)
@@ -55,12 +61,18 @@ class Agent:
         return response.json() if response.content else {}
 
     async def run(self, message: str, progress: Progress | None = None) -> str:
+        requested = monotonic_ns()
         async with self.lock:
+            self._timings = {
+                "requested": requested,
+                "lock_acquired": monotonic_ns(),
+            }
             if self.session_id is None:
                 created = await self.request(
                     "POST", "/api/sessions", json={"title": "Slate " + uuid4().hex}
                 )
                 self.session_id = created["session"]["id"]
+            self._timings["session_ready"] = monotonic_ns()
             payload = {
                 "input": message,
                 "session_id": self.session_id,
@@ -73,6 +85,7 @@ class Agent:
             try:
                 created = await asyncio.shield(creation)
                 self.run_id = created["run_id"]
+                self._timings["admitted"] = monotonic_ns()
                 logger.info(
                     "Run %s started: session=%s provider=%s model=%s",
                     self.run_id,
@@ -113,6 +126,7 @@ class Agent:
                                     headers={"Idempotency-Key": key},
                                 )
                             self.run_id = receipt["run_id"]
+                            self._timings.setdefault("admitted", monotonic_ns())
                         if self.run_id:
                             await self.request("POST", f"/v1/runs/{self.run_id}/stop")
                 except Exception:
@@ -127,6 +141,7 @@ class Agent:
                     creation.cancel()
                 await asyncio.gather(creation, return_exceptions=True)
                 self.run_id = None
+                self._timings["completed"] = monotonic_ns()
 
     async def create_run(self, payload: dict, key: str) -> dict:
         for attempt in range(2):
@@ -168,6 +183,22 @@ class Agent:
                             if event_sequence <= sequence:
                                 continue
                             sequence = event_sequence
+                            observed = monotonic_ns()
+                            self._timings.setdefault("first_event", observed)
+                            if (
+                                kind == "message.delta"
+                                and isinstance(event.get("delta"), str)
+                                and event["delta"].strip()
+                            ):
+                                self._timings.setdefault("first_text", observed)
+                                self._timings["last_text"] = observed
+                            if kind in (
+                                "run.completed",
+                                "run.failed",
+                                "run.cancelled",
+                                "run.interrupted",
+                            ):
+                                self._timings.setdefault("terminal", observed)
                             logger.info("Run %s: %s", self.run_id, kind)
                             if progress:
                                 await progress({**event, "type": kind})
@@ -181,6 +212,7 @@ class Agent:
                     "cancelled",
                     "interrupted",
                 ):
+                    self._timings.setdefault("terminal", monotonic_ns())
                     return result
             except httpx.TransportError:
                 logger.warning("Run %s status unavailable; retrying", self.run_id)
