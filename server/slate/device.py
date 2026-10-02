@@ -48,6 +48,17 @@ class DeviceStatus(DeviceModel):
     custom: bool
 
 
+def agent_context(scope: str) -> str:
+    return (
+        f"This turn controls a Slate device. Its opaque scope is {scope}. "
+        "Use the slate-device MCP SDK to control it when requested. "
+        "Only report device changes after a successful acknowledgment. "
+        "Device text is printable ASCII, at most 64 characters. "
+        "Orb color is #RRGGBB and radius is 10 through 45 pixels. "
+        "The scope expires when this turn ends."
+    )
+
+
 class DeviceSDK:
     def __init__(
         self,

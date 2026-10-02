@@ -9,7 +9,7 @@ from uuid import uuid4
 from livekit import rtc
 
 from slate.agent import create_agent
-from slate.device import DeviceCommand, DeviceSDK
+from slate.device import DeviceCommand, DeviceSDK, agent_context
 from slate.voice.audio import SAMPLE_RATE
 from slate.voice.client import speak_stream, transcribe_stream
 from slate.voice.reply import Sentences
@@ -323,17 +323,11 @@ class VoiceSession:
                 complete = True
 
         async def generate() -> str:
-            context = (
-                f"This turn controls a Slate device. Its opaque scope is {turn.scope}. "
-                "Use the slate-device MCP SDK to control it when requested. "
-                "Only report device changes after a successful acknowledgment. "
-                "Device text is printable ASCII, at most 64 characters. "
-                "Orb color is #RRGGBB and radius is 10 through 45 pixels. "
-                "The scope expires when this turn ends."
-            )
             turn.timing.mark("agent_requested")
             async with asyncio.timeout(310):
-                answer = await self.agent.run(text, progress, device_context=context)
+                answer = await self.agent.run(
+                    text, progress, device_context=agent_context(turn.scope)
+                )
             turn.timing.mark("agent_completed")
             if not complete:
                 await progress({"type": "answer.complete", "text": answer})
