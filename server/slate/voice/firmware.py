@@ -80,7 +80,9 @@ async def simulate_firmware(
         timing.mark("board_ready")
         stereo = stereo_pcm(input_file, bench.slot)
         audio = capture(bench.link, channel, len(stereo) // 4, bench.play(stereo))
-        result = await transcribe_audio(audio, api_url, RATE, profile=profile)
+        result = await transcribe_audio(
+            audio, api_url, RATE, profile=profile, device_link=bench.link
+        )
         result.timings["simulator"] = timing.snapshot()
         return result
 
@@ -102,7 +104,7 @@ async def board_firmware(
     try:
         samples = int((seconds + 1.6) * RATE)
         audio = capture(link, channel, samples, speaker(input_file))
-        return await transcribe_audio(audio, api_url, RATE)
+        return await transcribe_audio(audio, api_url, RATE, device_link=link)
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

@@ -43,7 +43,13 @@ class ManagedAgent:
     def timings(self) -> dict[str, int]:
         return dict(self._timings)
 
-    async def run(self, message: str, progress: Progress | None = None) -> str:
+    async def run(
+        self,
+        message: str,
+        progress: Progress | None = None,
+        *,
+        device_context: str | None = None,
+    ) -> str:
         requested = monotonic_ns()
         async with self.lock:
             self._timings = {
@@ -54,6 +60,8 @@ class ManagedAgent:
                 raise RuntimeError("This managed agent has closed")
             if not message.strip():
                 raise ValueError("Agent input must not be empty")
+            if device_context:
+                message = device_context + "\n\nUser request: " + message
             if self._needs_cleanup:
                 await self._discard_session()
                 if self._needs_cleanup:
@@ -95,6 +103,7 @@ class ManagedAgent:
                     self._timings["admitted"] = monotonic_ns()
                     stream.with_result_collection()
                     terminal_turn = False
+                    final_items: set[str] = set()
                     async with stream:
                         async for event in stream:
                             body = event.model_dump(mode="json")
@@ -124,9 +133,30 @@ class ManagedAgent:
                             ):
                                 terminal_turn = True
                                 self._timings.setdefault("terminal", observed)
+                            elif kind == "agent.session.turn.item.added":
+                                item = body["item"]
+                                if (
+                                    self.run_id
+                                    and item.get("turn_id") == self.run_id
+                                    and item["type"] == "message"
+                                    and item.get("role") == "assistant"
+                                    and item.get("phase") == "final_answer"
+                                    and item.get("id")
+                                ):
+                                    final_items.add(item["id"])
                             if kind == "agent.session.failed":
                                 self._timings.setdefault("terminal", observed)
                             await self._progress(body, progress)
+                            if (
+                                progress
+                                and kind == "agent.session.turn.output_text.delta"
+                                and body.get("turn_id") in (None, self.run_id)
+                                and body["item_id"] in final_items
+                                and body["delta"]
+                            ):
+                                await progress(
+                                    {"type": "reply.delta", "delta": body["delta"]}
+                                )
                             if kind == "agent.session.failed" or (
                                 kind == "agent.session.idle" and terminal_turn
                             ):
@@ -151,6 +181,8 @@ class ManagedAgent:
                         if result.turn.usage is not None
                         else None,
                     }
+                    if progress:
+                        await progress({"type": "answer.complete", "text": text})
                     return text
             except BaseException as error:
                 self.last_run = {

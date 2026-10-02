@@ -49,7 +49,7 @@ export default function App() {
     void client.connect()
   }
 
-  const canTalk = state === 'ready' || state === 'starting' || state === 'recording'
+  const canTalk = state === 'ready' || state === 'starting' || state === 'recording' || state === 'transcribing' || state === 'responding'
   const busy = state === 'starting' || state === 'recording' || state === 'transcribing' || state === 'responding'
 
   return (
@@ -92,14 +92,14 @@ export default function App() {
                 void connection.current?.finish()
               }
             }}
-            onBlur={() => { if (state === 'recording') void connection.current?.cancel() }}
+            onBlur={() => { if (state === 'recording' || state === 'starting') void connection.current?.cancel() }}
           >
             {state === 'recording' ? 'Listening…' : 'Talk'}
           </button>
           {busy && <button className="secondary" onClick={() => void connection.current?.cancel()}>Cancel</button>}
           {audioBlocked && <button className="secondary" onClick={() => void connection.current?.enableAudio()}>Enable reply audio</button>}
         </div>
-        <p className="hint">Audio is sent only while you hold Talk. Slate replies through LiveKit after transcription.</p>
+        <p className="hint">Audio is sent only while you hold Talk. Hold Talk during a reply to interrupt it.</p>
         {error && <p role="alert" className="error">{error}</p>}
         {tool && <p role="status">Using {tool}…</p>}
         {approval && (

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from slate.board import ROOT, load
-from slate.link import Link
+from slate.link import BAUD, Link
 
 QEMU = Path(
     os.environ.get(
@@ -170,8 +170,9 @@ class Breadboard:
     def reply(self) -> bytes:
         message = b""
         if self.uart:
-            message += struct.pack("<cH", b"U", len(self.uart)) + self.uart
-            self.uart.clear()
+            size = min(len(self.uart), BAUD * TICK_NS // 10_000_000_000)
+            message += struct.pack("<cH", b"U", size) + self.uart[:size]
+            del self.uart[:size]
         if self.audio:
             self.credit += self.per_tick
             chunk = self.audio[: self.credit]

@@ -15,6 +15,7 @@ from openai.types.beta.agent_session_assistant_message import (
 )
 from openai.types.beta.agent_session_created_event import AgentSessionCreatedEvent
 from openai.types.beta.agent_session_idle_event import AgentSessionIdleEvent
+from openai.types.beta.agent_session_message import AgentSessionMessage
 from openai.types.beta.agent_session_turn_completed_event import (
     AgentSessionTurnCompletedEvent,
 )
@@ -23,6 +24,9 @@ from openai.types.beta.agent_session_turn_created_event import (
 )
 from openai.types.beta.agent_session_turn_failed_event import (
     AgentSessionTurnFailedEvent,
+)
+from openai.types.beta.agent_session_turn_item_added_event import (
+    AgentSessionTurnItemAddedEvent,
 )
 from openai.types.beta.agent_session_turn_item_done_event import (
     AgentSessionTurnItemDoneEvent,
@@ -185,6 +189,149 @@ def client_for(*streams):
 
 
 class ManagedAgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reply_deltas_require_known_final_answer_items_of_the_root_turn(self):
+        items = events()
+        extra = []
+        for index, (phase, turn_id, delta) in enumerate(
+            [
+                ("commentary", "turn-a", "I'll use tools."),
+                (None, "turn-a", "Unclassified"),
+                ("final_answer", "turn-child", "Child answer"),
+                ("final_answer", "turn-a", "Final"),
+            ]
+        ):
+            item_id = "message-1" if index == 3 else f"extra-message-{index}"
+            extra.extend(
+                [
+                    AgentSessionTurnItemAddedEvent.model_construct(
+                        type="agent.session.turn.item.added",
+                        event_id=f"added-{index}",
+                        session_id="sess-a",
+                        turn_id=turn_id,
+                        output_index=index,
+                        item=AgentSessionMessage(
+                            id=item_id,
+                            type="message",
+                            role="assistant",
+                            turn_id=turn_id,
+                            phase=phase,
+                            status="in_progress",
+                            content=[],
+                        ),
+                    ),
+                    AgentSessionTurnOutputTextDeltaEvent(
+                        type="agent.session.turn.output_text.delta",
+                        event_id=f"delta-{index}",
+                        session_id="sess-a",
+                        turn_id=turn_id,
+                        item_id=item_id,
+                        output_index=index,
+                        content_index=0,
+                        delta=delta,
+                    ),
+                ]
+            )
+        extra.append(
+            AgentSessionTurnOutputTextDeltaEvent(
+                type="agent.session.turn.output_text.delta",
+                event_id="final-space",
+                session_id="sess-a",
+                turn_id="turn-a",
+                item_id="message-1",
+                output_index=3,
+                content_index=0,
+                delta=" ",
+            )
+        )
+        extra.append(
+            AgentSessionTurnOutputTextDeltaEvent(
+                type="agent.session.turn.output_text.delta",
+                event_id="final-tail",
+                session_id="sess-a",
+                turn_id="turn-a",
+                item_id="message-1",
+                output_index=3,
+                content_index=0,
+                delta="answer",
+            )
+        )
+        items[3:3] = extra
+        progress = AsyncMock()
+        client = client_for(FakeStream(items), FakeStream(events()[1:]))
+        agent = ManagedAgent(client=client)
+        self.assertEqual(
+            await agent.run("Change it", progress, device_context="scope=current"),
+            "Final answer",
+        )
+        replies = [
+            call.args[0]
+            for call in progress.await_args_list
+            if call.args[0]["type"] in ("reply.delta", "answer.complete")
+        ]
+        self.assertEqual(
+            replies,
+            [
+                {"type": "reply.delta", "delta": "Final"},
+                {"type": "reply.delta", "delta": " "},
+                {"type": "reply.delta", "delta": "answer"},
+                {"type": "answer.complete", "text": "Final answer"},
+            ],
+        )
+        submitted = client.beta.agents.sessions.create.call_args.kwargs
+        self.assertIn("scope=current", submitted["input"])
+        self.assertTrue(submitted["input"].endswith("Change it"))
+        self.assertNotIn("scope=current", submitted["agent"]["instructions"])
+        await agent.run("Again")
+        self.assertEqual(
+            client.beta.agents.sessions.stream.call_args.kwargs["input"], "Again"
+        )
+        await agent.close()
+
+    async def test_reply_callback_failure_cancels_the_remote_turn(self):
+        items = events()
+        message = AgentSessionMessage(
+            id="message-1",
+            type="message",
+            role="assistant",
+            turn_id="turn-a",
+            phase="final_answer",
+            status="in_progress",
+            content=[],
+        )
+        items[3:3] = [
+            AgentSessionTurnItemAddedEvent.model_construct(
+                type="agent.session.turn.item.added",
+                event_id="added-final",
+                session_id="sess-a",
+                turn_id="turn-a",
+                output_index=1,
+                item=message,
+            ),
+            AgentSessionTurnOutputTextDeltaEvent(
+                type="agent.session.turn.output_text.delta",
+                event_id="delta-final",
+                session_id="sess-a",
+                turn_id="turn-a",
+                item_id="message-1",
+                output_index=1,
+                content_index=0,
+                delta="Final",
+            ),
+        ]
+        client = client_for(FakeStream(items))
+        agent = ManagedAgent(client=client)
+
+        async def progress(event):
+            if event["type"] == "reply.delta":
+                raise ConnectionError("Reply sink closed")
+
+        with self.assertRaisesRegex(ConnectionError, "Reply sink closed"):
+            await agent.run("Hello", progress)
+        client.beta.agents.sessions.events.create.assert_awaited_once()
+        client.beta.agents.sessions.delete.assert_awaited_once()
+        self.assertIsNone(agent.session_id)
+        await agent.close()
+
     async def test_timings_use_root_visible_deltas_not_reasoning_done_or_subagents(
         self,
     ):
@@ -245,7 +392,8 @@ class ManagedAgentTests(unittest.IsolatedAsyncioTestCase):
         agent = ManagedAgent(client=client)
 
         async def progress(event):
-            snapshots[event["event_id"]] = agent.timings
+            if "event_id" in event:
+                snapshots[event["event_id"]] = agent.timings
 
         await agent.run("Hello", progress)
         measured = agent.timings

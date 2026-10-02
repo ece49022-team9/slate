@@ -28,7 +28,19 @@ def summarize(timings: dict) -> dict[str, float | None]:
     agent = timings["agent"]
     simulator = timings["simulator"]["marks_ns"]
     stt = timings["stt"]["remote"]
-    tts = timings["tts"]["remote"]
+    segments = timings["tts"]["segments"]
+    first_segment = segments[0] if segments else {}
+    tts = first_segment.get("remote", {})
+    tts_client = first_segment.get("client", {})
+    local = {
+        "end": dm.get("end_requested"),
+        "stt_ready": sm.get("stt_completed"),
+        "agent_first_text": agent.get("first_text"),
+        "tts_requested": sm.get("tts_requested"),
+        "first_pcm": sm.get("tts_first_audio"),
+        "first_enqueue": sm.get("reply_first_enqueue"),
+        "audible": dm.get("reply_first_audible"),
+    }
     result = {
         "firmware_build_ms": milliseconds(
             simulator, "build_requested", "build_completed"
@@ -55,62 +67,66 @@ def summarize(timings: dict) -> dict[str, float | None]:
         "agent_last_text_to_terminal_ms": milliseconds(agent, "last_text", "terminal"),
         "agent_terminal_to_completed_ms": milliseconds(agent, "terminal", "completed"),
         "agent_total_ms": milliseconds(sm, "agent_requested", "agent_completed"),
-        "agent_to_tts_ms": milliseconds(sm, "agent_completed", "tts_requested"),
+        "agent_first_text_to_tts_request_ms": milliseconds(
+            local, "agent_first_text", "tts_requested"
+        ),
+        "agent_first_text_to_first_pcm_ms": milliseconds(
+            local, "agent_first_text", "first_pcm"
+        ),
         "tts_total_ms": milliseconds(sm, "tts_requested", "tts_completed"),
-        "tts_generate_ms": tts.get("generate_ms"),
-        "tts_first_token_ms": tts.get("first_token_ms"),
-        "tts_preprocess_ms": tts.get("preprocess_ms"),
-        "tts_postprocess_ms": tts.get("postprocess_ms"),
+        "tts_request_to_first_pcm_ms": milliseconds(
+            sm, "tts_requested", "tts_first_audio"
+        ),
+        "tts_first_pcm_to_enqueue_ms": milliseconds(
+            sm, "tts_first_audio", "reply_first_enqueue"
+        ),
+        "tts_first_segment_generate_ms": tts.get("generate_ms"),
+        "tts_first_segment_first_token_ms": tts.get("first_token_ms"),
+        "tts_first_segment_first_pcm_ms": tts.get("first_pcm_ms"),
+        "tts_first_segment_preprocess_ms": tts.get("preprocess_ms"),
+        "tts_first_segment_codec_decode_ms": tts.get("codec_decode_ms"),
+        "tts_first_segment_pcm_encode_cpu_ms": tts.get("pcm_encode_cpu_ms"),
+        "tts_first_segment_queue_put_ms": tts.get("queue_put_ms"),
+        "tts_first_segment_remote_total_ms": tts.get("remote_total_ms"),
+        "tts_first_segment_client_total_ms": milliseconds(
+            tts_client, "requested", "completed"
+        ),
+        "tts_first_segment_client_first_pcm_ms": milliseconds(
+            tts_client, "requested", "first_pcm"
+        ),
+        "tts_first_segment_queue_setup_ms": milliseconds(
+            tts_client, "requested", "queues_ready"
+        ),
         "stt_model_load_ms": stt.get("model_load_ms"),
         "tts_model_load_ms": tts.get("model_load_ms"),
         "stt_model_age_ms": stt.get("model_age_ms"),
         "tts_model_age_ms": tts.get("model_age_ms"),
-        "tts_remote_total_ms": tts.get("remote_total_ms"),
         "stt_queue_setup_ms": milliseconds(
             timings["stt"]["client"], "requested", "queues_ready"
         )
         if "client" in timings["stt"]
         else None,
     }
-    local = {
-        "end": dm.get("end_requested"),
-        "stt_ready": sm.get("stt_completed"),
-        "tts_ready": sm.get("tts_completed"),
-    }
-    if "reply_first_audible" in dm:
-        local["audible"] = dm["reply_first_audible"]
     result["end_to_stt_ms"] = milliseconds(local, "end", "stt_ready")
-    result["tts_to_audible_ms"] = milliseconds(local, "tts_ready", "audible")
+    result["end_to_agent_first_text_ms"] = milliseconds(
+        local, "end", "agent_first_text"
+    )
+    result["end_to_first_pcm_ms"] = milliseconds(local, "end", "first_pcm")
+    result["tts_first_pcm_to_audible_ms"] = milliseconds(local, "first_pcm", "audible")
+    result["reply_enqueue_to_audible_ms"] = milliseconds(
+        local, "first_enqueue", "audible"
+    )
     result["end_to_audible_ms"] = milliseconds(local, "end", "audible")
-    generate = result["tts_generate_ms"]
-    first = result["tts_first_token_ms"]
-    result["tts_after_first_token_ms"] = (
-        generate - first if generate is not None and first is not None else None
-    )
-    result["tts_outside_generate_ms"] = (
-        result["tts_total_ms"] - generate
-        if generate is not None and result["tts_total_ms"] is not None
-        else None
-    )
-    result["tts_transport_startup_ms"] = (
-        result["tts_total_ms"] - result["tts_remote_total_ms"]
-        if result["tts_total_ms"] is not None
-        and result["tts_remote_total_ms"] is not None
-        else None
-    )
-    exclusions = [
-        result["agent_text_delivery_ms"],
-        result["tts_after_first_token_ms"],
-        result["stt_tail_after_first_text_ms"],
-    ]
-    observed = result["end_to_audible_ms"]
-    result["retained_ttft_ms"] = (
-        observed - sum(exclusions)
-        if observed is not None and all(value is not None for value in exclusions)
-        else None
-    )
+    generated = tts.get("generate_ms")
+    token = tts.get("first_token_ms")
+    pcm = tts.get("first_pcm_ms")
+    if (
+        generated is not None
+        and any(value is not None and value > generated for value in (token, pcm))
+    ) or (token is not None and pcm is not None and token > pcm):
+        raise ValueError("Profile contains reversed remote generation endpoints")
     if any(value is not None and value < 0 for value in result.values()):
-        raise ValueError("Profile contains negative or overlapping duration estimates")
+        raise ValueError("Profile contains negative durations")
     return result
 
 
@@ -163,9 +179,16 @@ async def run(args: argparse.Namespace) -> None:
             for path in sources
         },
         "definition": (
-            "end-to-audible starts after microphone playout drains; retained_ttft "
-            "subtracts observed agent first-to-last text delivery, CSM generation "
-            "after first acoustic token, and STT tail decode after first text. "
+            "end-to-audible spans drained microphone input to the first received "
+            "non-silent PCM at the simulator host, not physical speaker output. "
+            "Agent text, CSM generation, decoding and playback can overlap; no "
+            "inference span is subtracted from observed latency. First PCM and "
+            "enqueue-to-non-silent receipt use same-host marks. This includes "
+            "leading synthesized silence; untagged LiveKit silence frames are "
+            "not identified as generated speech. TTS remote and client metrics "
+            "describe the first segment; token and PCM offsets start at remote "
+            "generation, and an acoustic codebook frame is not playable audio. "
+            "Model age/load also describe the first TTS segment. "
             "Agent TTFT includes opaque provider queue, prefill and reasoning. "
             "Cross-host timestamps are never subtracted."
         ),

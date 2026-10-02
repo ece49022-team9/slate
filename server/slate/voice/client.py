@@ -81,3 +81,49 @@ async def speak(
         marks["completed"] = time.monotonic_ns()
         timings.update(client=marks, remote=result["timings"])
     return audio
+
+
+async def speak_stream(
+    text: str, max_seconds: int = 15, *, timings: dict | None = None
+) -> AsyncIterator[bytes]:
+    marks = {"requested": time.monotonic_ns()} if timings is not None else None
+    model = modal.Cls.from_name("slate-tts", "TextToSpeech")()
+    async with modal.Queue.ephemeral() as outgoing:
+        if marks is not None:
+            marks["queues_ready"] = time.monotonic_ns()
+        call = await model.speak_stream.spawn.aio(
+            text, outgoing, max_seconds, timings is not None
+        )
+        if marks is not None:
+            marks["spawned"] = time.monotonic_ns()
+        completed = False
+
+        async def wait_for_result() -> None:
+            nonlocal completed
+            try:
+                remote = await call.get.aio()
+                completed = True
+                if timings is not None:
+                    timings["remote"] = remote
+            finally:
+                await outgoing.put.aio(None)
+
+        transfer = asyncio.create_task(wait_for_result())
+        try:
+            while (pcm := await outgoing.get.aio()) is not None:
+                if not isinstance(pcm, bytes) or not pcm or len(pcm) % 2:
+                    raise RuntimeError("slate.tts: invalid streamed PCM chunk")
+                if marks is not None:
+                    marks.setdefault("first_pcm", time.monotonic_ns())
+                yield pcm
+            await transfer
+            if marks is not None:
+                marks["completed"] = time.monotonic_ns()
+                timings["client"] = marks
+        finally:
+            try:
+                if not completed:
+                    await call.cancel.aio()
+            finally:
+                transfer.cancel()
+                await asyncio.gather(transfer, return_exceptions=True)

@@ -60,7 +60,13 @@ class Agent:
         response.raise_for_status()
         return response.json() if response.content else {}
 
-    async def run(self, message: str, progress: Progress | None = None) -> str:
+    async def run(
+        self,
+        message: str,
+        progress: Progress | None = None,
+        *,
+        device_context: str | None = None,
+    ) -> str:
         requested = monotonic_ns()
         async with self.lock:
             self._timings = {
@@ -76,7 +82,11 @@ class Agent:
             payload = {
                 "input": message,
                 "session_id": self.session_id,
-                "instructions": self.instructions,
+                "instructions": (
+                    self.instructions + "\n\n" + device_context
+                    if device_context
+                    else self.instructions
+                ),
                 "provider": self.provider,
                 "model": self.model,
             }
@@ -110,6 +120,8 @@ class Agent:
                     text = (result.get("output") or "").strip()
                     if not text:
                         raise RuntimeError("Hermes completed without a spoken reply")
+                    if progress:
+                        await progress({"type": "answer.complete", "text": text})
                     return text
             except BaseException:
                 try:

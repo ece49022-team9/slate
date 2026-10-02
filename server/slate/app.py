@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from slate.device import router as device_router
 from slate.health import router as health_router
 from slate.voice.routes import router as voice_router
 from slate.voice.session import VoiceSessions
@@ -24,3 +25,4 @@ app = FastAPI(
 )
 app.include_router(health_router, prefix="/api")
 app.include_router(voice_router, prefix="/api")
+app.include_router(device_router, prefix="/api")
