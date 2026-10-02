@@ -591,7 +591,7 @@ class AgentRuntimeTests(unittest.TestCase):
         config = {"gateway": {"api_server": {"key": "existing-credential"}}}
         with patch("slate.agent.runtime.shutil.which", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "Slate device MCP requires uv"):
-                agent_runtime.configure_device_tools(config)
+                agent_runtime.configure_tools(config)
         self.assertEqual(
             config, {"gateway": {"api_server": {"key": "existing-credential"}}}
         )
@@ -613,10 +613,11 @@ class AgentRuntimeTests(unittest.TestCase):
                 {"SLATE_DEVICE_MODE": "monty", "MODAL_PROFILE": "slate-test"},
             ),
         ):
-            agent_runtime.configure_device_tools(config)
-            agent_runtime.configure_device_tools(config)
+            agent_runtime.configure_tools(config)
+            agent_runtime.configure_tools(config)
         self.assertEqual(config["gateway"]["api_server"]["key"], "existing-credential")
         self.assertEqual(config["mcp_servers"]["other"], {"command": "other-program"})
+        self.assertEqual(config["tools"]["tool_search"], {"enabled": "off"})
         self.assertEqual(
             config["platform_toolsets"]["api_server"],
             ["memory", "browser", "mcp-slate-device"],

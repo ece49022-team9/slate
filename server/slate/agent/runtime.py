@@ -28,7 +28,7 @@ def command() -> list[str]:
     return ["uv", "tool", "run", "--from", f"uv=={settings()['uv_version']}", "uv"]
 
 
-def configure_device_tools(config: dict) -> None:
+def configure_tools(config: dict) -> None:
     uv = shutil.which("uv")
     if uv is None:
         raise RuntimeError("Slate device MCP requires uv on PATH")
@@ -54,6 +54,7 @@ def configure_device_tools(config: dict) -> None:
         SLATE_DEVICE_MODE=os.getenv("SLATE_DEVICE_MODE", "monty"),
         SLATE_DEVICE_URL=os.getenv("SLATE_DEVICE_URL", "http://127.0.0.1:8000"),
     )
+    config.setdefault("tools", {}).setdefault("tool_search", {})["enabled"] = "off"
     if profile := os.getenv("MODAL_PROFILE"):
         server["env"]["MODAL_PROFILE"] = profile
 
@@ -138,7 +139,7 @@ def setup() -> None:
     config = {
         "model": {"default": cfg["model"], "provider": cfg["provider"]},
         "platform_toolsets": {"api_server": ["memory", "session_search", "browser"]},
-        "agent": {"max_turns": 15},
+        "agent": {"max_turns": "unlimited"},
         "browser": {"backend": "off"},
         "gateway": {
             "api_server": {
@@ -150,7 +151,7 @@ def setup() -> None:
         },
         "auth": {"adopt_external_logins": False},
     }
-    configure_device_tools(config)
+    configure_tools(config)
     (PROFILE / "config.yaml").write_text(json.dumps(config, indent=2))
     subprocess.run(
         [*command(), "run", "--no-sync", "hermes", "pm", "install", "agent-browser"],
@@ -174,7 +175,7 @@ def main() -> None:
     if args.command == "start":
         config_path = PROFILE / "config.yaml"
         config = json.loads(config_path.read_text())
-        configure_device_tools(config)
+        configure_tools(config)
         config_path.write_text(json.dumps(config, indent=2))
     hermes_args = (
         ["gateway"] if args.command == "start" else ["auth", "add", "openai-codex"]

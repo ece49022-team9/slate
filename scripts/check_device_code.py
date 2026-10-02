@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @asynccontextmanager
-async def device_http(voice):
+async def device_http(voice, *, proxy_headers: bool = True):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.state.voice = voice
@@ -29,7 +29,9 @@ async def device_http(voice):
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
         server = uvicorn.Server(
-            uvicorn.Config(app, log_level="warning", lifespan="off")
+            uvicorn.Config(
+                app, log_level="warning", lifespan="off", proxy_headers=proxy_headers
+            )
         )
         task = asyncio.create_task(server.serve(sockets=[listener]))
         try:

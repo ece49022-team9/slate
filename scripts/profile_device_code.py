@@ -9,14 +9,16 @@ import socket
 import statistics
 import subprocess
 import sys
-import time
+import tempfile
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+import device_code_bench
 import httpx
 from check_device_code import device_http
+from device_code_bench import code_status, matches, program, task, timed
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from slate.agent.agent import Agent
@@ -33,7 +35,6 @@ from slate.device import DeviceSDK, FirmwareDevice, agent_context
 MODES = ("tools", "modal", "monty")
 HERMES_URL = "http://127.0.0.1:8642"
 AGENT_LOG = ROOT / ".local/hermes-home/logs/agent.log"
-COLORS = ("#0000ff", "#ff8800", "#00ff00", "#ff00ff", "#00ffff", "#ffff00")
 SOURCES = (
     "server/slate/device.py",
     "server/slate/agent/code_mode.py",
@@ -41,41 +42,8 @@ SOURCES = (
     "server/slate/agent/runtime.py",
     "firmware/main/main.cpp",
     "scripts/profile_device_code.py",
+    "scripts/device_code_bench.py",
 )
-
-
-def task(index: int) -> SimpleNamespace:
-    return SimpleNamespace(
-        color=COLORS[index % len(COLORS)], radius=12 + index % 30, label=f"T{index}"
-    )
-
-
-def program(work: SimpleNamespace) -> str:
-    return (
-        f"orb = await device.set_orb('{work.color}', {work.radius})\n"
-        f"text = await device.show_text('{work.label}')\n"
-        "status = await device.get_status()\n[orb, text, status]"
-    )
-
-
-def matches(status: dict, work: SimpleNamespace) -> bool:
-    return (status["color"].lower(), status["radius"], status["text"]) == (
-        work.color,
-        work.radius,
-        work.label,
-    )
-
-
-def code_status(result: dict) -> dict:
-    if result.get("status") != "completed":
-        raise RuntimeError(f"slate.profile: code execution failed: {result}")
-    return result["result"][2]
-
-
-async def timed(work) -> tuple[float, object]:
-    started = time.perf_counter_ns()
-    result = await work
-    return (time.perf_counter_ns() - started) / 1_000_000, result
 
 
 def quantiles(values: list[float]) -> dict:
@@ -94,7 +62,10 @@ def quantiles(values: list[float]) -> dict:
 @asynccontextmanager
 async def device_fixture():
     voice = SimpleNamespace(current=None)
-    async with breadboard() as bench, device_http(voice) as url:
+    async with (
+        breadboard() as bench,
+        device_http(voice, proxy_headers=False) as url,
+    ):
         turn = SimpleNamespace(scope=uuid4().hex, id=uuid4().hex)
         peer = FirmwareDevice(bench.link, lambda: turn.id)
         commands = []
@@ -310,10 +281,16 @@ async def hermes(mode: str, fixture, log_path):
                 await asyncio.sleep(0.2)
 
 
-def hermes_trace(session_id: str) -> dict:
+def hermes_trace(session_id: str, offset: int) -> dict:
     marker = f"[{session_id}]"
     calls, tools, ended = [], [], None
-    for line in AGENT_LOG.read_text(errors="replace").splitlines():
+    text = AGENT_LOG.read_bytes()
+    recent = text[offset:] if len(text) >= offset else text
+    foreign = sorted(
+        set(re.findall(rb"conversation turn: session=(\S+)", recent))
+        - {session_id.encode()}
+    )
+    for line in recent.decode(errors="replace").splitlines():
         if marker not in line:
             continue
         if match := re.search(r"API call #\d+: .* latency=([\d.]+)s", line):
@@ -322,7 +299,12 @@ def hermes_trace(session_id: str) -> dict:
             tools.append({"name": match[1], "seconds": float(match[2])})
         elif match := re.search(r"api_calls=(\d+)/\d+ .* tool_turns=(\d+)", line):
             ended = {"api_calls": int(match[1]), "tool_turns": int(match[2])}
-    return {"model_call_seconds": calls, "tool_calls": tools, "turn": ended}
+    return {
+        "model_call_seconds": calls,
+        "tool_calls": tools,
+        "turn": ended,
+        "foreign_sessions": [name.decode() for name in foreign],
+    }
 
 
 async def agent_turn(fixture, work) -> dict:
@@ -333,6 +315,7 @@ async def agent_turn(fixture, work) -> dict:
     )
     agent = Agent()
     before = len(fixture.commands)
+    offset = AGENT_LOG.stat().st_size
     try:
         elapsed, reply = await timed(
             agent.run(prompt, device_context=agent_context(fixture.turn.scope))
@@ -354,7 +337,7 @@ async def agent_turn(fixture, work) -> dict:
         if first_text
         else None,
         "usage": run.get("usage"),
-        **hermes_trace(run["session_id"]),
+        **hermes_trace(run["session_id"], offset),
     }
 
 
@@ -375,7 +358,8 @@ async def run_agent(args, fixture, directory) -> list[dict]:
                     f"slate.profile: agent/{mode} block={block} trial={trial} "
                     f"ms={row.get('ms', 0):.0f} "
                     f"calls={(row.get('turn') or {}).get('api_calls')} "
-                    f"correct={row.get('correct')}",
+                    f"correct={row.get('correct')} "
+                    f"overlap={bool(row.get('foreign_sessions'))}",
                     flush=True,
                 )
                 rows.append(
@@ -402,6 +386,9 @@ def summarize(rows: list[dict]) -> dict:
         }
         if arm.startswith("agent/"):
             turns = [row["turn"] for row in timed_rows if row.get("turn")]
+            clean = [row for row in timed_rows if not row.get("foreign_sessions")]
+            entry["overlapped"] = len(timed_rows) - len(clean)
+            entry["clean"] = quantiles([row["ms"] for row in clean])
             entry["median_model_calls"] = (
                 statistics.median(turn["api_calls"] for turn in turns)
                 if turns
@@ -440,6 +427,53 @@ def summarize(rows: list[dict]) -> dict:
     return summary
 
 
+@asynccontextmanager
+async def tunnel(url: str):
+    config = tempfile.NamedTemporaryFile(suffix=".yml")
+    process = await asyncio.create_subprocess_exec(
+        "cloudflared",
+        "tunnel",
+        "--config",
+        config.name,
+        "--no-autoupdate",
+        "--url",
+        url,
+        stdout=subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    found: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+
+    async def drain() -> None:
+        while line := await process.stderr.readline():
+            match = re.search(rb"https://[a-z0-9-]+\.trycloudflare\.com", line)
+            if match and not found.done():
+                found.set_result(match[0].decode())
+        if not found.done():
+            found.set_exception(RuntimeError("slate.profile: tunnel exited early"))
+
+    reader = asyncio.create_task(drain())
+    try:
+        yield await asyncio.wait_for(found, 30)
+    finally:
+        process.terminate()
+        await process.wait()
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions=True)
+        config.close()
+
+
+async def run_modal(args, fixture) -> list[dict]:
+    rows = []
+    async with device_code_bench.app.run():
+        profile = device_code_bench.remote_profile.remote.aio
+        rows += await profile(None, "stub", args.rounds, args.warmup, args.cold)
+        async with tunnel(fixture.url) as public:
+            rows += await profile(
+                public, fixture.turn.scope, args.rounds, args.warmup, args.cold
+            )
+    return rows
+
+
 async def run(args) -> None:
     profile_id = uuid4().hex
     directory = ROOT / ".local/agent-runs" / profile_id
@@ -448,6 +482,8 @@ async def run(args) -> None:
     async with device_fixture() as fixture:
         if args.layer in ("exec", "all"):
             rows += await run_exec(args, fixture)
+        if args.layer in ("modal", "all"):
+            rows += await run_modal(args, fixture)
         if args.layer in ("agent", "all"):
             rows += await run_agent(args, fixture, directory)
     summary = summarize(rows)
@@ -479,7 +515,10 @@ async def run(args) -> None:
             "One composed device task: set_orb, show_text, get_status against QEMU "
             "firmware over the fixture HTTP device route. exec/* times the runtime "
             "call in-process; mcp/* adds the stdio MCP boundary Hermes uses; "
-            "agent/* is a full Hermes turn with a fresh session. Code-mode arms "
+            "agent/* is a full Hermes turn with a fresh session. modal-* runs "
+            "Monty in-process inside a Modal container, timed there: modal-stub "
+            "uses an in-container fake device, modal-qemu reaches the fixture "
+            "device route over a public tunnel. Code-mode arms "
             "include their scope status preflight. QEMU runs unpaced, so firmware "
             "round trips are emulator time, not LiveKit RPC or physical hardware."
         ),
@@ -492,7 +531,9 @@ async def run(args) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--layer", choices=("exec", "agent", "all"), default="exec")
+    parser.add_argument(
+        "--layer", choices=("exec", "modal", "agent", "all"), default="exec"
+    )
     parser.add_argument("--rounds", type=int, default=30)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--cold", type=int, default=5)
