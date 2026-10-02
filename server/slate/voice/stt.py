@@ -28,7 +28,7 @@ REVISION = "1c34c6b4f7e9299bb61985f145052ff131005dde"
 
 @app.cls(
     image=image,
-    gpu="L4",
+    gpu=["L4", "A10", "L40S"],
     volumes={"/models": cache},
     max_containers=1,
     scaledown_window=60,

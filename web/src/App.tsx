@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { VoiceConnection, type VoiceState } from './voice'
+import { VoiceConnection, type Approval, type VoiceState } from './voice'
 
 const labels: Record<VoiceState, string> = {
   offline: 'Microphone disconnected',
@@ -8,7 +8,7 @@ const labels: Record<VoiceState, string> = {
   starting: 'Opening microphone…',
   recording: 'Listening',
   transcribing: 'Finishing the transcript…',
-  responding: 'Speaking…',
+  responding: 'Working on your request…',
 }
 
 export default function App() {
@@ -19,6 +19,8 @@ export default function App() {
   const [reply, setReply] = useState('')
   const [audioBlocked, setAudioBlocked] = useState(false)
   const [error, setError] = useState('')
+  const [tool, setTool] = useState('')
+  const [approval, setApproval] = useState<Approval>()
 
   useEffect(() => {
     const cancel = () => {
@@ -39,7 +41,10 @@ export default function App() {
     const client = new VoiceConnection(setState, (text, done) => {
       setTranscript(text)
       setFinal(done)
-    }, setReply, setAudioBlocked, setError)
+    }, setReply, setAudioBlocked, setError, (name, request) => {
+      setTool(name)
+      setApproval(request)
+    })
     connection.current = client
     void client.connect()
   }
@@ -96,6 +101,15 @@ export default function App() {
         </div>
         <p className="hint">Audio is sent only while you hold Talk. Slate replies through LiveKit after transcription.</p>
         {error && <p role="alert" className="error">{error}</p>}
+        {tool && <p role="status">Using {tool}…</p>}
+        {approval && (
+          <section aria-label="Tool approval">
+            <p>Allow this tool request?</p>
+            <pre>{approval.command}</pre>
+            <button onClick={() => void connection.current?.approve(approval, 'once')}>Allow once</button>
+            <button className="secondary" onClick={() => void connection.current?.approve(approval, 'deny')}>Deny</button>
+          </section>
+        )}
       </section>
       <section aria-label="Reply" className="transcript">
         <h2>Slate</h2>

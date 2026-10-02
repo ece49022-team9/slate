@@ -24,15 +24,62 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), [Node 24]
 make setup
 ```
 
-Run `make livekit`, `make server`, and `make web` in separate terminals.
+Run `make livekit`, `make agent`, `make server`, and `make web` in separate terminals after the agent setup below.
 
 Open [localhost:5173](http://127.0.0.1:5173), connect your microphone, and hold Talk. Release it to finish; Cancel discards the recording. The page shows the transcript and Slate's reply and plays the reply over LiveKit.
 
 `make check` runs lint, formatting, tests and the web build. [API docs](http://127.0.0.1:8000/api/docs) come from the backend.
 
+## Agent
+
+Slate owns the voice connection, cancellation, and approval UI. Hermes owns the tool loop, session search, and persistent memory. Its source and dependencies are pinned in [experiments/agent.toml](experiments/agent.toml); upstream code lives in the ignored `.local/hermes` cache.
+
+```sh
+make agent-setup
+make agent-login
+make browser
+make agent
+```
+
+`make agent-login` authorizes a private Hermes profile. Credentials and memory stay in `.local/hermes-home`; do not commit it. `make browser` starts our own headless Chromium in a Modal sandbox, with authenticated CDP. Start the browser before Hermes, or restart Hermes after creating a new sandbox. `make browser-stop` terminates it. The sandbox expires after 30 minutes; the command reports errors rather than silently selecting another browser.
+
+With LiveKit and the Slate server running:
+
+```sh
+make agent-check   # exact model/provider route and conversation recall
+make agent-e2e     # browser form, cross-session memory, simulated spoken turn
+make agent-status # latest receipts
+```
+
+The browser check reads a random code from a synthetic page, fills its form, and checks the resulting DOM independently. The memory check creates and removes a synthetic preference. The voice check feeds a shared WAV through QEMU's mic, the firmware's PCM stream, LiveKit, Kyutai, the agent, CSM, and the returned LiveKit audio. Reply WAVs and detailed traces stay in `.local/agent-runs`.
+
+To compare the managed OpenAI Agents API, run `make server-managed` in another terminal, then `make agent-managed`. The server uses port 8001 and obtains its key with `doppler run`. Managed browser tests use OpenAI's hosted desktop; Hermes uses our Modal browser. These are capability checks, not a controlled harness ranking. The voice comparison reuses the same input WAV.
+
+`SLATE_HARNESS=hermes|openai` selects the backend. `SLATE_MODEL` selects the requested model; `SLATE_PROVIDER` selects Hermes's provider. Authorize that provider in the Hermes profile before changing it, and set the same model/provider on Hermes and the Slate server. For an API-key provider, start Hermes with `doppler run -- make agent` and those environment variables. Each completed run checks the observed route and rejects an unexpected fallback. API-compatible providers can be tested through upstream Hermes; model/tool compatibility still needs its own evaluation.
+
+This is a local, single-user experiment. A new conversation does not isolate Hermes's persistent memory from other conversations in the same profile. Account isolation and enrollment need separate profiles before this serves multiple people.
+
+## Evaluations
+
+[experiments/progress.jsonl](experiments/progress.jsonl) is the append-only experiment log. It includes failures, source revisions, protocol identifiers, and denominators. Raw traces are private and ignored. Smoke checks and benchmark scores have separate scopes.
+
+We use two external suites:
+
+- [Sierra's τ benchmark](https://github.com/sierra-research/tau2-bench): policy-following, multi-turn task execution, and verified tool/state outcomes. The pinned repository now calls its protocol τ³; start with its airline text tasks. Retail references need auditing because upstream issue 499 reports incorrect expected results.
+- [LongMemEval](https://github.com/xiaowu0162/LongMemEval): recall across timestamped conversations, updates, reasoning, and abstention. Use the cleaned V1 S dataset's complete histories with an isolated Hermes profile per question. The session-search arm uses Hermes's native search; full-context and no-memory arms show the retrieval gap. This pilot does not test learning memories through natural conversations.
+
+```sh
+make eval-setup
+make eval-memory LIMIT=3
+make eval-tau
+make eval-tau-audit
+```
+
+Memory runs freeze the sample, dataset, model, source, and judge. They use the pinned upstream answer rubric with a GPT-6.1 Sol Responses judge; this is a custom judge protocol, not an official leaderboard result. `make eval-tau` runs the same seeded airline task through Hermes's MCP tools and the managed Agents API's function handlers, with the official environment and outcome evaluator. `TASK=18` selects the task; the default is one seeded sample, one trial per harness. `make eval-tau-audit` separately audits all airline gold references. Small pilots establish the pipeline and expose failures; they do not establish performance on the full suites or pass^4 reliability.
+
 ## Microphone connection
 
-The browser sends a LiveKit microphone track. The backend converts it to mono 24 kHz PCM, streams it to Kyutai, sends the final transcript to the agent, and speaks its answer with CSM. Set `OPENROUTER_API_KEY` on the backend for the agent model. `SLATE_MODEL` overrides the default `openrouter/free`. The voice path uses Suharsha's OpenRouter model and conversation loop from PR #1, without its browser or account tools. To use a recording as the device:
+The browser sends a LiveKit microphone track. The backend converts it to mono 24 kHz PCM, streams it to Kyutai, sends the final transcript to the agent, and speaks its answer with CSM. The agent defaults to pinned upstream Hermes with GPT-6.1 Sol through your Codex subscription. The managed OpenAI Agents API is a separate comparison path using `OPENAI_API_KEY` through Doppler. To use a recording as the device:
 
 ```sh
 uv run python -m slate.voice simulate .local/voice-check.wav

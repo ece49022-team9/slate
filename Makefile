@@ -1,4 +1,4 @@
-.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit
+.PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-voice bench voice-deploy voice-check livekit agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status server-managed eval-setup eval-memory eval-tau eval-tau-audit
 
 MODAL_PROFILE ?= sudarshan-1
 INPUT ?= .local/voice-check.wav
@@ -66,3 +66,46 @@ voice-check:
 
 livekit:
 	livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1
+
+agent-setup:
+	uv run python -m slate.agent.runtime setup
+
+agent-login:
+	uv run python -m slate.agent.runtime login
+
+agent:
+	uv run python -m slate.agent.runtime start
+
+browser:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal start
+
+browser-stop:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal stop
+
+agent-check:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py
+
+agent-status:
+	uv run python scripts/check_agent.py --status
+
+agent-e2e:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --browser --memory --voice
+
+server-managed:
+	SLATE_HARNESS=openai MODAL_PROFILE=$(MODAL_PROFILE) doppler run -- uv run uvicorn slate.app:app --host 127.0.0.1 --port 8001
+
+agent-managed:
+	doppler run -- uv run python scripts/check_managed.py --browser
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --voice-only --api-url http://127.0.0.1:8001 --harness openai
+
+eval-setup:
+	uv run python scripts/eval_agent.py setup
+
+eval-memory:
+	doppler run -- uv run python scripts/eval_agent.py longmemeval --limit $(or $(LIMIT),3) --grade
+
+eval-tau:
+	doppler run -- uv run python scripts/eval_agent.py tau --task-id $(or TASK,18)
+
+eval-tau-audit:
+	uv run python scripts/eval_agent.py tau-audit
