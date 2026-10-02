@@ -69,6 +69,18 @@ async def capture(
         link.type("x0")
 
 
+async def listen(link: Link, channel: str) -> AsyncIterator[bytes]:
+    link.type(KEYS[channel] + "a1")
+    try:
+        await link.wait_for("slate.state: 1")
+        while not link.audio.empty():
+            link.audio.get_nowait()
+        while True:
+            yield await asyncio.wait_for(link.audio.get(), timeout=5)
+    finally:
+        link.type("x0")
+
+
 async def simulate_firmware(
     input_file: Path, api_url: str, channel: str, *, profile: bool = False
 ) -> VoiceResult:

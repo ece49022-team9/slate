@@ -10,6 +10,7 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     profile: StrictBool = False
+    live: StrictBool = False
 
 
 class SessionResponse(BaseModel):
@@ -34,7 +35,9 @@ async def create_session(body: SessionRequest, request: Request, response: Respo
     require_local(request)
     response.headers["Cache-Control"] = "no-store"
     try:
-        return await request.app.state.voice.create(profile=body.profile)
+        return await request.app.state.voice.create(
+            profile=body.profile, live=body.live
+        )
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
     except Exception as error:

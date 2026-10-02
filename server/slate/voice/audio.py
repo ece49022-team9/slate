@@ -1,9 +1,16 @@
 import io
 import wave
+from array import array
 
 SAMPLE_RATE = 24_000
 SAMPLE_BYTES = 2
 MAX_AUDIO_SECONDS = 120
+AUDIBLE_PEAK = 96
+SPEECH_PEAK = 300
+
+
+def peak(pcm: bytes) -> int:
+    return max(map(abs, array("h", pcm)), default=0)
 
 
 def read_wav(data: bytes) -> bytes:

@@ -72,11 +72,12 @@ class VoiceAccessTests(unittest.TestCase):
             response = client.post("/api/voice/sessions", json={"room": "other-room"})
         self.assertEqual(response.status_code, 422)
 
-    def test_profile_option_is_forwarded_and_defaults_to_disabled(self):
-        for body, profile in (
-            ({}, False),
-            ({"profile": False}, False),
-            ({"profile": True}, True),
+    def test_session_options_are_forwarded_and_default_to_disabled(self):
+        for body, profile, live in (
+            ({}, False, False),
+            ({"profile": False}, False, False),
+            ({"profile": True}, True, False),
+            ({"live": True}, False, True),
         ):
             with self.subTest(body=body):
                 with TestClient(app, client=("127.0.0.1", 1234)) as client:
@@ -95,7 +96,7 @@ class VoiceAccessTests(unittest.TestCase):
                     response = client.post("/api/voice/sessions", json=body)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
-                voice.create.assert_awaited_once_with(profile=profile)
+                voice.create.assert_awaited_once_with(profile=profile, live=live)
 
     def test_profile_requires_a_boolean_and_never_admits_extra_fields(self):
         for body in (

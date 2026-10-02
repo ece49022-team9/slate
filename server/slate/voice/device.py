@@ -1,15 +1,24 @@
 import asyncio
 import json
 import struct
+import time
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Self
 from urllib.request import Request, urlopen
 
 from livekit import rtc
 
-from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE, read_wav, write_wav
+from slate.voice.audio import (
+    SAMPLE_BYTES,
+    SAMPLE_RATE,
+    SPEECH_PEAK,
+    peak,
+    read_wav,
+    write_wav,
+)
 from slate.voice.settings import REPLY_TOPIC, TRANSCRIPT_TOPIC
 from slate.voice.timing import Timeline
 
@@ -177,6 +186,8 @@ async def transcribe_audio(
                     chunk, sample_rate, 1, len(chunk) // SAMPLE_BYTES
                 )
                 timing.mark("input_first_capture")
+                if peak(chunk) > SPEECH_PEAK:
+                    timing.mark("input_speech_last", replace=True)
                 await source.capture_frame(frame)
                 timing.mark("input_last_capture", replace=True)
         timing.mark("input_drain_requested")
@@ -211,3 +222,110 @@ async def transcribe_audio(
             f"{api_url}/api/voice/sessions/{session['session_id']}",
             "DELETE",
         )
+
+
+class LiveCall:
+    """The device's side of a duplex call. The microphone streams continuously;
+    every mic chunk and reply frame is kept with its arrival time and peak."""
+
+    def __init__(self, api_url: str, sample_rate: int) -> None:
+        self.api_url = api_url
+        self.sample_rate = sample_rate
+        self.room = rtc.Room()
+        self.source = rtc.AudioSource(sample_rate, 1, queue_size_ms=100)
+        self.session: dict = {}
+        self.mic: list[tuple[int, int]] = []
+        self.reply: list[tuple[int, int]] = []
+        self.reply_audio = bytearray()
+        self.said: list[tuple[int, str]] = []
+        self.errors: list[str] = []
+        self.reader: asyncio.Task | None = None
+
+    async def __aenter__(self) -> Self:
+        self.session = await asyncio.to_thread(
+            session_request,
+            f"{self.api_url}/api/voice/sessions",
+            "POST",
+            json.dumps({"live": True}).encode(),
+        )
+        self.room.on("track_subscribed", self.track_subscribed)
+        self.room.on("data_received", self.data_received)
+        try:
+            await self.room.connect(
+                self.session["server_url"], self.session["participant_token"]
+            )
+            track = rtc.LocalAudioTrack.create_audio_track("microphone", self.source)
+            options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+            publication = await self.room.local_participant.publish_track(
+                track, options
+            )
+            await asyncio.wait_for(publication.wait_for_subscription(), timeout=10)
+        except BaseException:
+            await self.close()
+            raise
+        return self
+
+    async def __aexit__(self, *_) -> None:
+        await self.close()
+
+    def track_subscribed(self, track: rtc.RemoteTrack, _publication, participant):
+        if (
+            participant.identity == self.session["worker_identity"]
+            and track.kind == rtc.TrackKind.KIND_AUDIO
+            and self.reader is None
+        ):
+            self.reader = asyncio.create_task(self.read_reply(track))
+
+    async def read_reply(self, track: rtc.RemoteTrack) -> None:
+        stream = rtc.AudioStream(
+            track, sample_rate=SAMPLE_RATE, num_channels=1, frame_size_ms=20
+        )
+        try:
+            async for event in stream:
+                chunk = event.frame.data.tobytes()
+                self.reply.append((time.monotonic_ns(), peak(chunk)))
+                self.reply_audio.extend(chunk)
+        finally:
+            await stream.aclose()
+
+    def data_received(self, packet: rtc.DataPacket) -> None:
+        if (
+            packet.participant is None
+            or packet.participant.identity != self.session["worker_identity"]
+        ):
+            return
+        event = json.loads(packet.data)
+        if "error" in event:
+            self.errors.append(event["error"])
+        elif packet.topic == REPLY_TOPIC:
+            self.said.append((time.monotonic_ns(), event["text"]))
+
+    async def send(self, chunk: bytes) -> None:
+        if not chunk or len(chunk) % SAMPLE_BYTES:
+            raise ValueError("slate.voice: incomplete PCM samples")
+        self.mic.append((time.monotonic_ns(), peak(chunk)))
+        await self.source.capture_frame(
+            rtc.AudioFrame(chunk, self.sample_rate, 1, len(chunk) // SAMPLE_BYTES)
+        )
+
+    async def report(self) -> dict:
+        return json.loads(
+            await self.room.local_participant.perform_rpc(
+                destination_identity=self.session["worker_identity"],
+                method="live_report",
+                payload="",
+            )
+        )
+
+    async def close(self) -> None:
+        if self.reader:
+            self.reader.cancel()
+            await asyncio.gather(self.reader, return_exceptions=True)
+        await self.source.aclose()
+        await self.room.disconnect()
+        if self.session:
+            await asyncio.to_thread(
+                session_request,
+                f"{self.api_url}/api/voice/sessions/{self.session['session_id']}",
+                "DELETE",
+            )
