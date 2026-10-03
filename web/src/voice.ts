@@ -9,7 +9,7 @@ type Session = {
   worker_identity: string
 }
 
-type Transcript = { turn_id: string; text?: string; final?: boolean; error?: string; cancelled?: boolean }
+type Transcript = { turn_id: string; text?: string; final?: boolean; error?: string; cancelled?: boolean; announcement?: boolean }
 export type Approval = { run_id: string; request_id: string; command: string }
 
 export class VoiceConnection {
@@ -104,6 +104,15 @@ export class VoiceConnection {
     if (!['slate.transcript', 'slate.reply', 'slate.agent'].includes(topic ?? '') || identity !== this.session?.worker_identity) return
     try {
       const event = JSON.parse(new TextDecoder().decode(payload)) as Transcript & { tool?: string; approval?: Approval }
+      if (event.announcement) {
+        if (this.turn || this.starting || this.closed || topic !== 'slate.reply') return
+        if (event.error) this.onError(event.error)
+        else if (typeof event.text === 'string' && event.text && !event.cancelled) {
+          this.mutePlayback(false)
+          this.onReply(event.text)
+        }
+        return
+      }
       if (!this.turn || event.turn_id !== this.turn || this.closed) return
       if (topic === 'slate.agent') {
         this.approval = event.approval

@@ -96,7 +96,7 @@ agent:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.agent.runtime start
 
 browser:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal start
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal run
 
 browser-stop:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal stop

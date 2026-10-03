@@ -16,12 +16,18 @@ logger = logging.getLogger("slate.agent")
 Progress = Callable[[dict], Awaitable[None]]
 INSTRUCTIONS = (
     "You are Slate, a personal voice assistant. Use tools when needed, and report "
-    "their actual results. Keep the final answer short and natural to speak aloud, "
-    "usually at most two sentences. Do not speak progress messages or private "
-    "reasoning. Sending messages and spending money pause for the user's approval "
-    "automatically, so carry out those requests without asking again. If a request "
-    "is missing something you need, ask one short question in your reply."
+    "their actual results. Begin your final answer with one or two sentences to "
+    "speak aloud. If the full answer needs more, put it after a line containing only "
+    "---; Slate shows that part on screen without speaking it. Do not speak progress "
+    "messages or private reasoning. For work that will take more than about a "
+    "minute, such as research, multi-step browsing, or coding, start it with "
+    "delegate_task so it runs in the background, say briefly that you started it, "
+    "and end your turn; when its result arrives, tell the user the result. Sending "
+    "messages and spending money pause for the user's approval automatically, so "
+    "carry out those requests without asking again. If a request is missing "
+    "something you need, ask one short question in your reply."
 )
+BACKGROUND_PROMPT = "A background task you started has finished. Tell me its result."
 
 
 class Agent:
@@ -49,6 +55,7 @@ class Agent:
         self.provider = provider or cfg["provider"]
         self.instructions = instructions
         self.run_id: str | None = None
+        self.pending: set[str] = set()
         self.last_run: dict = {}
         self._timings: dict[str, int] = {}
         self.lock = asyncio.Lock()
@@ -105,26 +112,25 @@ class Agent:
                     self.provider,
                     self.model,
                 )
-                async with asyncio.timeout(300):
-                    result = await self.follow(progress)
-                    self.last_run = result
-                    if result["status"] != "completed":
-                        raise RuntimeError(
-                            f"Hermes run {result['status']}: {result.get('error', '')}"
-                        )
-                    runtime = result.get("runtime", {})
-                    if (runtime.get("model"), runtime.get("provider")) != (
-                        self.model,
-                        self.provider,
-                    ):
-                        raise RuntimeError(f"Hermes changed the model route: {runtime}")
-                    self.session_id = result.get("session_id") or self.session_id
-                    text = (result.get("output") or "").strip()
-                    if not text:
-                        raise RuntimeError("Hermes completed without a spoken reply")
-                    if progress:
-                        await progress({"type": "answer.complete", "text": text})
-                    return text
+                result = await self.follow(progress)
+                self.last_run = result
+                if result["status"] != "completed":
+                    raise RuntimeError(
+                        f"Hermes run {result['status']}: {result.get('error', '')}"
+                    )
+                runtime = result.get("runtime", {})
+                if (runtime.get("model"), runtime.get("provider")) != (
+                    self.model,
+                    self.provider,
+                ):
+                    raise RuntimeError(f"Hermes changed the model route: {runtime}")
+                self.session_id = result.get("session_id") or self.session_id
+                text = (result.get("output") or "").strip()
+                if not text:
+                    raise RuntimeError("Hermes completed without a spoken reply")
+                if progress:
+                    await progress({"type": "answer.complete", "text": text})
+                return text
             except BaseException:
                 try:
                     async with asyncio.timeout(5):
@@ -206,6 +212,12 @@ class Agent:
                             ):
                                 self._timings.setdefault("first_text", observed)
                                 self._timings["last_text"] = observed
+                            if (
+                                kind == "subagent.start"
+                                and str(event.get("depth", 0)) == "0"
+                                and event.get("delegation_id")
+                            ):
+                                self.pending.add(event["delegation_id"])
                             if kind in (
                                 "run.completed",
                                 "run.failed",
@@ -231,6 +243,26 @@ class Agent:
             except httpx.TransportError:
                 logger.warning("Run %s status unavailable; retrying", self.run_id)
             await asyncio.sleep(0.5)
+
+    async def background_finished(self) -> set[str]:
+        while True:
+            history = await self.request(
+                "GET",
+                f"/api/sessions/{self.session_id}/messages",
+                params={"inline_images": "false"},
+            )
+            finished = {
+                delegation
+                for delegation in self.pending
+                for row in history["data"]
+                if row.get("display_kind") == "async_delegation_complete"
+                and delegation in str(row.get("content", ""))
+            }
+            if finished:
+                self.pending -= finished
+                logger.info("Background delegations finished: %s", sorted(finished))
+                return finished
+            await asyncio.sleep(2)
 
     async def approve(self, run_id: str, request_id: str, choice: str) -> None:
         if not self.run_id or run_id != self.run_id:

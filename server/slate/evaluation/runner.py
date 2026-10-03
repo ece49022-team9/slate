@@ -208,7 +208,7 @@ def profile_config(
             if arm == "session-search"
             else []
         },
-        "agent": {"max_turns": 15},
+        "agent": {"max_turns": "unlimited"},
         "sessions": {"auto_prune": False, "auto_archive": False},
         "memory": {
             "memory_enabled": arm == "session-search",

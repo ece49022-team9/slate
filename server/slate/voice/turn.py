@@ -7,8 +7,9 @@ from slate.voice.timing import Timeline
 
 
 class Turn:
-    def __init__(self) -> None:
+    def __init__(self, *, announcement: bool = False) -> None:
         self.id = uuid4().hex
+        self.announcement = announcement
         self.scope = uuid4().hex
         self.audio: asyncio.Queue[bytes | None] = asyncio.Queue()
         self.receiving = True

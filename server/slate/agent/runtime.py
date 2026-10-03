@@ -16,6 +16,7 @@ SOURCE = ROOT / ".local/hermes"
 PROFILE = ROOT / ".local/hermes-home"
 CONFIG = ROOT / "experiments/agent.toml"
 GUARD = ROOT / "hermes/slate-guard"
+BROWSER = ROOT / ".local/browser.json"
 TOOLSETS = [
     "memory",
     "session_search",
@@ -52,6 +53,11 @@ def configure_tools(config: dict) -> None:
     config.setdefault("platform_toolsets", {})["api_server"] = list(TOOLSETS)
     config.setdefault("terminal", {})["backend"] = "modal"
     config.setdefault("bot_desktop", {})["placement"] = "gateway"
+    browser = config.setdefault("browser", {})
+    if BROWSER.exists():
+        browser["cdp_url"] = json.loads(BROWSER.read_text())["cdp_url"]
+    else:
+        browser.pop("cdp_url", None)
     enabled = config.setdefault("plugins", {}).setdefault("enabled", [])
     if "slate-guard" not in enabled:
         enabled.append("slate-guard")
@@ -79,6 +85,21 @@ def configure_tools(config: dict) -> None:
         server["env"]["MODAL_PROFILE"] = profile
 
 
+def point_browser() -> None:
+    path = PROFILE / "config.yaml"
+    if not path.exists():
+        return
+    config = json.loads(path.read_text())
+    browser = config.setdefault("browser", {})
+    if BROWSER.exists():
+        browser["cdp_url"] = json.loads(BROWSER.read_text())["cdp_url"]
+    else:
+        browser.pop("cdp_url", None)
+    pending = path.with_suffix(".pending")
+    pending.write_text(json.dumps(config, indent=2))
+    pending.replace(path)
+
+
 def install_guard() -> None:
     target = PROFILE / "plugins/slate-guard"
     target.mkdir(parents=True, exist_ok=True)
@@ -93,9 +114,6 @@ def environment() -> dict[str, str]:
     if settings()["provider"] == "openai-codex":
         env.pop("OPENAI_API_KEY", None)
         env.pop("OPENROUTER_API_KEY", None)
-    browser = ROOT / ".local/browser.json"
-    if browser.exists():
-        env["BROWSER_CDP_URL"] = json.loads(browser.read_text())["cdp_url"]
     return env
 
 

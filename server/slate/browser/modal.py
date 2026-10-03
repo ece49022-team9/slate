@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -10,9 +11,10 @@ import httpx
 import modal
 from modal.exception import NotFoundError, SandboxTerminatedError
 
-from slate.board import ROOT
+from slate.agent.runtime import BROWSER as STATE
+from slate.agent.runtime import point_browser
 
-STATE = ROOT / ".local/browser.json"
+logger = logging.getLogger("slate.browser")
 IMAGE = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install("playwright==1.62.0", "aiohttp==3.13.3")
@@ -32,7 +34,7 @@ async def start() -> None:
         "/browser.py",
         app=app,
         image=IMAGE,
-        timeout=1800,
+        timeout=4 * 3600,
         experimental_options={"vm_runtime": True},
         readiness_probe=modal.Probe.with_exec("test", "-f", "/tmp/browser-ready"),
         env={"SLATE_BROWSER_TEST_CODE": code},
@@ -77,11 +79,9 @@ async def start() -> None:
                 }
             )
         )
+        point_browser()
         print(
-            f"slate.browser: authenticated Modal Chromium ready ({sandbox.object_id})"
-        )
-        print(
-            "slate.browser: restart make agent to attach; "
+            f"slate.browser: authenticated Modal Chromium ready ({sandbox.object_id}); "
             "run make browser-stop when done"
         )
     except BaseException:
@@ -99,14 +99,47 @@ async def stop() -> None:
         except (NotFoundError, SandboxTerminatedError):
             print("slate.browser: sandbox already stopped; clearing local state")
         STATE.unlink()
+        point_browser()
         print("slate.browser: Modal Chromium stopped")
+
+
+async def ensure() -> None:
+    if not STATE.exists():
+        return
+    try:
+        sandbox = await modal.Sandbox.from_id.aio(
+            json.loads(STATE.read_text())["sandbox_id"]
+        )
+        if await sandbox.poll.aio() is None:
+            return
+    except NotFoundError:
+        pass
+    logger.warning("slate.browser: Modal Chromium stopped; starting a new one")
+    STATE.unlink()
+    await start()
+
+
+async def run() -> None:
+    logging.basicConfig(level=logging.INFO)
+    if not STATE.exists():
+        await start()
+    try:
+        while True:
+            try:
+                await ensure()
+            except Exception:
+                logger.exception("slate.browser: could not restart Modal Chromium")
+            await asyncio.sleep(60)
+    finally:
+        await stop()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["start", "stop"])
+    parser.add_argument("command", choices=["run", "start", "stop"])
     args = parser.parse_args()
-    asyncio.run(start() if args.command == "start" else stop())
+    commands = {"run": run, "start": start, "stop": stop}
+    asyncio.run(commands[args.command]())
 
 
 if __name__ == "__main__":
