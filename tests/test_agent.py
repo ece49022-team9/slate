@@ -619,9 +619,11 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(config["mcp_servers"]["other"], {"command": "other-program"})
         self.assertEqual(config["tools"]["tool_search"], {"enabled": "off"})
         self.assertEqual(
-            config["platform_toolsets"]["api_server"],
-            ["memory", "browser", "mcp-slate-device"],
+            config["platform_toolsets"]["api_server"], agent_runtime.TOOLSETS
         )
+        self.assertEqual(config["terminal"], {"backend": "modal"})
+        self.assertEqual(config["bot_desktop"], {"placement": "gateway"})
+        self.assertEqual(config["plugins"]["enabled"], ["slate-guard"])
         device = config["mcp_servers"]["slate-device"]
         self.assertTrue(Path(device["command"]).is_absolute())
         self.assertEqual(

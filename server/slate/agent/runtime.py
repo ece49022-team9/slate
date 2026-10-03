@@ -15,6 +15,23 @@ from slate.board import ROOT
 SOURCE = ROOT / ".local/hermes"
 PROFILE = ROOT / ".local/hermes-home"
 CONFIG = ROOT / "experiments/agent.toml"
+GUARD = ROOT / "hermes/slate-guard"
+TOOLSETS = [
+    "memory",
+    "session_search",
+    "browser",
+    "web",
+    "vision",
+    "terminal",
+    "file",
+    "code_execution",
+    "skills",
+    "todo",
+    "delegation",
+    "cronjob",
+    "connections",
+    "mcp-slate-device",
+]
 
 
 def settings() -> dict:
@@ -32,9 +49,12 @@ def configure_tools(config: dict) -> None:
     uv = shutil.which("uv")
     if uv is None:
         raise RuntimeError("Slate device MCP requires uv on PATH")
-    toolsets = config.setdefault("platform_toolsets", {}).setdefault("api_server", [])
-    if "mcp-slate-device" not in toolsets:
-        toolsets.append("mcp-slate-device")
+    config.setdefault("platform_toolsets", {})["api_server"] = list(TOOLSETS)
+    config.setdefault("terminal", {})["backend"] = "modal"
+    config.setdefault("bot_desktop", {})["placement"] = "gateway"
+    enabled = config.setdefault("plugins", {}).setdefault("enabled", [])
+    if "slate-guard" not in enabled:
+        enabled.append("slate-guard")
     server = config.setdefault("mcp_servers", {}).setdefault("slate-device", {})
     server.update(
         {
@@ -57,6 +77,14 @@ def configure_tools(config: dict) -> None:
     config.setdefault("tools", {}).setdefault("tool_search", {})["enabled"] = "off"
     if profile := os.getenv("MODAL_PROFILE"):
         server["env"]["MODAL_PROFILE"] = profile
+
+
+def install_guard() -> None:
+    target = PROFILE / "plugins/slate-guard"
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(GUARD / "plugin.yaml", target / "plugin.yaml")
+    shutil.copyfile(GUARD / "__init__.py", target / "__init__.py")
+    shutil.copyfile(ROOT / "server/slate/agent/guard.py", target / "policy.py")
 
 
 def environment() -> dict[str, str]:
@@ -138,7 +166,6 @@ def setup() -> None:
         key.write_text(secrets.token_urlsafe(32))
     config = {
         "model": {"default": cfg["model"], "provider": cfg["provider"]},
-        "platform_toolsets": {"api_server": ["memory", "session_search", "browser"]},
         "agent": {"max_turns": "unlimited"},
         "browser": {"backend": "off"},
         "gateway": {
@@ -152,9 +179,23 @@ def setup() -> None:
         "auth": {"adopt_external_logins": False},
     }
     configure_tools(config)
+    install_guard()
     (PROFILE / "config.yaml").write_text(json.dumps(config, indent=2))
     subprocess.run(
         [*command(), "run", "--no-sync", "hermes", "pm", "install", "agent-browser"],
+        cwd=SOURCE,
+        env=environment(),
+        check=True,
+    )
+    subprocess.run(
+        [
+            *command(),
+            "run",
+            "--no-sync",
+            "python",
+            "-c",
+            "import pm; pm.sync_venv(['modal'], explicit=True)",
+        ],
         cwd=SOURCE,
         env=environment(),
         check=True,
@@ -176,9 +217,12 @@ def main() -> None:
         config_path = PROFILE / "config.yaml"
         config = json.loads(config_path.read_text())
         configure_tools(config)
+        install_guard()
         config_path.write_text(json.dumps(config, indent=2))
     hermes_args = (
-        ["gateway"] if args.command == "start" else ["auth", "add", "openai-codex"]
+        ["gateway", "run", "--replace"]
+        if args.command == "start"
+        else ["auth", "add", "openai-codex"]
     )
     subprocess.run(
         [*command(), "run", "--no-sync", "hermes", *hermes_args],

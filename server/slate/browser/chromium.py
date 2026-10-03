@@ -18,6 +18,16 @@ async def fixture(_request: web.Request) -> web.Response:
     return web.Response(text=html, content_type="text/html")
 
 
+async def shop(_request: web.Request) -> web.Response:
+    html = (
+        "<!doctype html><title>Slate test shop</title>"
+        "<h1>Desk lamp</h1><p>Price: $49.00</p>"
+        '<button id="order" onclick="document.getElementById(\'result\').textContent='
+        '\'ordered\'">Place order</button><p id="result">not ordered</p>'
+    )
+    return web.Response(text=html, content_type="text/html")
+
+
 async def proxy(request: web.Request) -> web.StreamResponse:
     url = "http://127.0.0.1:9223" + request.path
     async with ClientSession() as client:
@@ -63,6 +73,7 @@ async def main() -> None:
         runner = web.AppRunner(app)
         fixture_app = web.Application()
         fixture_app.router.add_get("/fixture", fixture)
+        fixture_app.router.add_get("/shop", shop)
         fixture_runner = web.AppRunner(fixture_app)
         try:
             await runner.setup()

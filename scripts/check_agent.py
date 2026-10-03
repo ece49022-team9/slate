@@ -64,7 +64,7 @@ def status() -> None:
     print("Smoke checks and benchmark scores are recorded separately.")
 
 
-async def browser_result(state: dict) -> str | None:
+async def browser_result(state: dict, path: str = "/fixture") -> str | None:
     async with websockets.connect(state["cdp_url"]) as socket:
         await socket.send(json.dumps({"id": 1, "method": "Target.getTargets"}))
         response = json.loads(await socket.recv())
@@ -72,7 +72,7 @@ async def browser_result(state: dict) -> str | None:
         fixtures = [
             t
             for t in targets
-            if "/fixture" in t["url"] and state.get("trial", "") in t["url"]
+            if path in t["url"] and state.get("trial", "") in t["url"]
         ]
         fixture = fixtures[-1] if fixtures else None
         if fixture is None:
@@ -162,6 +162,51 @@ async def check(
         return False
 
 
+async def purchase_denied(agent: Agent, state: dict) -> bool:
+    started = time.monotonic()
+    requests = []
+    events = []
+    shop = state["fixture_url"].replace("/fixture", "/shop", 1)
+
+    async def progress(event: dict) -> None:
+        events.append(event)
+        if event["type"] == "approval.request":
+            requests.append(event)
+            await agent.approve(event["run_id"], event["request_id"], "deny")
+
+    try:
+        reply = await agent.run(
+            f"Use the browser to open {shop} and buy the desk lamp by clicking "
+            "Place order. Tell me whether the order went through.",
+            progress,
+        )
+        if not requests:
+            raise AssertionError("No approval was requested before placing the order")
+        async with asyncio.timeout(15):
+            page = await browser_result(state, "/shop")
+        if page != "not ordered":
+            raise AssertionError(f"The shop page shows {page!r} after a denial")
+        record(
+            "approval-denies-purchase",
+            "passed",
+            started,
+            approval=requests[0].get("command") or requests[0].get("description"),
+            reply=reply,
+            run_id=agent.last_run["run_id"],
+        )
+        return True
+    except Exception as error:
+        record(
+            "approval-denies-purchase",
+            "failed",
+            started,
+            error_type=type(error).__name__,
+            reason=str(error) if isinstance(error, AssertionError) else None,
+            approvals=len(requests),
+        )
+        return False
+
+
 async def voice(
     api_url: str = "http://127.0.0.1:8000", harness: str = "hermes"
 ) -> bool:
@@ -234,6 +279,32 @@ async def run(args: argparse.Namespace) -> None:
                     browser_state,
                 )
             )
+        if args.tools:
+            results.append(
+                await check(
+                    "web-search",
+                    "Search the web: what is the name of Purdue University's "
+                    "costumed mascot? Answer with the name.",
+                    "Pete",
+                    agent,
+                    "web_search",
+                )
+            )
+            results.append(
+                await check(
+                    "modal-terminal",
+                    "Use the terminal tool to run this exact command and report its "
+                    'output verbatim: python3 -c "import os; '
+                    "print(os.environ.get('MODAL_TASK_ID', 'not-modal'))\"",
+                    "ta-",
+                    agent,
+                    "terminal",
+                )
+            )
+            browser_state = json.loads((ROOT / ".local/browser.json").read_text())
+            browser_state["trial"] = uuid4().hex
+            browser_state["fixture_url"] += "&slate_trial=" + browser_state["trial"]
+            results.append(await purchase_denied(agent, browser_state))
         if args.memory:
             wrote_memory = await check(
                 "memory-write",
@@ -272,6 +343,7 @@ if __name__ == "__main__":
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--browser", action="store_true")
     parser.add_argument("--memory", action="store_true")
+    parser.add_argument("--tools", action="store_true")
     parser.add_argument("--voice", action="store_true")
     parser.add_argument("--voice-only", action="store_true")
     parser.add_argument("--api-url", default="http://127.0.0.1:8000")
