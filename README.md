@@ -168,6 +168,8 @@ QEMU boots the exact image `make flash` writes. Python plays the parts on the br
 
 `make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
 
+The Voice panel on that page puts the simulated board on a call with Slate. Pick always listening (GPT-Live with Hermes) or push to talk (Kyutai, Hermes, CSM), then start a call; your browser mic goes in through the simulated firmware, and Slate's reply plays in the page. Echo feeds that reply back into the simulated mics, quieter and 40 ms late, the way the device's own speaker would. The page talks to the server at `API_URL` (default `http://127.0.0.1:8000`): run `make server`, plus `make worker` for always listening, then `make sim`, or `make sim API_URL=http://127.0.0.1:8002` with `make server-duplex`. `make duplex-profile ECHO=0.6` runs the timing and interruption tests with the same echo.
+
 To send audio through the simulated firmware, agent, and real speech services, start `make livekit` and `make server`, then run:
 
 ```sh

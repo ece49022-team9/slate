@@ -74,6 +74,14 @@ class Link:
             if waiter in self.waiters:
                 self.waiters.remove(waiter)
 
+    async def settle(self, state: int, seconds: float = 10) -> None:
+        """Wait until the firmware reports this state. A quick change and change
+        back prints nothing, so this checks the last report instead of waiting
+        for a new line."""
+        async with self.timeout(seconds):
+            while self.state() != state:
+                await asyncio.sleep(0.01)
+
     def state(self) -> int | None:
         states = [line for line in self.lines if line.startswith("slate.state: ")]
         return int(states[-1].split(": ")[1]) if states else None

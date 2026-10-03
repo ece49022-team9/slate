@@ -48,7 +48,7 @@ sim-setup:
 	bash scripts/qemu.sh
 
 sim:
-	uv run python -m slate.display
+	SLATE_API_URL=$(or $(API_URL),http://127.0.0.1:8000) MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.display
 
 sim-check:
 	uv run python scripts/check_breadboard.py
@@ -99,7 +99,7 @@ worker:
 	doppler run -- uv run python -m slate.voice.worker dev
 
 duplex-profile:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m scripts.profile_live --repeats $(or $(REPEATS),4) --interruptions $(or $(INTERRUPTIONS),3)
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m scripts.profile_live --repeats $(or $(REPEATS),4) --interruptions $(or $(INTERRUPTIONS),3) --echo $(or $(ECHO),0)
 
 cost-deploy:
 	MODAL_PROFILE=$(MODAL_PROFILE) MODAL_ENVIRONMENT=slate-cost uv run modal deploy -m slate.voice.stt

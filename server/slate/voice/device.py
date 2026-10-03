@@ -2,7 +2,7 @@ import asyncio
 import json
 import struct
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,10 +102,18 @@ class CascadeCall:
     """The device's side of a push-to-talk session: one LiveKit connection that
     carries any number of start, speak, and end turns."""
 
-    def __init__(self, api_url: str, sample_rate: int, *, profile: bool = False):
+    def __init__(
+        self,
+        api_url: str,
+        sample_rate: int,
+        *,
+        profile: bool = False,
+        on_reply: Callable[[bytes], None] | None = None,
+    ):
         self.api_url = api_url
         self.sample_rate = sample_rate
         self.profile = profile
+        self.on_reply = on_reply
         self.room = rtc.Room()
         self.source = rtc.AudioSource(sample_rate, 1, queue_size_ms=100)
         self.timing = Timeline()
@@ -167,6 +175,8 @@ class CascadeCall:
                 if peak(chunk) > AUDIBLE_PEAK:
                     turn.timing.mark("reply_first_audible")
                 turn.audio.extend(chunk)
+                if self.on_reply:
+                    self.on_reply(chunk)
         finally:
             await stream.aclose()
 
@@ -271,9 +281,16 @@ class LiveCall:
     """The device's side of a duplex call. The microphone streams continuously;
     every mic chunk and reply frame is kept with its arrival time and peak."""
 
-    def __init__(self, api_url: str, sample_rate: int) -> None:
+    def __init__(
+        self,
+        api_url: str,
+        sample_rate: int,
+        *,
+        on_reply: Callable[[bytes], None] | None = None,
+    ) -> None:
         self.api_url = api_url
         self.sample_rate = sample_rate
+        self.on_reply = on_reply
         self.room = rtc.Room()
         self.source = rtc.AudioSource(sample_rate, 1, queue_size_ms=100)
         self.session: dict = {}
@@ -325,6 +342,8 @@ class LiveCall:
                 chunk = event.frame.data.tobytes()
                 self.reply.append((time.monotonic_ns(), peak(chunk)))
                 self.reply_audio.extend(chunk)
+                if self.on_reply:
+                    self.on_reply(chunk)
         finally:
             await stream.aclose()
 

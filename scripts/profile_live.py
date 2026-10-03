@@ -5,6 +5,7 @@ import json
 import statistics
 import subprocess
 import time
+from array import array
 from contextlib import aclosing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from slate.breadboard import breadboard, build_image
 from slate.voice.audio import AUDIBLE_PEAK, SPEECH_PEAK, write_wav
 from slate.voice.device import LiveCall
 from slate.voice.firmware import RATE, listen, simulate_firmware, stereo_pcm
+from slate.voice.sim import Echo
 
 from scripts.profile_voice import CONFIG, append, summarize
 
@@ -116,8 +118,22 @@ async def settle(call: LiveCall, after: int) -> dict:
                 return report
 
 
-def analyze(call: LiveCall, report: dict, asked: int, interrupted: int | None) -> dict:
-    speech_end = last_speech(call.mic, asked, interrupted or float("inf"))
+def speech_offset_ns(clip: Path, slot: int) -> int:
+    """When speech starts inside the padded clip the breadboard plays."""
+    stereo = array("h", stereo_pcm(clip, slot))
+    loud = next(i for i, sample in enumerate(stereo) if abs(sample) > SPEECH_PEAK)
+    return (loud // 2) * 1_000_000_000 // RATE
+
+
+def analyze(
+    call: LiveCall,
+    report: dict,
+    asked: int,
+    played: int,
+    interrupted: int | None,
+    interruption_onset: int | None,
+) -> dict:
+    speech_end = last_speech(call.mic, asked, played)
     delegations = [
         record
         for record in report["delegations"]
@@ -156,8 +172,10 @@ def analyze(call: LiveCall, report: dict, asked: int, interrupted: int | None) -
         "correct": any(value in spoken.casefold() for value in EXPECTED),
         "delegation_error": first.get("error"),
     }
+    metrics["user_lines"] = sum(1 for part in report["words"] if part["role"] == "User")
+    metrics["expected_user_lines"] = 1 if interrupted is None else 2
     if interrupted is not None:
-        onset = first_speech(call.mic, interrupted)
+        onset = interruption_onset or first_speech(call.mic, interrupted)
         stop = stopped(call.reply, onset) if onset else None
         before = [
             ns
@@ -179,9 +197,12 @@ def analyze(call: LiveCall, report: dict, asked: int, interrupted: int | None) -
     return result
 
 
-async def live_trial(api_url: str, clip: Path, interrupt: bool, raw: Path) -> dict:
+async def live_trial(
+    api_url: str, clip: Path, interrupt: bool, raw: Path, echo: float
+) -> dict:
     async with breadboard(realtime=True) as bench:
-        async with LiveCall(api_url, RATE) as call:
+        heard = Echo(bench, RATE, echo).push if echo else None
+        async with LiveCall(api_url, RATE, on_reply=heard) as call:
 
             async def stream() -> None:
                 async with aclosing(listen(bench.link, "left")) as microphone:
@@ -195,10 +216,13 @@ async def live_trial(api_url: str, clip: Path, interrupt: bool, raw: Path) -> di
                 await asyncio.sleep(1)
                 asked = time.monotonic_ns()
                 await bench.play(stereo_pcm(clip, bench.slot))
-                interrupted = None
+                played = time.monotonic_ns()
+                interrupted = onset = None
                 if interrupt:
                     await wait_speaking(call, asked)
                     interrupted = time.monotonic_ns()
+                    if echo:
+                        onset = interrupted + speech_offset_ns(INTERRUPTION, bench.slot)
                     await bench.play(stereo_pcm(INTERRUPTION, bench.slot))
                 report = await settle(call, interrupted or asked)
             finally:
@@ -211,7 +235,9 @@ async def live_trial(api_url: str, clip: Path, interrupt: bool, raw: Path) -> di
                     raw.with_suffix(".wav").write_bytes(
                         write_wav(bytes(call.reply_audio))
                     )
-            return analyze(call, report, asked, interrupted) | {
+            return analyze(call, report, asked, played, interrupted, onset) | {
+                "echo": echo,
+                "interruption_onset": "clip schedule" if onset else "mic level",
                 "runtime": report["agent_runtime"],
                 "usage": report["usage"],
             }
@@ -268,6 +294,7 @@ async def run(args: argparse.Namespace) -> None:
     metadata = {
         "scope": "latency",
         "case": "duplex-voice-profile",
+        "echo": args.echo,
         "profile_id": uuid4().hex,
         "git_revision": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
@@ -314,7 +341,9 @@ async def run(args: argparse.Namespace) -> None:
                 result = await cascade_trial(args.api_url, raw)
             else:
                 clip = LONG_QUESTION if arm == "interrupt" else QUESTION
-                result = await live_trial(args.api_url, clip, arm == "interrupt", raw)
+                result = await live_trial(
+                    args.api_url, clip, arm == "interrupt", raw, args.echo
+                )
             entry.update(status="passed", **result)
             rows.append(entry)
             shown = {
@@ -362,6 +391,7 @@ def main() -> None:
     parser.add_argument("--arms", default="live,cascade")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--interruptions", type=int, default=2)
+    parser.add_argument("--echo", type=float, default=0.0)
     args = parser.parse_args()
     args.arms = args.arms.split(",")
     if args.repeats < 0 or args.interruptions < 0:

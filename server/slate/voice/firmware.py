@@ -70,9 +70,11 @@ async def capture(
 
 
 async def listen(link: Link, channel: str) -> AsyncIterator[bytes]:
-    link.type(KEYS[channel] + "a1")
+    link.type("x0")
     try:
-        await link.wait_for("slate.state: 1")
+        await link.settle(0)
+        link.type(KEYS[channel] + "a1")
+        await link.settle(1)
         while not link.audio.empty():
             link.audio.get_nowait()
         while True:
