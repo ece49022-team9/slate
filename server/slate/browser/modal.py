@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import secrets
+import signal
+from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -121,15 +123,18 @@ async def ensure() -> None:
 
 async def run() -> None:
     logging.basicConfig(level=logging.INFO)
-    if not STATE.exists():
-        await start()
+    stopping = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for number in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(number, stopping.set)
     try:
-        while True:
+        while not stopping.is_set():
             try:
-                await ensure()
+                await ensure() if STATE.exists() else await start()
             except Exception:
-                logger.exception("slate.browser: could not restart Modal Chromium")
-            await asyncio.sleep(60)
+                logger.exception("slate.browser: could not start Modal Chromium")
+            with suppress(TimeoutError):
+                await asyncio.wait_for(stopping.wait(), 60)
     finally:
         await stop()
 
