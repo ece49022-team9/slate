@@ -450,7 +450,7 @@ class ManagedAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.final_calls, 1)
         self.assertEqual(client.beta.agents.sessions.create.await_count, 1)
         client.beta.agents.sessions.stream.assert_called_once_with(
-            "sess-a", input="Recall it", timeout=300
+            "sess-a", input="Recall it", timeout=None
         )
         self.assertEqual(agent.last_run["runtime"]["model"], "gpt-6.1-sol")
         self.assertTrue(

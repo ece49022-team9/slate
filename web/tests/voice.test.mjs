@@ -149,3 +149,16 @@ test('terminal packet makes a pending end RPC failure stale', async () => {
     assert.equal(client.turn, undefined)
   }
 })
+
+test('background announcements play only while no turn is active', async () => {
+  const { client, events, receive } = fixture()
+  receive('slate.reply', { turn_id: 'background', text: 'Result while talking', announcement: true })
+  assert.equal(events.some(([kind]) => kind === 'reply'), false)
+  client.turn = undefined
+  client.speaker.muted = true
+  receive('slate.reply', { turn_id: 'background', text: 'The build passed.', announcement: true })
+  assert.deepEqual(events.at(-1), ['reply', 'The build passed.'])
+  assert.equal(client.speaker.muted, false)
+  receive('slate.reply', { turn_id: 'background', text: 'Wrong sender', announcement: true }, 'other')
+  assert.deepEqual(events.at(-1), ['reply', 'The build passed.'])
+})

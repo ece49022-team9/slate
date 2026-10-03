@@ -10,10 +10,11 @@ from uuid import uuid4
 
 import httpx
 import websockets
-from slate.agent.agent import Agent
+from slate.agent.agent import BACKGROUND_PROMPT, Agent
 from slate.board import ROOT
 from slate.voice.client import speak
 from slate.voice.firmware import simulate_firmware
+from slate.voice.session import spoken_part
 
 CONFIG = tomllib.loads((ROOT / "experiments/agent.toml").read_text())
 LOG = ROOT / CONFIG["tracking"]["log"]
@@ -207,6 +208,61 @@ async def purchase_denied(agent: Agent, state: dict) -> bool:
         return False
 
 
+async def spoken_summary(agent: Agent) -> bool:
+    started = time.monotonic()
+    try:
+        reply = await agent.run(
+            "Explain in detail how a bill becomes a law in the United States."
+        )
+        spoken, ended = spoken_part(reply, final=True)
+        if not ended or len(spoken) > 400:
+            raise AssertionError("Reply did not separate a short spoken summary")
+        record("spoken-summary", "passed", started, spoken=spoken, chars=len(reply))
+        return True
+    except Exception as error:
+        record(
+            "spoken-summary",
+            "failed",
+            started,
+            error_type=type(error).__name__,
+            reason=str(error) if isinstance(error, AssertionError) else None,
+        )
+        return False
+
+
+async def background_task(agent: Agent) -> bool:
+    started = time.monotonic()
+    try:
+        await agent.run(
+            "Start a background subagent that uses Python to find the 25th prime "
+            "number, then tell me you started it."
+        )
+        dispatched = time.monotonic() - started
+        if not agent.pending:
+            raise AssertionError("No background delegation was started")
+        await asyncio.wait_for(agent.background_finished(), 600)
+        reply = await agent.run(BACKGROUND_PROMPT)
+        if "97" not in reply:
+            raise AssertionError("Background result did not report 97")
+        record(
+            "background-task",
+            "passed",
+            started,
+            dispatched_seconds=round(dispatched, 3),
+            reply=reply,
+        )
+        return True
+    except Exception as error:
+        record(
+            "background-task",
+            "failed",
+            started,
+            error_type=type(error).__name__,
+            reason=str(error) if isinstance(error, AssertionError) else None,
+        )
+        return False
+
+
 async def voice(
     api_url: str = "http://127.0.0.1:8000", harness: str = "hermes"
 ) -> bool:
@@ -305,6 +361,8 @@ async def run(args: argparse.Namespace) -> None:
             browser_state["trial"] = uuid4().hex
             browser_state["fixture_url"] += "&slate_trial=" + browser_state["trial"]
             results.append(await purchase_denied(agent, browser_state))
+            results.append(await spoken_summary(agent))
+            results.append(await background_task(agent))
         if args.memory:
             wrote_memory = await check(
                 "memory-write",

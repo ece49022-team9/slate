@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 from livekit import api, rtc
+from slate.agent.agent import BACKGROUND_PROMPT
 from slate.app import app
 from slate.voice.audio import MAX_AUDIO_SECONDS, SAMPLE_BYTES, SAMPLE_RATE
 from slate.voice.session import VoiceSession
@@ -133,11 +134,12 @@ class VoiceStreamingTests(unittest.IsolatedAsyncioTestCase):
         session.tasks = set()
         session.turn = Turn()
         session.turn_task = None
+        session.watcher = None
         session.room = Mock(local_participant=Mock(publish_data=AsyncMock()))
         session.speaker = Mock(
             capture_frame=AsyncMock(), wait_for_playout=AsyncMock(), clear_queue=Mock()
         )
-        session.agent = Mock()
+        session.agent = Mock(pending=set())
         return session
 
     async def test_streams_speech_before_generation_completes_without_duplicates(
@@ -178,6 +180,76 @@ class VoiceStreamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [packet["text"] for packet in packets], [first, first + second]
         )
+
+    async def reply_with_details(self, streamed: bool) -> tuple[list, list, str]:
+        session = self.session()
+        spoken = []
+        summary = "Paris is the capital of France."
+        full = f"{summary}\n---\nIt has about two million residents."
+
+        async def generate(message, progress, *, device_context):
+            if streamed:
+                for delta in (summary + "\n-", "--\n", full.split("\n", 2)[2]):
+                    await progress({"type": "reply.delta", "delta": delta})
+                await progress({"type": "answer.complete", "text": full})
+            return full
+
+        async def speak(text, *, timings):
+            spoken.append(text)
+            yield b"\x01\x00"
+
+        session.agent.run = generate
+        with patch("slate.voice.session.speak_stream", speak):
+            self.assertEqual(await session.respond(session.turn, "request", []), full)
+        publish = session.room.local_participant.publish_data
+        packets = [json.loads(call.args[0]) for call in publish.await_args_list]
+        return spoken, packets, full
+
+    async def test_speaks_the_summary_and_shows_the_details(self):
+        for streamed in (True, False):
+            with self.subTest(streamed=streamed):
+                spoken, packets, full = await self.reply_with_details(streamed)
+                self.assertEqual(spoken, ["Paris is the capital of France."])
+                self.assertEqual(packets[-1]["text"], full)
+
+    async def test_background_result_is_announced_once_the_user_turn_ends(self):
+        session = self.session()
+        user_turn = session.turn
+        finished = asyncio.Event()
+        session.agent.pending = {"deleg_a"}
+
+        async def background_finished():
+            session.agent.pending.clear()
+            finished.set()
+            return {"deleg_a"}
+
+        session.agent.background_finished = background_finished
+        session.agent.run = AsyncMock(
+            return_value="The 30th Fibonacci number is 832040."
+        )
+        spoken = []
+
+        async def speak(text, *, timings):
+            spoken.append(text)
+            yield b"\x01\x00"
+
+        with patch("slate.voice.session.speak_stream", speak):
+            session.watch_background()
+            await asyncio.wait_for(finished.wait(), 1)
+            await asyncio.sleep(0.3)
+            self.assertIs(session.turn, user_turn)
+            session.agent.run.assert_not_awaited()
+            session.turn = None
+            await asyncio.wait_for(session.watcher, 2)
+        self.assertEqual(session.agent.run.await_args.args[0], BACKGROUND_PROMPT)
+        self.assertEqual(spoken, ["The 30th Fibonacci number is 832040."])
+        packets = [
+            json.loads(call.args[0])
+            for call in session.room.local_participant.publish_data.await_args_list
+        ]
+        self.assertTrue(all(packet["announcement"] for packet in packets))
+        self.assertTrue(packets[-1]["final"])
+        self.assertIsNone(session.turn)
 
     async def test_completion_only_provider_synthesizes_once(self):
         session = self.session()

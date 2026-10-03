@@ -283,6 +283,7 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
             run=AsyncMock(return_value="The heading is Slate."),
             timings={"duration_ms": 12.5},
             last_run={"runtime": {"provider": "test", "model": "test-model"}},
+            pending=set(),
         )
         session.speaker = Mock(
             capture_frame=AsyncMock(), wait_for_playout=AsyncMock(), clear_queue=Mock()

@@ -20,7 +20,7 @@ class ManagedAgent:
         model: str | None = None,
         instructions: str = INSTRUCTIONS,
         browser: bool = False,
-        timeout: float = 300,
+        timeout: float | None = None,
     ) -> None:
         self.client = client or AsyncOpenAI(max_retries=0)
         self.session_id = session_id
@@ -30,6 +30,7 @@ class ManagedAgent:
         self.browser = browser
         self.timeout = timeout
         self.run_id: str | None = None
+        self.pending: set[str] = set()
         self.last_run: dict = {}
         self._timings: dict[str, int] = {}
         self.lock = asyncio.Lock()

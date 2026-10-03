@@ -9,6 +9,7 @@ from uuid import uuid4
 from livekit import rtc
 
 from slate.agent import create_agent
+from slate.agent.agent import BACKGROUND_PROMPT
 from slate.device import DeviceCommand, DeviceSDK, agent_context
 from slate.voice.audio import SAMPLE_RATE
 from slate.voice.client import speak_stream, transcribe_stream
@@ -23,6 +24,18 @@ from slate.voice.turn import Turn
 
 logger = logging.getLogger("slate.voice.session")
 CAPTURE_DRAIN_SECONDS = 1.0
+SPOKEN_END = "\n---"
+
+
+def spoken_part(text: str, final: bool) -> tuple[str, bool]:
+    before, marker, _ = text.partition(SPOKEN_END)
+    if marker:
+        return before, True
+    if not final:
+        for size in range(len(SPOKEN_END), 0, -1):
+            if text.endswith(SPOKEN_END[:size]):
+                return text[:-size], False
+    return text, False
 
 
 class VoiceSession:
@@ -43,6 +56,7 @@ class VoiceSession:
         self.turn_task: asyncio.Task | None = None
         self.reader: asyncio.Task | None = None
         self.turn_lock = asyncio.Lock()
+        self.watcher: asyncio.Task | None = None
 
     def spawn(self, work: Coroutine[Any, Any, None]) -> asyncio.Task:
         task = asyncio.create_task(work)
@@ -223,6 +237,8 @@ class VoiceSession:
     ) -> None:
         if self.closed or self.turn is not turn:
             return
+        if turn.announcement:
+            fields["announcement"] = True
         await self.room.local_participant.publish_data(
             json.dumps({"turn_id": turn.id, **fields}),
             reliable=True,
@@ -291,9 +307,18 @@ class VoiceSession:
         queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
         sentences = Sentences()
         streamed = ""
+        spoken = ""
+        speaking = True
         complete = False
 
-        async def enqueue(pieces: list[str]) -> None:
+        async def speak(text: str, final: bool) -> None:
+            nonlocal spoken, speaking
+            if not speaking:
+                return
+            visible, ended = spoken_part(text, final)
+            pieces = sentences.feed(visible[len(spoken) :], final=final or ended)
+            spoken = visible
+            speaking = not ended
             for piece in pieces:
                 await queue.put(piece)
 
@@ -303,11 +328,10 @@ class VoiceSession:
                 return
             await self.agent_progress(turn, event)
             if event["type"] == "reply.delta":
-                piece = event["delta"]
-                streamed += piece
+                streamed += event["delta"]
                 await self.publish(turn, topic=REPLY_TOPIC, text=streamed, final=False)
                 turn.timing.mark("reply_text_published")
-                await enqueue(sentences.feed(piece))
+                await speak(streamed, final=False)
             elif event["type"] == "answer.complete":
                 answer = event["text"]
                 if streamed and streamed.strip() != answer.strip():
@@ -318,16 +342,14 @@ class VoiceSession:
                         turn, topic=REPLY_TOPIC, text=answer, final=False
                     )
                     turn.timing.mark("reply_text_published")
-                    await enqueue(sentences.feed(answer))
-                await enqueue(sentences.feed("", final=True))
+                await speak(streamed, final=True)
                 complete = True
 
         async def generate() -> str:
             turn.timing.mark("agent_requested")
-            async with asyncio.timeout(310):
-                answer = await self.agent.run(
-                    text, progress, device_context=agent_context(turn.scope)
-                )
+            answer = await self.agent.run(
+                text, progress, device_context=agent_context(turn.scope)
+            )
             turn.timing.mark("agent_completed")
             if not complete:
                 await progress({"type": "answer.complete", "text": answer})
@@ -390,6 +412,7 @@ class VoiceSession:
                 await self.publish(
                     turn, topic=REPLY_TOPIC, text=reply, final=True, **fields
                 )
+                self.watch_background()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -403,6 +426,43 @@ class VoiceSession:
             )
         finally:
             turn.finish()
+            if self.turn is turn:
+                self.turn = None
+
+    def watch_background(self) -> None:
+        if self.agent.pending and (self.watcher is None or self.watcher.done()):
+            self.watcher = self.spawn(self.report_background())
+
+    async def report_background(self) -> None:
+        while self.agent.pending:
+            finished = await self.agent.background_finished()
+            logger.info("Announcing background results %s", sorted(finished))
+            while True:
+                async with self.turn_lock:
+                    if self.closed:
+                        return
+                    if self.turn is None:
+                        turn = Turn(announcement=True)
+                        turn.finish()
+                        self.turn = turn
+                        task = self.turn_task = self.spawn(self.announce(turn))
+                        break
+                await asyncio.sleep(0.2)
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def announce(self, turn: Turn) -> None:
+        try:
+            reply = await self.respond(turn, BACKGROUND_PROMPT, [])
+            await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=True)
+            self.watch_background()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Background announcement failed for turn %s", turn.id)
+            await self.publish(
+                turn, topic=REPLY_TOPIC, error="The background result could not be read"
+            )
+        finally:
             if self.turn is turn:
                 self.turn = None
 
