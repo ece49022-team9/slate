@@ -17,8 +17,8 @@ web:
 
 check:
 	uv run python -m slate.board --check
-	uv run ruff check server scripts tests
-	uv run ruff format --check server scripts tests
+	uv run ruff check server scripts tests hermes
+	uv run ruff format --check server scripts tests hermes
 	uv run python -m unittest discover -s tests
 	npm --prefix web run lint
 	npm --prefix web run build

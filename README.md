@@ -32,7 +32,7 @@ Open [localhost:5173](http://127.0.0.1:5173), connect your microphone, and hold 
 
 ## Agent
 
-Slate owns the voice connection, cancellation, and approval UI. Hermes owns the tool loop, session search, and persistent memory. Its source and dependencies are pinned in [experiments/agent.toml](experiments/agent.toml); upstream code lives in the ignored `.local/hermes` cache.
+Slate owns the voice connection, cancellation, and approval UI. Hermes owns the tool loop, session search, and persistent memory. Hermes has web search and extraction, image analysis, a terminal, files and Python code execution (all in a Modal sandbox), skills, task planning, delegated agents, scheduled jobs, account connections, memory, past-chat search, the browser, and the device SDK. Its clarifying-question tool has no channel through the API server, so Slate asks follow-up questions in its spoken reply. The `slate-guard` plugin in [hermes/slate-guard](hermes/slate-guard) sends any tool that would send a message or spend money to Slate's approval prompt; browser clicks are judged by the label of the element they hit, and Enter on a checkout page or a typed card number also needs approval. `uv run python scripts/check_agent.py --tools` checks web search, the Modal terminal, and a denied purchase on a test shop. Its source and dependencies are pinned in [experiments/agent.toml](experiments/agent.toml); upstream code lives in the ignored `.local/hermes` cache.
 
 ```sh
 make agent-setup
