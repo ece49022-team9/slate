@@ -5,7 +5,7 @@ from slate.device import DeviceSDK, FirmwareDevice, OrbRequest, TextRequest
 
 
 async def run() -> None:
-    async with breadboard() as bench:
+    async with breadboard(connect_cloud=False) as bench:
         active = True
         peer = FirmwareDevice(bench.link, lambda: "fixture")
 

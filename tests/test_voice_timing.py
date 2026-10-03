@@ -2,15 +2,13 @@ import asyncio
 import copy
 import json
 import unittest
-from collections.abc import AsyncIterator, Callable
-from types import SimpleNamespace
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, Mock, patch
 
-from livekit import rtc
+import websockets
 from slate.voice.audio import SAMPLE_RATE
-from slate.voice.device import transcribe_audio
-from slate.voice.session import VoiceSession
-from slate.voice.settings import REPLY_TOPIC, TRANSCRIPT_TOPIC
+from slate.voice.device import converse
+from slate.voice.session import Hello, VoiceSession
 from slate.voice.timing import Timeline, milliseconds
 from slate.voice.turn import Turn
 
@@ -18,20 +16,25 @@ from scripts.profile_voice import summarize
 
 
 def profile_fixture() -> dict:
-    def clock(**marks: int) -> dict:
+    def clock(host: str, **marks: int) -> dict:
         return {
-            "host": "local-host",
+            "host": host,
             "marks_ns": {key: value * 1_000_000 for key, value in marks.items()},
         }
 
     return {
         "device": clock(
+            "mac",
+            connect_requested=0,
+            connected=100,
+            turn_requested=100,
+            turn_ready=150,
             end_requested=1000,
-            end_acknowledged=1001,
             reply_first_frame=1615,
             reply_first_audible=1640,
         ),
         "server": clock(
+            "modal",
             end_requested=1002,
             input_finished=1302,
             stt_requested=500,
@@ -54,7 +57,6 @@ def profile_fixture() -> dict:
                 "completed": 1800,
             }.items()
         },
-        "simulator": clock(build_requested=0, build_completed=20, board_ready=25),
         "stt": {
             "remote": {"tail_decode_ms": 10.0, "tail_decode_after_first_text_ms": 5.0}
         },
@@ -94,11 +96,19 @@ def profile_fixture() -> dict:
 
 
 class ProfileReportTests(unittest.TestCase):
-    def test_cross_host_timestamps_are_rejected_before_subtraction(self):
+    def test_device_and_server_clocks_are_never_subtracted_from_each_other(self):
         timing = profile_fixture()
-        timing["server"]["host"] = "different-host"
-        with self.assertRaisesRegex(ValueError, "one host"):
-            summarize(timing)
+        timing["server"]["marks_ns"] = {
+            key: value + 10**15 for key, value in timing["server"]["marks_ns"].items()
+        }
+        timing["agent"] = {
+            key: value + 10**15 for key, value in timing["agent"].items()
+        }
+        report = summarize(timing)
+        self.assertEqual(report["end_to_audible_ms"], 640.0)
+        self.assertEqual(report["end_to_first_pcm_ms"], 598.0)
+        self.assertEqual(report["connect_ms"], 100.0)
+        self.assertEqual(report["turn_setup_ms"], 50.0)
 
     def test_unknown_ttft_stays_unavailable_without_inference_removed_estimate(self):
         for value in ("missing", None):
@@ -111,7 +121,6 @@ class ProfileReportTests(unittest.TestCase):
                 report = summarize(timing)
                 self.assertIsNone(report["agent_ttft_ms"])
                 self.assertIsNone(report["agent_text_delivery_ms"])
-                self.assertNotIn("retained_ttft_ms", report)
                 self.assertEqual(report["end_to_audible_ms"], 640.0)
 
     def test_missing_critical_path_endpoints_leave_only_affected_metrics_unavailable(
@@ -119,11 +128,12 @@ class ProfileReportTests(unittest.TestCase):
     ):
         for stage, name, metric in (
             ("device", "end_requested", "end_to_audible_ms"),
+            ("device", "reply_first_audible", "end_to_audible_ms"),
+            ("server", "end_requested", "end_to_stt_ms"),
             ("server", "stt_completed", "end_to_stt_ms"),
             ("server", "tts_completed", "tts_total_ms"),
             ("server", "tts_requested", "tts_total_ms"),
             ("server", "tts_first_audio", "end_to_first_pcm_ms"),
-            ("device", "reply_first_audible", "reply_enqueue_to_audible_ms"),
         ):
             for missing in (True, False):
                 with self.subTest(stage=stage, name=name, missing=missing):
@@ -135,27 +145,20 @@ class ProfileReportTests(unittest.TestCase):
                     report = summarize(timing)
                     self.assertIsNone(report[metric])
                     if name == "tts_completed":
-                        self.assertEqual(report["end_to_first_pcm_ms"], 600.0)
+                        self.assertEqual(report["end_to_first_pcm_ms"], 598.0)
 
-    def test_first_audio_path_sums_while_agent_and_tts_continue_after_audible(self):
+    def test_first_audio_path_sums_on_the_server_clock(self):
         timing = profile_fixture()
         original = copy.deepcopy(timing)
         report = summarize(timing)
-        intervals = (
-            "end_to_first_pcm_ms",
-            "tts_first_pcm_to_enqueue_ms",
-            "reply_enqueue_to_audible_ms",
-        )
         self.assertEqual(
-            sum(report[name] for name in intervals), report["end_to_audible_ms"]
+            report["end_to_first_pcm_ms"] + report["tts_first_pcm_to_enqueue_ms"],
+            report["end_to_enqueue_ms"],
         )
         self.assertEqual(report["stt_first_text_ms"], 100.0)
         self.assertEqual(report["stt_flush_ms"], 98.0)
         self.assertEqual(report["agent_total_ms"], 390.0)
         self.assertEqual(report["tts_total_ms"], 590.0)
-        self.assertNotIn("retained_ttft_ms", report)
-        self.assertNotIn("tts_after_first_token_ms", report)
-        self.assertNotIn("agent_to_tts_ms", report)
         self.assertEqual(timing, original)
 
     def test_remote_generation_offsets_must_follow_token_pcm_completion_order(self):
@@ -181,21 +184,9 @@ class ProfileReportTests(unittest.TestCase):
         timing["tts"]["segments"][0]["remote"]["first_pcm_ms"] = None
         self.assertIsNone(summarize(timing)["tts_first_segment_first_pcm_ms"])
 
-    def test_enqueue_to_audible_includes_transport_and_leading_silence(self):
-        report = summarize(profile_fixture())
-        self.assertEqual(report["reply_enqueue_to_audible_ms"], 35.0)
-        self.assertEqual(report["tts_first_pcm_to_audible_ms"], 40.0)
-        self.assertNotIn("tts_transport_startup_ms", report)
-        self.assertNotIn("tts_outside_generate_ms", report)
-
-    def test_livekit_silence_before_synthesis_is_not_counted_as_generated_pcm(self):
+    def test_audible_reply_before_end_rejects_reversed_device_marks(self):
         timing = profile_fixture()
-        timing["device"]["marks_ns"]["reply_first_frame"] = 1604 * 1_000_000
-        self.assertEqual(summarize(timing)["reply_enqueue_to_audible_ms"], 35.0)
-
-    def test_audible_pcm_before_enqueue_rejects_reversed_same_host_marks(self):
-        timing = profile_fixture()
-        timing["device"]["marks_ns"]["reply_first_audible"] = 1604 * 1_000_000
+        timing["device"]["marks_ns"]["reply_first_audible"] = 999 * 1_000_000
         with self.assertRaisesRegex(ValueError, "follows"):
             summarize(timing)
 
@@ -272,22 +263,21 @@ class TimingTests(unittest.TestCase):
 
 class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
     def session(self, *, profile: bool) -> VoiceSession:
-        session = object.__new__(VoiceSession)
-        session.profile = profile
-        session.closed = False
-        session.turn = Turn()
-        session.turn.push(b"\x01\x00")
-        session.turn.finish()
-        session.publish = AsyncMock()
-        session.agent = Mock(
+        agent = Mock(
             run=AsyncMock(return_value="The heading is Slate."),
             timings={"duration_ms": 12.5},
             last_run={"runtime": {"provider": "test", "model": "test-model"}},
             pending=set(),
         )
-        session.speaker = Mock(
-            capture_frame=AsyncMock(), wait_for_playout=AsyncMock(), clear_queue=Mock()
-        )
+        socket = Mock(send_text=AsyncMock(), send_bytes=AsyncMock())
+        with patch("slate.voice.session.create_agent", return_value=agent):
+            session = VoiceSession(
+                socket, Hello(type="hello", rate=SAMPLE_RATE, profile=profile)
+            )
+        session.turn = Turn()
+        session.turn.push(b"\x01\x00")
+        session.turn.finish()
+        session.publish = AsyncMock()
         return session
 
     async def test_profile_measures_stages_without_changing_spoken_output(self):
@@ -330,10 +320,9 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     session.agent.run.await_args.args[0], "Read the heading."
                 )
-                session.speaker.capture_frame.assert_awaited_once()
-                session.speaker.wait_for_playout.assert_awaited_once()
+                session.socket.send_bytes.assert_awaited_once()
+                self.assertEqual(session.publish.await_args.args[1], "reply")
                 final = session.publish.await_args.kwargs
-                self.assertEqual(final["topic"], REPLY_TOPIC)
                 self.assertEqual(final["text"], "The heading is Slate.")
                 self.assertTrue(final["final"])
                 self.assertIsNone(session.turn)
@@ -417,9 +406,9 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
         ):
             await session.transcribe(turn)
         session.publish.assert_awaited_once()
+        self.assertEqual(session.publish.await_args.args[1], "error")
         final = session.publish.await_args.kwargs
-        self.assertEqual(final["topic"], TRANSCRIPT_TOPIC)
-        self.assertIn("error", final)
+        self.assertEqual(final["stage"], "transcription")
         self.assertNotIn("timing", final)
         session.agent.run.assert_not_awaited()
         self.assertIsNone(session.turn)
@@ -427,103 +416,52 @@ class VoiceProfileTests(unittest.IsolatedAsyncioTestCase):
 
 class DeviceAudioTimingTests(unittest.IsolatedAsyncioTestCase):
     async def test_silent_reply_frame_does_not_count_as_first_audible_reply(self):
-        handlers: dict[str, Callable] = {}
-        announced = asyncio.Event()
-        audio_received = asyncio.Event()
-        audio_closed = asyncio.Event()
-        worker = SimpleNamespace(identity="worker-a")
-        room = Mock()
-        source = Mock(
-            capture_frame=AsyncMock(), wait_for_playout=AsyncMock(), aclose=AsyncMock()
-        )
-        publication = Mock(wait_for_subscription=AsyncMock())
-        room.disconnect = AsyncMock()
-        room.local_participant.publish_track = AsyncMock(return_value=publication)
+        received = []
 
-        def register(name: str):
-            def attach(handler):
-                handlers[name] = handler
-                return handler
-
-            return attach
-
-        room.on.side_effect = register
-
-        async def connect(*args) -> None:
-            handlers["track_subscribed"](
-                SimpleNamespace(kind=rtc.TrackKind.KIND_AUDIO), None, worker
-            )
-
-        def data(topic: str, **fields) -> None:
-            handlers["data_received"](
-                SimpleNamespace(
-                    topic=topic,
-                    participant=worker,
-                    data=json.dumps({"turn_id": "turn-a", **fields}).encode(),
+        async def slate(socket):
+            received.append(socket.request.headers["Authorization"])
+            received.append(json.loads(await socket.recv()))
+            assert json.loads(await socket.recv()) == {"type": "start"}
+            await socket.send(json.dumps({"type": "turn", "turn_id": "turn-a"}))
+            while isinstance(message := await socket.recv(), bytes):
+                received.append(len(message))
+            assert json.loads(message) == {"type": "end"}
+            await socket.send(
+                json.dumps(
+                    {
+                        "type": "transcript",
+                        "turn_id": "turn-a",
+                        "text": "Hello.",
+                        "final": True,
+                    }
                 )
             )
-
-        async def rpc(*, destination_identity, method, payload) -> str:
-            if method == "start_turn":
-                return "turn-a"
-            data(TRANSCRIPT_TOPIC, text="Hello.", final=True)
-            data(REPLY_TOPIC, text="Hello back.", final=False)
-            announced.set()
-            await asyncio.wait_for(audio_received.wait(), 1)
-            data(REPLY_TOPIC, text="Hello back.", final=True, timing={})
-            return "turn-a"
-
-        room.connect = connect
-        room.local_participant.perform_rpc = rpc
-
-        class AudioStream:
-            async def __aiter__(self):
-                await announced.wait()
-                for chunk in (b"\x60\x00" * 480, b"\x61\x00" * 480):
-                    yield SimpleNamespace(frame=SimpleNamespace(data=memoryview(chunk)))
-                audio_received.set()
-                await asyncio.Future()
-
-            async def aclose(self):
-                audio_closed.set()
+            reply = {"type": "reply", "turn_id": "turn-a", "text": "Hello back."}
+            await socket.send(json.dumps({**reply, "final": False}))
+            await socket.send(b"\x60\x00" * 480)
+            await socket.send(b"\x61\x00" * 480)
+            await socket.send(json.dumps({**reply, "final": True, "timing": {}}))
+            await socket.wait_closed()
 
         async def input_audio():
             yield b"\x01\x00" * 320
 
-        requests = Mock(
-            side_effect=[
-                {
-                    "session_id": "session-a",
-                    "worker_identity": "worker-a",
-                    "server_url": "ws://local.test",
-                    "participant_token": "test-token",
-                },
-                {},
-            ]
-        )
-        with (
-            patch("slate.voice.device.session_request", requests),
-            patch("slate.voice.device.rtc.Room", return_value=room),
-            patch("slate.voice.device.rtc.AudioSource", return_value=source),
-            patch("slate.voice.device.rtc.AudioStream", return_value=AudioStream()),
-            patch("slate.voice.device.rtc.LocalAudioTrack.create_audio_track"),
-        ):
-            result = await transcribe_audio(
-                input_audio(), "http://local.test", 16000, profile=True
+        async with websockets.serve(slate, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            result = await converse(
+                input_audio(), f"http://127.0.0.1:{port}", "token-a", profile=True
             )
+        self.assertEqual(
+            received[:2],
+            ["Bearer token-a", {"type": "hello", "rate": 16000, "profile": True}],
+        )
+        self.assertEqual(received[2:], [640])
         self.assertEqual(result.transcript, "Hello.")
         self.assertEqual(result.reply, "Hello back.")
         self.assertTrue(result.audio)
         marks = result.timings["device"]["marks_ns"]
         self.assertLess(marks["reply_first_frame"], marks["reply_first_audible"])
         self.assertLess(marks["reply_first_audible"], marks["reply_complete_received"])
-        self.assertTrue(audio_closed.is_set())
-        source.aclose.assert_awaited_once()
-        room.disconnect.assert_awaited_once()
-        self.assertEqual(
-            json.loads(requests.call_args_list[0].args[2]), {"profile": True}
-        )
-        self.assertEqual(requests.call_args_list[-1].args[1], "DELETE")
 
 
 if __name__ == "__main__":

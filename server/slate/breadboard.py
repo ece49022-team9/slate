@@ -15,6 +15,7 @@ from pathlib import Path
 
 from slate.board import ROOT, load
 from slate.link import BAUD, Link
+from slate.voice.device import CLOUD, cloud, socket_url
 
 QEMU = Path(
     os.environ.get(
@@ -286,7 +287,9 @@ def build_image(environment: str = "esp32dev") -> Path:
 
 @asynccontextmanager
 async def breadboard(
-    realtime: bool = False, boot_message: str = "slate.state: 0"
+    realtime: bool = False,
+    boot_message: str = "slate.state: 0",
+    connect_cloud: bool = True,
 ) -> AsyncIterator[Breadboard]:
     if not QEMU.exists():
         raise RuntimeError(f"slate.breadboard: {QEMU} is missing; run make sim-setup")
@@ -327,6 +330,8 @@ async def breadboard(
                     "shift=2,sleep=off",
                     "-seed",
                     "1",
+                    "-nic",
+                    "user,model=open_eth" if connect_cloud else "none",
                     "-drive",
                     f"file={IMAGE},if=mtd,format=raw",
                     "-chardev",
@@ -348,6 +353,21 @@ async def breadboard(
                     f"slate.breadboard: boot timed out at {bench.now / 1e9:.3f}s "
                     f"emulated; see {SERIAL} and {QEMU_LOG}"
                 ) from None
+            has_cloud = (
+                os.environ.get("SLATE_CLOUD_URL")
+                or os.environ.get("SLATE_DEVICE_TOKEN")
+                or CLOUD.exists()
+            )
+            if connect_cloud and has_cloud:
+                cloud_url, device_token = cloud()
+                network = asyncio.create_task(bench.link.wait_for("slate.net: up", 30))
+                bench.link.type("!net eth\n")
+                if any(line.startswith("slate.net: up ") for line in bench.link.lines):
+                    network.cancel()
+                    await asyncio.gather(network, return_exceptions=True)
+                else:
+                    await network
+                bench.link.type(f"!cloud {socket_url(cloud_url)} {device_token}\n")
             yield bench
         finally:
             if process is not None and process.returncode is None:

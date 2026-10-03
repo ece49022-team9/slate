@@ -12,46 +12,33 @@ from pathlib import Path
 from uuid import uuid4
 
 from slate.board import ROOT
-from slate.voice.firmware import simulate_firmware
+from slate.voice.device import simulate
 from slate.voice.timing import milliseconds
 
 CONFIG = tomllib.loads((ROOT / "experiments/agent.toml").read_text())
 
 
 def summarize(timings: dict) -> dict[str, float | None]:
-    device = timings["device"]
-    server = timings["server"]
-    if device["host"] != server["host"]:
-        raise ValueError("Cross-process timing requires device and server on one host")
-    dm = device["marks_ns"]
-    sm = server["marks_ns"]
+    dm = timings["device"]["marks_ns"]
+    sm = timings["server"]["marks_ns"]
     agent = timings["agent"]
-    simulator = timings["simulator"]["marks_ns"]
     stt = timings["stt"]["remote"]
     segments = timings["tts"]["segments"]
     first_segment = segments[0] if segments else {}
     tts = first_segment.get("remote", {})
     tts_client = first_segment.get("client", {})
-    local = {
-        "end": dm.get("end_requested"),
+    server = {
+        "end": sm.get("end_requested"),
         "stt_ready": sm.get("stt_completed"),
         "agent_first_text": agent.get("first_text"),
         "tts_requested": sm.get("tts_requested"),
         "first_pcm": sm.get("tts_first_audio"),
         "first_enqueue": sm.get("reply_first_enqueue"),
-        "audible": dm.get("reply_first_audible"),
     }
     result = {
-        "firmware_build_ms": milliseconds(
-            simulator, "build_requested", "build_completed"
-        ),
-        "qemu_boot_ms": milliseconds(simulator, "build_completed", "board_ready"),
-        "session_setup_ms": milliseconds(dm, "session_requested", "session_ready"),
-        "livekit_join_ms": milliseconds(
-            dm, "livekit_connect_requested", "mic_subscribed"
-        ),
-        "input_and_drain_ms": milliseconds(dm, "turn_ready", "end_requested"),
-        "end_rpc_ms": milliseconds(dm, "end_requested", "end_acknowledged"),
+        "connect_ms": milliseconds(dm, "connect_requested", "connected"),
+        "turn_setup_ms": milliseconds(dm, "turn_requested", "turn_ready"),
+        "input_ms": milliseconds(dm, "turn_ready", "end_requested"),
         "server_input_drain_ms": milliseconds(sm, "end_requested", "input_finished"),
         "stt_flush_ms": milliseconds(sm, "input_finished", "stt_completed"),
         "stt_first_text_ms": milliseconds(sm, "stt_requested", "stt_first_text"),
@@ -68,10 +55,10 @@ def summarize(timings: dict) -> dict[str, float | None]:
         "agent_terminal_to_completed_ms": milliseconds(agent, "terminal", "completed"),
         "agent_total_ms": milliseconds(sm, "agent_requested", "agent_completed"),
         "agent_first_text_to_tts_request_ms": milliseconds(
-            local, "agent_first_text", "tts_requested"
+            server, "agent_first_text", "tts_requested"
         ),
         "agent_first_text_to_first_pcm_ms": milliseconds(
-            local, "agent_first_text", "first_pcm"
+            server, "agent_first_text", "first_pcm"
         ),
         "tts_total_ms": milliseconds(sm, "tts_requested", "tts_completed"),
         "tts_request_to_first_pcm_ms": milliseconds(
@@ -107,16 +94,15 @@ def summarize(timings: dict) -> dict[str, float | None]:
         if "client" in timings["stt"]
         else None,
     }
-    result["end_to_stt_ms"] = milliseconds(local, "end", "stt_ready")
+    result["end_to_stt_ms"] = milliseconds(server, "end", "stt_ready")
     result["end_to_agent_first_text_ms"] = milliseconds(
-        local, "end", "agent_first_text"
+        server, "end", "agent_first_text"
     )
-    result["end_to_first_pcm_ms"] = milliseconds(local, "end", "first_pcm")
-    result["tts_first_pcm_to_audible_ms"] = milliseconds(local, "first_pcm", "audible")
-    result["reply_enqueue_to_audible_ms"] = milliseconds(
-        local, "first_enqueue", "audible"
+    result["end_to_first_pcm_ms"] = milliseconds(server, "end", "first_pcm")
+    result["end_to_enqueue_ms"] = milliseconds(server, "end", "first_enqueue")
+    result["end_to_audible_ms"] = milliseconds(
+        dm, "end_requested", "reply_first_audible"
     )
-    result["end_to_audible_ms"] = milliseconds(local, "end", "audible")
     generated = tts.get("generate_ms")
     token = tts.get("first_token_ms")
     pcm = tts.get("first_pcm_ms")
@@ -161,7 +147,7 @@ async def run(args: argparse.Namespace) -> None:
     sources += [Path(__file__), ROOT / "uv.lock"]
     metadata = {
         "scope": "latency",
-        "case": "qemu-voice-profile",
+        "case": "cloud-voice-profile",
         "profile_id": uuid4().hex,
         "git_revision": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
@@ -179,89 +165,72 @@ async def run(args: argparse.Namespace) -> None:
             for path in sources
         },
         "definition": (
-            "end-to-audible spans drained microphone input to the first received "
-            "non-silent PCM at the simulator host, not physical speaker output. "
-            "Agent text, CSM generation, decoding and playback can overlap; no "
-            "inference span is subtracted from observed latency. First PCM and "
-            "enqueue-to-non-silent receipt use same-host marks. This includes "
-            "leading synthesized silence; untagged LiveKit silence frames are "
-            "not identified as generated speech. TTS remote and client metrics "
-            "describe the first segment; token and PCM offsets start at remote "
-            "generation, and an acoustic codebook frame is not playable audio. "
-            "Model age/load also describe the first TTS segment. "
-            "Agent TTFT includes opaque provider queue, prefill and reasoning. "
-            "Cross-host timestamps are never subtracted."
+            "The device client runs on the Mac and Slate runs on Modal. "
+            "end-to-audible spans the device's end message to the first non-silent "
+            "reply PCM it receives, both on the device clock; it includes the "
+            "network both ways but not speaker output. Server spans use the "
+            "server clock and start at the server's receipt of end. Agent text, "
+            "CSM generation and streaming can overlap; no inference span is "
+            "subtracted. TTS remote and client metrics describe the first "
+            "segment. Agent TTFT includes opaque provider queue, prefill and "
+            "reasoning. Device and server timestamps are never subtracted."
         ),
     }
     directory = ROOT / CONFIG["tracking"]["raw_runs"] / metadata["profile_id"]
     directory.mkdir(parents=True)
     rows = []
     for trial in range(args.repeats):
-        arms = [("hermes", args.hermes_url), ("openai", args.managed_url)]
-        if trial % 2:
-            arms.reverse()
-        for arm, url in arms:
-            started = time.monotonic()
-            entry = {
-                **metadata,
-                "arm": arm,
-                "trial": trial,
-                "at": datetime.now(UTC).isoformat(),
-            }
-            try:
-                result = await simulate_firmware(args.input, url, "left", profile=True)
-                if not result.audio or not any(
-                    value in result.reply.casefold() for value in ("12", "twelve")
-                ):
-                    raise ValueError("Spoken fixture did not return twelve and audio")
-                runtime = result.timings["agent_runtime"]
-                if runtime["model"] != CONFIG["hermes"]["model"]:
-                    raise ValueError("Profile model differs from the pinned comparison")
-                entry.update(
-                    status="passed",
-                    runtime=runtime,
-                    seconds=time.monotonic() - started,
-                    timings=result.timings,
-                    transcript=result.transcript,
-                    reply=result.reply,
-                )
-                entry["metrics"] = summarize(result.timings)
-                (directory / f"{arm}-{trial}.wav").write_bytes(result.audio)
-                rows.append(entry)
-                print(
-                    f"slate.profile: {arm} trial={trial} "
-                    f"end-to-audible={entry['metrics']['end_to_audible_ms']:.1f}ms "
-                    f"agent-ttft={entry['metrics']['agent_ttft_ms']}ms",
-                    flush=True,
-                )
-            except Exception as error:
-                entry.update(
-                    status="failed",
-                    error_type=type(error).__name__,
-                    reason=str(error) if isinstance(error, ValueError) else None,
-                    seconds=time.monotonic() - started,
-                )
-                raise
-            finally:
-                (directory / f"{arm}-{trial}.json").write_text(
-                    json.dumps(entry, indent=2)
-                )
-                append(entry)
-    summary = {}
-    for arm in ("hermes", "openai"):
-        group = [entry for entry in rows if entry["arm"] == arm]
-        summary[arm] = {
-            "all": aggregate(group),
-            "loaded_model_followups": aggregate(
-                [
-                    row
-                    for row in group
-                    if row["trial"] > 0
-                    and row["metrics"]["stt_model_age_ms"] > 5000
-                    and row["metrics"]["tts_model_age_ms"] > 5000
-                ]
-            ),
-        }
+        started = time.monotonic()
+        entry = {**metadata, "trial": trial, "at": datetime.now(UTC).isoformat()}
+        try:
+            result = await simulate(args.input, profile=True)
+            if not result.audio or not any(
+                value in result.reply.casefold() for value in ("12", "twelve")
+            ):
+                raise ValueError("Spoken fixture did not return twelve and audio")
+            runtime = result.timings["agent_runtime"]
+            if runtime["model"] != CONFIG["hermes"]["model"]:
+                raise ValueError("Profile model differs from the pinned comparison")
+            entry.update(
+                status="passed",
+                runtime=runtime,
+                seconds=time.monotonic() - started,
+                timings=result.timings,
+                transcript=result.transcript,
+                reply=result.reply,
+            )
+            entry["metrics"] = summarize(result.timings)
+            (directory / f"cloud-{trial}.wav").write_bytes(result.audio)
+            rows.append(entry)
+            print(
+                f"slate.profile: trial={trial} "
+                f"end-to-audible={entry['metrics']['end_to_audible_ms']:.1f}ms "
+                f"agent-ttft={entry['metrics']['agent_ttft_ms']}ms",
+                flush=True,
+            )
+        except Exception as error:
+            entry.update(
+                status="failed",
+                error_type=type(error).__name__,
+                reason=str(error) if isinstance(error, ValueError) else None,
+                seconds=time.monotonic() - started,
+            )
+            raise
+        finally:
+            (directory / f"cloud-{trial}.json").write_text(json.dumps(entry, indent=2))
+            append(entry)
+    summary = {
+        "all": aggregate(rows),
+        "loaded_model_followups": aggregate(
+            [
+                row
+                for row in rows
+                if row["trial"] > 0
+                and row["metrics"]["stt_model_age_ms"] > 5000
+                and row["metrics"]["tts_model_age_ms"] > 5000
+            ]
+        ),
+    }
     (directory / "summary.json").write_text(json.dumps(summary, indent=2))
     append({**metadata, "status": "passed", "case": "voice-profile-summary", **summary})
     print(json.dumps(summary, indent=2))
@@ -272,8 +241,6 @@ def main() -> None:
     parser.add_argument(
         "--input", type=Path, default=ROOT / ".local/agent-runs/spoken-input.wav"
     )
-    parser.add_argument("--hermes-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--managed-url", default="http://127.0.0.1:8001")
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
     if args.repeats < 1:

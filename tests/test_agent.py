@@ -1,15 +1,15 @@
 import asyncio
 import json
+import sys
 import unittest
 from collections.abc import AsyncIterator, Callable
-from pathlib import Path
 from time import monotonic_ns
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 from slate.agent import runtime as agent_runtime
 from slate.agent.agent import Agent
-from slate.voice.session import VoiceSession
+from slate.voice.session import Hello, VoiceSession
 from slate.voice.turn import Turn
 
 MODEL = "gpt-6.1-sol"
@@ -587,15 +587,6 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentRuntimeTests(unittest.TestCase):
-    def test_device_mcp_missing_launcher_does_not_partially_change_config(self):
-        config = {"gateway": {"api_server": {"key": "existing-credential"}}}
-        with patch("slate.agent.runtime.shutil.which", return_value=None):
-            with self.assertRaisesRegex(RuntimeError, "Slate device MCP requires uv"):
-                agent_runtime.configure_tools(config)
-        self.assertEqual(
-            config, {"gateway": {"api_server": {"key": "existing-credential"}}}
-        )
-
     def test_device_mcp_config_preserves_credentials_and_other_servers(self):
         config = {
             "gateway": {"api_server": {"key": "existing-credential"}},
@@ -606,12 +597,13 @@ class AgentRuntimeTests(unittest.TestCase):
                 "slate-device": {"env": {"DEVICE_AUTH": "existing-device-credential"}},
             },
         }
-        with (
-            patch("slate.agent.runtime.shutil.which", return_value="/opt/tools/uv"),
-            patch.dict(
-                "os.environ",
-                {"SLATE_DEVICE_MODE": "monty", "MODAL_PROFILE": "slate-test"},
-            ),
+        with patch.dict(
+            "os.environ",
+            {
+                "SLATE_DEVICE_MODE": "monty",
+                "MODAL_PROFILE": "slate-test",
+                "SLATE_PUBLIC_URL": "https://slate.test",
+            },
         ):
             agent_runtime.configure_tools(config)
             agent_runtime.configure_tools(config)
@@ -625,100 +617,49 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(config["bot_desktop"], {"placement": "gateway"})
         self.assertEqual(config["plugins"]["enabled"], ["slate-guard"])
         device = config["mcp_servers"]["slate-device"]
-        self.assertTrue(Path(device["command"]).is_absolute())
-        self.assertEqual(
-            device["args"],
-            [
-                "--directory",
-                str(agent_runtime.ROOT),
-                "run",
-                "--no-sync",
-                "python",
-                "-m",
-                "slate.agent.device_mcp",
-            ],
-        )
+        self.assertEqual(device["command"], sys.executable)
+        self.assertEqual(device["args"], ["-m", "slate.agent.device_mcp"])
         self.assertEqual(
             device["env"],
             {
                 "DEVICE_AUTH": "existing-device-credential",
                 "SLATE_DEVICE_MODE": "monty",
                 "SLATE_DEVICE_URL": "http://127.0.0.1:8000",
+                "SLATE_PUBLIC_URL": "https://slate.test",
                 "MODAL_PROFILE": "slate-test",
             },
         )
 
 
 class VoiceSessionCleanupTests(unittest.IsolatedAsyncioTestCase):
-    async def test_abort_clears_queued_audio_before_waiting_for_agent_cancellation(
-        self,
-    ):
-        session = object.__new__(VoiceSession)
-        order: list[str] = []
-        session.turn_lock = asyncio.Lock()
-        session.closed = False
-        session.device_identity = "device-test"
-        session.room = Mock(local_participant=Mock(publish_data=AsyncMock()))
+    def session(self, agent) -> VoiceSession:
+        with patch("slate.voice.session.create_agent", return_value=agent):
+            return VoiceSession(Mock(), Hello(type="hello"))
+
+    async def test_close_cancels_the_turn_and_releases_the_agent_once(self):
+        session = self.session(Mock(close=AsyncMock()))
         running = asyncio.Event()
-        cancelled = asyncio.Event()
-        release = asyncio.Event()
 
         async def reply() -> None:
             running.set()
-            try:
-                await asyncio.Future()
-            except asyncio.CancelledError:
-                order.append("cancel")
-                cancelled.set()
-                await release.wait()
-                raise
+            await asyncio.Future()
 
         session.turn = Turn()
-        session.turn_task = asyncio.create_task(reply())
-        session.speaker = Mock()
-        session.speaker.clear_queue.side_effect = lambda: order.append("clear")
+        session.turn_task = session.spawn(reply())
         await asyncio.wait_for(running.wait(), 1)
-        abort = asyncio.create_task(session.abort())
-        try:
-            await asyncio.wait_for(cancelled.wait(), 1)
-            self.assertEqual(order, ["clear", "cancel"])
-            self.assertFalse(abort.done())
-        finally:
-            release.set()
-            await asyncio.wait_for(abort, 1)
-        self.assertIsNone(session.turn)
-
-    async def test_close_releases_agent_client_and_native_audio_resources_once(self):
-        session = object.__new__(VoiceSession)
-        session.closed = False
-        session.close_done = asyncio.Event()
-        session.turn = None
-        session.tasks = set()
-        session.agent = Mock(close=AsyncMock())
-        session.speaker = Mock(aclose=AsyncMock())
-        session.room = Mock(disconnect=AsyncMock())
         await session.close()
         await session.close()
         session.agent.close.assert_awaited_once()
-        session.speaker.aclose.assert_awaited_once()
-        session.room.disconnect.assert_awaited_once()
+        self.assertTrue(session.turn_task.cancelled())
+        self.assertIsNone(session.turn)
         self.assertTrue(session.close_done.is_set())
 
-    async def test_close_releases_audio_when_remote_agent_cleanup_fails(self):
-        session = object.__new__(VoiceSession)
-        session.closed = False
-        session.close_done = asyncio.Event()
-        session.turn = None
-        session.tasks = set()
-        session.agent = Mock(
-            close=AsyncMock(side_effect=RuntimeError("remote cleanup failed"))
+    async def test_close_finishes_when_remote_agent_cleanup_fails(self):
+        session = self.session(
+            Mock(close=AsyncMock(side_effect=RuntimeError("remote cleanup failed")))
         )
-        session.speaker = Mock(aclose=AsyncMock())
-        session.room = Mock(disconnect=AsyncMock())
         with self.assertRaisesRegex(RuntimeError, "remote cleanup failed"):
             await session.close()
-        session.speaker.aclose.assert_awaited_once()
-        session.room.disconnect.assert_awaited_once()
         self.assertTrue(session.close_done.is_set())
 
 

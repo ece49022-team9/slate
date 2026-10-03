@@ -13,7 +13,7 @@ from slate.link import Link, open_board
 CALIBRATION = ROOT / "firmware/sim_calibration.toml"
 SERIAL_LOG = ROOT / ".local/resources-serial.log"
 TIMERS = ("render", "spi", "audio")
-STACKS = ("loop", "control", "oled", "pdm")
+STACKS = ("loop", "control", "oled", "pdm", "cloud")
 FRAME_US = 30_000
 HEAP_MIN = 32_768
 HEAP_BLOCK = 16_384
@@ -45,6 +45,10 @@ def merge(reports: list[dict]) -> dict:
     ):
         merged[key] = min(report[key] for report in reports)
     merged["heap_total"] = reports[-1]["heap_total"]
+    for task in ("eth", "tcpip", "events", "sys_event", "wifi"):
+        values = [report.get(f"stack_{task}", 0) for report in reports]
+        if any(values):
+            merged[f"stack_{task}"] = min(value for value in values if value)
     return merged
 
 
@@ -64,7 +68,7 @@ async def measure(link: Link, key: str, reports: int) -> dict:
 async def simulated(key: str, reports: int) -> dict:
     board, _ = load()
     rate = board["device"]["mic"]["sample_hz"]
-    async with breadboard() as bench:
+    async with breadboard(connect_cloud=False) as bench:
         samples = tone(440, 12000, 2.5 * reports + 4, rate)
         stereo = [0, 0] * len(samples)
         stereo[bench.slot :: 2] = samples
@@ -103,7 +107,11 @@ def check(target: str, report: dict, scale: dict[str, float] | None) -> list[str
         failures.append(f"heap fell to {report['heap_min']} bytes")
     if report["heap_block"] < HEAP_BLOCK:
         failures.append(f"largest free block is {report['heap_block']} bytes")
-    for task in STACKS:
+    for task in STACKS + tuple(
+        name
+        for name in ("eth", "tcpip", "events", "sys_event", "wifi")
+        if report.get(f"stack_{name}")
+    ):
         if report[f"stack_{task}"] < STACK_MIN:
             failures.append(f"{task} stack has {report[f'stack_{task}']} bytes left")
     print(

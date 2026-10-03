@@ -17,6 +17,7 @@ from slate.agent.runtime import BROWSER as STATE
 from slate.agent.runtime import point_browser
 
 logger = logging.getLogger("slate.browser")
+TAGS = {"slate": "browser"}
 IMAGE = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_pip_install("playwright==1.62.0", "aiohttp==3.13.3")
@@ -25,62 +26,72 @@ IMAGE = (
 )
 
 
+async def describe(sandbox: modal.Sandbox) -> dict:
+    process = await sandbox.exec.aio(
+        "python",
+        "-c",
+        "import urllib.request; "
+        "print(urllib.request.urlopen('http://127.0.0.1:9222/json/version')"
+        ".read().decode())",
+    )
+    version = json.loads(await process.stdout.read.aio())
+    code = await sandbox.exec.aio("printenv", "SLATE_BROWSER_TEST_CODE")
+    credentials = await sandbox.create_connect_token.aio(port=9222)
+    fixture_credentials = await sandbox.create_connect_token.aio(port=8080)
+    path = urlparse(version["webSocketDebuggerUrl"]).path
+    cdp = credentials.url.replace("https://", "wss://").rstrip("/") + path
+    cdp += "?_modal_connect_token=" + credentials.token
+    async with httpx.AsyncClient() as client:
+        response = await client.get(credentials.url + "/json/version")
+        if response.status_code not in (401, 403):
+            raise RuntimeError("Modal allowed unauthenticated access to Chromium")
+        response = await client.get(
+            credentials.url + "/json/version",
+            headers={"Authorization": "Bearer " + credentials.token},
+        )
+        response.raise_for_status()
+        if "webSocketDebuggerUrl" not in response.json():
+            raise RuntimeError("Authenticated Modal endpoint did not expose CDP")
+    return {
+        "sandbox_id": sandbox.object_id,
+        "cdp_url": cdp,
+        "test_code": (await code.stdout.read.aio()).strip(),
+        "fixture_url": fixture_credentials.url.rstrip("/")
+        + "/fixture"
+        + "?_modal_connect_token="
+        + fixture_credentials.token,
+    }
+
+
+async def live() -> dict:
+    """Connection details for the running browser, wherever its supervisor runs."""
+    app = await modal.App.lookup.aio("slate-browser")
+    async for sandbox in modal.Sandbox.list.aio(app_id=app.app_id, tags=TAGS):
+        if await sandbox.poll.aio() is None:
+            return await describe(sandbox)
+    raise RuntimeError("slate.browser: no running Modal Chromium; is make cloud up?")
+
+
 async def start() -> None:
     os.umask(0o077)
     if STATE.exists():
         raise RuntimeError("Browser state already exists; run make browser-stop first")
     app = await modal.App.lookup.aio("slate-browser", create_if_missing=True)
-    code = secrets.token_hex(8)
     sandbox = await modal.Sandbox.create.aio(
         "python",
         "/browser.py",
         app=app,
+        tags=TAGS,
         image=IMAGE,
         timeout=4 * 3600,
         experimental_options={"vm_runtime": True},
         readiness_probe=modal.Probe.with_exec("test", "-f", "/tmp/browser-ready"),
-        env={"SLATE_BROWSER_TEST_CODE": code},
+        env={"SLATE_BROWSER_TEST_CODE": secrets.token_hex(8)},
     )
     try:
         await sandbox.wait_until_ready.aio(timeout=60)
-        process = await sandbox.exec.aio(
-            "python",
-            "-c",
-            "import urllib.request; "
-            "print(urllib.request.urlopen('http://127.0.0.1:9222/json/version')"
-            ".read().decode())",
-        )
-        version = json.loads(await process.stdout.read.aio())
-        credentials = await sandbox.create_connect_token.aio(port=9222)
-        fixture_credentials = await sandbox.create_connect_token.aio(port=8080)
-        path = urlparse(version["webSocketDebuggerUrl"]).path
-        cdp = credentials.url.replace("https://", "wss://").rstrip("/") + path
-        cdp += "?_modal_connect_token=" + credentials.token
-        async with httpx.AsyncClient() as client:
-            response = await client.get(credentials.url + "/json/version")
-            if response.status_code not in (401, 403):
-                raise RuntimeError("Modal allowed unauthenticated access to Chromium")
-            response = await client.get(
-                credentials.url + "/json/version",
-                headers={"Authorization": "Bearer " + credentials.token},
-            )
-            response.raise_for_status()
-            if "webSocketDebuggerUrl" not in response.json():
-                raise RuntimeError("Authenticated Modal endpoint did not expose CDP")
         STATE.parent.mkdir(parents=True, exist_ok=True)
-        STATE.write_text(
-            json.dumps(
-                {
-                    "sandbox_id": sandbox.object_id,
-                    "cdp_url": cdp,
-                    "test_code": code,
-                    "fixture_url": fixture_credentials.url.rstrip("/")
-                    + "/fixture"
-                    + "?_modal_connect_token="
-                    + fixture_credentials.token,
-                }
-            )
-        )
+        STATE.write_text(json.dumps(await describe(sandbox)))
         point_browser()
         print(
             f"slate.browser: authenticated Modal Chromium ready ({sandbox.object_id}); "

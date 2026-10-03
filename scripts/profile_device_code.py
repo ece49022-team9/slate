@@ -9,7 +9,6 @@ import socket
 import statistics
 import subprocess
 import sys
-import tempfile
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -24,15 +23,13 @@ from mcp.client.stdio import stdio_client
 from slate.agent.agent import Agent
 from slate.agent.code_mode import (
     DeviceClient,
-    ModalSandbox,
     MontyExecutor,
-    SandboxExecutor,
 )
 from slate.board import ROOT
 from slate.breadboard import breadboard, build_image
 from slate.device import DeviceSDK, FirmwareDevice, agent_context
 
-MODES = ("tools", "modal", "monty")
+MODES = ("tools", "monty")
 HERMES_URL = "http://127.0.0.1:8642"
 AGENT_LOG = ROOT / ".local/hermes-home/logs/agent.log"
 SOURCES = (
@@ -64,7 +61,7 @@ async def device_fixture():
     voice = SimpleNamespace(current=None)
     async with (
         breadboard() as bench,
-        device_http(voice, proxy_headers=False) as url,
+        device_http(voice) as url,
     ):
         turn = SimpleNamespace(scope=uuid4().hex, id=uuid4().hex)
         peer = FirmwareDevice(bench.link, lambda: turn.id)
@@ -106,8 +103,6 @@ async def run_exec(args, fixture) -> list[dict]:
     async with AsyncExitStack() as stack:
         monty = MontyExecutor(device)
         stack.push_async_callback(monty.close)
-        modal = SandboxExecutor(device, ModalSandbox())
-        stack.push_async_callback(modal.close)
         sessions = {}
         for mode in MODES:
             read, write = await stack.enter_async_context(
@@ -167,10 +162,8 @@ async def run_exec(args, fixture) -> list[dict]:
         arms = {
             "exec/tools": direct,
             "exec/monty": await in_process(monty),
-            "exec/modal": await in_process(modal),
             "mcp/tools": mcp_tools,
             "mcp/monty": mcp_code("monty"),
-            "mcp/modal": mcp_code("modal"),
         }
         names = list(arms)
         rows = []
@@ -202,13 +195,7 @@ async def run_exec(args, fixture) -> list[dict]:
             "exec/monty-new-scope": lambda: monty.execute(
                 fixture.turn.scope, program(work)
             ),
-            "exec/modal-new-scope": lambda: modal.execute(
-                fixture.turn.scope, program(work)
-            ),
             "exec/monty-new-process": lambda: fresh(MontyExecutor(device)),
-            "exec/modal-new-sandbox": lambda: fresh(
-                SandboxExecutor(device, ModalSandbox())
-            ),
         }
         for trial in range(args.cold):
             for name, start_run in cold.items():
@@ -427,50 +414,11 @@ def summarize(rows: list[dict]) -> dict:
     return summary
 
 
-@asynccontextmanager
-async def tunnel(url: str):
-    config = tempfile.NamedTemporaryFile(suffix=".yml")
-    process = await asyncio.create_subprocess_exec(
-        "cloudflared",
-        "tunnel",
-        "--config",
-        config.name,
-        "--no-autoupdate",
-        "--url",
-        url,
-        stdout=subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    found: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-
-    async def drain() -> None:
-        while line := await process.stderr.readline():
-            match = re.search(rb"https://[a-z0-9-]+\.trycloudflare\.com", line)
-            if match and not found.done():
-                found.set_result(match[0].decode())
-        if not found.done():
-            found.set_exception(RuntimeError("slate.profile: tunnel exited early"))
-
-    reader = asyncio.create_task(drain())
-    try:
-        yield await asyncio.wait_for(found, 30)
-    finally:
-        process.terminate()
-        await process.wait()
-        reader.cancel()
-        await asyncio.gather(reader, return_exceptions=True)
-        config.close()
-
-
 async def run_modal(args, fixture) -> list[dict]:
     rows = []
     async with device_code_bench.app.run():
         profile = device_code_bench.remote_profile.remote.aio
-        rows += await profile(None, "stub", args.rounds, args.warmup, args.cold)
-        async with tunnel(fixture.url) as public:
-            rows += await profile(
-                public, fixture.turn.scope, args.rounds, args.warmup, args.cold
-            )
+        rows += await profile(args.rounds, args.warmup, args.cold)
     return rows
 
 
@@ -516,11 +464,10 @@ async def run(args) -> None:
             "firmware over the fixture HTTP device route. exec/* times the runtime "
             "call in-process; mcp/* adds the stdio MCP boundary Hermes uses; "
             "agent/* is a full Hermes turn with a fresh session. modal-* runs "
-            "Monty in-process inside a Modal container, timed there: modal-stub "
-            "uses an in-container fake device, modal-qemu reaches the fixture "
-            "device route over a public tunnel. Code-mode arms "
+            "Monty in-process inside a Modal container against an in-container "
+            "fake device, timed there. Code-mode arms "
             "include their scope status preflight. QEMU runs unpaced, so firmware "
-            "round trips are emulator time, not LiveKit RPC or physical hardware."
+            "round trips are emulator time, not the device socket or physical hardware."
         ),
         "summary": summary,
     }

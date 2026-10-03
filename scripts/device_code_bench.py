@@ -1,4 +1,3 @@
-import asyncio
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,37 +73,13 @@ def stub_transport() -> httpx.MockTransport:
     return httpx.MockTransport(handle)
 
 
-async def wait_until_reachable(client: httpx.AsyncClient, scope: str) -> None:
-    last = None
-    try:
-        async with asyncio.timeout(120):
-            while True:
-                try:
-                    response = await client.get(f"/api/device/{scope}/status")
-                    if response.status_code == 200:
-                        return
-                    last = f"HTTP {response.status_code}"
-                except httpx.TransportError as error:
-                    last = f"{type(error).__name__}: {error}"
-                await asyncio.sleep(1)
-    except TimeoutError:
-        raise RuntimeError(f"slate.bench: device route unreachable: {last}") from None
-
-
 @app.function(image=image, cpu=1.0, memory=1024, timeout=900)
-async def remote_profile(
-    device_url: str | None, scope: str, rounds: int, warmup: int, cold: int
-) -> list[dict]:
-    target = "stub" if device_url is None else "qemu"
-    client = (
-        httpx.AsyncClient(base_url="http://stub.local", transport=stub_transport())
-        if device_url is None
-        else httpx.AsyncClient(base_url=device_url)
-    )
+async def remote_profile(rounds: int, warmup: int, cold: int) -> list[dict]:
+    target = "stub"
+    scope = "stub"
+    client = httpx.AsyncClient(base_url="http://stub.local", transport=stub_transport())
     rows = []
     async with client:
-        if device_url is not None:
-            await wait_until_reachable(client, scope)
         device = DeviceClient(client)
         monty = MontyExecutor(device)
 
