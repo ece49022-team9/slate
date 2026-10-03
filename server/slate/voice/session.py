@@ -3,28 +3,34 @@ import json
 import logging
 from collections.abc import Coroutine
 from contextlib import AsyncExitStack, aclosing
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
-from livekit import rtc
+import numpy as np
+import soxr
+from fastapi import WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from slate.agent import create_agent
 from slate.agent.agent import BACKGROUND_PROMPT
 from slate.device import DeviceCommand, DeviceSDK, agent_context
-from slate.voice.audio import SAMPLE_RATE
+from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE
 from slate.voice.client import speak_stream, transcribe_stream
 from slate.voice.reply import Sentences
-from slate.voice.settings import (
-    REPLY_TOPIC,
-    TRANSCRIPT_TOPIC,
-    WORKER_IDENTITY,
-    VoiceSettings,
-)
 from slate.voice.turn import Turn
 
 logger = logging.getLogger("slate.voice.session")
-CAPTURE_DRAIN_SECONDS = 1.0
 SPOKEN_END = "\n---"
+REPLY_FRAME_BYTES = SAMPLE_RATE * SAMPLE_BYTES // 50
+REPLY_LEAD_SECONDS = 0.3
+RECEIPT_SECONDS = 5
+
+
+class Hello(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    type: Literal["hello"]
+    rate: int = Field(default=16_000, ge=8_000, le=48_000)
+    profile: StrictBool = False
 
 
 def spoken_part(text: str, final: bool) -> tuple[str, bool]:
@@ -39,24 +45,29 @@ def spoken_part(text: str, final: bool) -> tuple[str, bool]:
 
 
 class VoiceSession:
-    def __init__(self, settings: VoiceSettings, *, profile: bool = False) -> None:
-        self.settings = settings
-        self.profile = profile
+    """One connected device. Its WebSocket carries microphone audio and control
+    messages in, and transcripts, replies, speech and device commands out."""
+
+    def __init__(self, socket: WebSocket, hello: Hello) -> None:
+        self.socket = socket
+        self.profile = hello.profile
         self.id = uuid4().hex
-        self.room_name = f"slate-{self.id}"
-        self.device_identity = f"device-{self.id}"
-        self.room = rtc.Room()
         self.agent = create_agent()
-        self.speaker = rtc.AudioSource(SAMPLE_RATE, 1, queue_size_ms=100)
+        self.resampler = (
+            None
+            if hello.rate == SAMPLE_RATE
+            else soxr.ResampleStream(hello.rate, SAMPLE_RATE, 1, dtype="int16")
+        )
         self.closed = False
         self.close_done = asyncio.Event()
-        self.audio_ready = asyncio.Event()
+        self.send_lock = asyncio.Lock()
         self.tasks: set[asyncio.Task] = set()
+        self.receipts: dict[str, asyncio.Future] = {}
         self.turn: Turn | None = None
         self.turn_task: asyncio.Task | None = None
-        self.reader: asyncio.Task | None = None
         self.turn_lock = asyncio.Lock()
         self.watcher: asyncio.Task | None = None
+        self.playhead = 0.0
 
     def spawn(self, work: Coroutine[Any, Any, None]) -> asyncio.Task:
         task = asyncio.create_task(work)
@@ -69,150 +80,110 @@ class VoiceSession:
         if not task.cancelled() and (error := task.exception()):
             logger.error("Session task failed", exc_info=error)
 
-    async def connect(self) -> dict[str, str]:
-        self.room.on("track_subscribed", self.track_subscribed)
-        self.room.on("track_unsubscribed", self.track_unsubscribed)
-        self.room.on("participant_disconnected", self.participant_disconnected)
-        self.room.on("disconnected", self.disconnected)
-        token = self.settings.token(self.room_name, WORKER_IDENTITY, worker=True)
+    async def serve(self) -> None:
         try:
-            await self.room.connect(
-                self.settings.url, token, rtc.RoomOptions(connect_timeout=10)
-            )
-            track = rtc.LocalAudioTrack.create_audio_track("slate-reply", self.speaker)
-            await self.room.local_participant.publish_track(track)
-            self.room.local_participant.register_rpc_method(
-                "start_turn", self.start_turn
-            )
-            self.room.local_participant.register_rpc_method("end_turn", self.end_turn)
-            self.room.local_participant.register_rpc_method(
-                "cancel_turn", self.cancel_turn
-            )
-            self.room.local_participant.register_rpc_method(
-                "approve_tool", self.approve_tool
-            )
-            self.spawn(self.expire())
-        except BaseException:
-            await self.close()
-            raise
-        return {
-            "session_id": self.id,
-            "server_url": self.settings.url,
-            "participant_token": self.settings.token(
-                self.room_name, self.device_identity
-            ),
-            "worker_identity": WORKER_IDENTITY,
-        }
-
-    def track_subscribed(
-        self,
-        track: rtc.RemoteTrack,
-        publication: rtc.RemoteTrackPublication,
-        participant: rtc.RemoteParticipant,
-    ) -> None:
-        if (
-            participant.identity == self.device_identity
-            and track.kind == rtc.TrackKind.KIND_AUDIO
-            and publication.source == rtc.TrackSource.SOURCE_MICROPHONE
-            and self.reader is None
-        ):
-            self.reader = self.spawn(self.read_audio(track))
-            self.audio_ready.set()
-
-    def track_unsubscribed(
-        self,
-        track: rtc.RemoteTrack,
-        publication: rtc.RemoteTrackPublication,
-        participant: rtc.RemoteParticipant,
-    ) -> None:
-        if participant.identity == self.device_identity:
-            self.audio_ready.clear()
-            if self.reader:
-                self.reader.cancel()
-                self.reader = None
-            self.spawn(self.abort("Microphone disconnected"))
-
-    def participant_disconnected(self, participant: rtc.RemoteParticipant) -> None:
-        if participant.identity == self.device_identity:
-            self.spawn(self.close())
-
-    def disconnected(self, reason: rtc.DisconnectReason.ValueType) -> None:
-        if not self.closed:
-            self.spawn(self.close())
-
-    async def read_audio(self, track: rtc.RemoteTrack) -> None:
-        stream = rtc.AudioStream(
-            track, sample_rate=SAMPLE_RATE, num_channels=1, frame_size_ms=80
-        )
-        try:
-            async for event in stream:
-                if self.turn is not None:
-                    try:
-                        self.turn.push(event.frame.data.tobytes())
-                    except ValueError as error:
-                        await self.abort(str(error))
-        except Exception:
-            logger.exception("Microphone stream failed")
-            await self.abort("Microphone stream failed")
+            while True:
+                message = await self.socket.receive()
+                if message["type"] == "websocket.disconnect":
+                    logger.info("Device %s disconnected", self.id)
+                    return
+                if message.get("bytes") is not None:
+                    await self.audio(message["bytes"])
+                elif message.get("text") is not None:
+                    await self.control(json.loads(message["text"]))
+        except WebSocketDisconnect:
+            logger.info("Device %s disconnected", self.id)
         finally:
-            await stream.aclose()
+            await self.close()
 
-    def authorize(self, data: rtc.RpcInvocationData) -> None:
-        if self.closed or data.caller_identity != self.device_identity:
-            raise rtc.RpcError(1501, "This session belongs to another device")
-
-    def requested_turn(self, data: rtc.RpcInvocationData) -> Turn:
-        self.authorize(data)
-        if self.turn is None or data.payload != self.turn.id:
-            raise rtc.RpcError(1502, "This recording has ended")
-        return self.turn
-
-    async def start_turn(self, data: rtc.RpcInvocationData) -> str:
-        self.authorize(data)
+    async def audio(self, pcm: bytes) -> None:
+        turn = self.turn
+        if turn is None or not turn.receiving or turn.announcement:
+            return
+        if self.resampler is not None:
+            if len(pcm) % SAMPLE_BYTES:
+                await self.abort("Audio must contain complete 16-bit samples")
+                return
+            pcm = self.resampler.resample_chunk(
+                np.frombuffer(pcm, dtype="<i2")
+            ).tobytes()
+            if not pcm:
+                return
         try:
-            await asyncio.wait_for(self.audio_ready.wait(), timeout=5)
-        except TimeoutError as error:
-            raise rtc.RpcError(1503, "Publish a microphone track first") from error
-        self.authorize(data)
+            turn.push(pcm)
+        except ValueError as error:
+            logger.warning("Rejected microphone audio for turn %s: %s", turn.id, error)
+            await self.abort(str(error))
+
+    async def control(self, message: dict) -> None:
+        kind = message.get("type")
+        if kind == "start":
+            await self.start_turn()
+        elif kind == "end":
+            await self.end_turn()
+        elif kind == "cancel":
+            await self.abort()
+        elif kind == "receipt":
+            waiter = self.receipts.pop(str(message.get("request_id")), None)
+            if waiter is None or waiter.done():
+                logger.warning("Ignored unexpected device receipt %s", message)
+            else:
+                waiter.set_result(message)
+        elif kind == "approve":
+            await self.approve(message)
+        else:
+            logger.warning("Ignored unknown device message type %r", kind)
+
+    async def send(self, event: dict) -> None:
+        if self.closed:
+            return
+        async with self.send_lock:
+            await self.socket.send_text(json.dumps(event))
+
+    async def send_audio(self, pcm: bytes) -> None:
+        if self.closed:
+            return
+        async with self.send_lock:
+            await self.socket.send_bytes(pcm)
+
+    async def start_turn(self) -> None:
         async with self.turn_lock:
-            self.authorize(data)
             await self._abort()
-            self.authorize(data)
             turn = Turn()
             self.turn = turn
+            if self.resampler is not None:
+                self.resampler.clear()
             self.turn_task = self.spawn(self.transcribe(turn))
-            return turn.id
+        await self.send({"type": "turn", "turn_id": turn.id})
 
-    async def end_turn(self, data: rtc.RpcInvocationData) -> str:
-        turn = self.requested_turn(data)
-        if not turn.ending:
-            turn.ending = True
-            turn.timing.mark("end_requested")
-            await asyncio.sleep(0.3)
-            turn.finish()
-        return turn.id
+    async def end_turn(self) -> None:
+        turn = self.turn
+        if turn is None or turn.ending or turn.announcement:
+            return
+        turn.ending = True
+        turn.timing.mark("end_requested")
+        if self.resampler is not None:
+            tail = self.resampler.resample_chunk(np.zeros(0, dtype="<i2"), last=True)
+            if tail.size:
+                turn.push(tail.tobytes())
+        turn.finish()
 
-    async def cancel_turn(self, data: rtc.RpcInvocationData) -> str:
-        async with self.turn_lock:
-            self.authorize(data)
-            if self.turn is None:
-                return "ok"
-            self.requested_turn(data)
-            await self._abort()
-        return "ok"
-
-    async def approve_tool(self, data: rtc.RpcInvocationData) -> str:
-        self.authorize(data)
+    async def approve(self, message: dict) -> None:
         try:
-            payload = json.loads(data.payload)
-            if self.turn is None or payload["turn_id"] != self.turn.id:
+            if self.turn is None or message["turn_id"] != self.turn.id:
                 raise ValueError("This recording has ended")
             await self.agent.approve(
-                payload["run_id"], payload["request_id"], payload["choice"]
+                message["run_id"], message["request_id"], message["choice"]
             )
         except (ValueError, KeyError, TypeError) as error:
-            raise rtc.RpcError(1502, str(error)) from error
-        return "ok"
+            logger.warning("Approval rejected: %s", error)
+            await self.send(
+                {
+                    "type": "error",
+                    "turn_id": message.get("turn_id"),
+                    "message": str(error),
+                }
+            )
 
     async def agent_progress(self, turn: Turn, event: dict) -> None:
         if self.turn is not turn:
@@ -220,41 +191,35 @@ class VoiceSession:
         if event["type"] == "approval.request":
             await self.publish(
                 turn,
-                topic="slate.agent",
-                approval={
-                    "run_id": event["run_id"],
-                    "request_id": event["request_id"],
-                    "command": event.get("command", "Tool permission requested"),
-                },
+                "approval",
+                run_id=event["run_id"],
+                request_id=event["request_id"],
+                command=event.get("command", "Tool permission requested"),
             )
         elif event["type"] == "tool.started":
-            await self.publish(
-                turn, topic="slate.agent", tool=event.get("tool", "tool")
-            )
+            await self.publish(turn, "tool", tool=event.get("tool", "tool"))
 
-    async def publish(
-        self, turn: Turn, topic: str = TRANSCRIPT_TOPIC, **fields: Any
-    ) -> None:
+    async def publish(self, turn: Turn, kind: str, **fields: Any) -> None:
         if self.closed or self.turn is not turn:
             return
         if turn.announcement:
             fields["announcement"] = True
-        await self.room.local_participant.publish_data(
-            json.dumps({"turn_id": turn.id, **fields}),
-            reliable=True,
-            destination_identities=[self.device_identity],
-            topic=topic,
-        )
+        await self.send({"type": kind, "turn_id": turn.id, **fields})
 
     def device_sdk(self, turn: Turn) -> DeviceSDK:
         async def execute(command: DeviceCommand) -> dict:
-            result = await self.room.local_participant.perform_rpc(
-                destination_identity=self.device_identity,
-                method="device.command",
-                payload=command.model_dump_json(),
-                response_timeout=5,
-            )
-            return json.loads(result)
+            waiter = asyncio.get_running_loop().create_future()
+            self.receipts[command.request_id] = waiter
+            try:
+                await self.send({"type": "command", **command.model_dump()})
+                async with asyncio.timeout(RECEIPT_SECONDS):
+                    receipt = await waiter
+            finally:
+                self.receipts.pop(command.request_id, None)
+            receipt.pop("type", None)
+            if "error" in receipt:
+                raise RuntimeError(f"Firmware rejected command: {receipt['error']}")
+            return receipt
 
         return DeviceSDK(
             turn.scope,
@@ -264,44 +229,20 @@ class VoiceSession:
         )
 
     async def play(self, pcm: bytes, turn: Turn) -> None:
-        frame_bytes = SAMPLE_RATE * 2 // 50
-        for offset in range(0, len(pcm), frame_bytes):
+        clock = asyncio.get_running_loop().time
+        for offset in range(0, len(pcm), REPLY_FRAME_BYTES):
             if self.closed or self.turn is not turn:
                 return
-            chunk = pcm[offset : offset + frame_bytes]
+            chunk = pcm[offset : offset + REPLY_FRAME_BYTES]
             turn.timing.mark("reply_first_enqueue")
-            capture = asyncio.create_task(
-                self.speaker.capture_frame(
-                    rtc.AudioFrame(chunk, SAMPLE_RATE, 1, len(chunk) // 2)
-                )
+            self.playhead = max(self.playhead, clock()) + len(chunk) / (
+                SAMPLE_RATE * SAMPLE_BYTES
             )
-            try:
-                await asyncio.shield(capture)
-            except asyncio.CancelledError:
-                deadline = asyncio.get_running_loop().time() + CAPTURE_DRAIN_SECONDS
-                while not capture.done():
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(capture),
-                            max(0, deadline - asyncio.get_running_loop().time()),
-                        )
-                    except asyncio.CancelledError:
-                        continue
-                    except TimeoutError:
-                        logger.error("Native audio capture stalled; retiring session")
-                        closing = self.closed
-                        if not closing:
-                            self._stop()
-                        try:
-                            await self._close_audio()
-                        finally:
-                            capture.cancel()
-                            if not closing:
-                                self.spawn(self._finish_close())
-                            await asyncio.gather(capture, return_exceptions=True)
-                        raise asyncio.CancelledError from None
-                capture.result()
-                raise
+            await self.send_audio(chunk)
+            await asyncio.sleep(max(0, self.playhead - clock() - REPLY_LEAD_SECONDS))
+
+    async def wait_for_playout(self) -> None:
+        await asyncio.sleep(max(0, self.playhead - asyncio.get_running_loop().time()))
 
     async def respond(self, turn: Turn, text: str, tts_timing: list) -> str:
         queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
@@ -329,7 +270,7 @@ class VoiceSession:
             await self.agent_progress(turn, event)
             if event["type"] == "reply.delta":
                 streamed += event["delta"]
-                await self.publish(turn, topic=REPLY_TOPIC, text=streamed, final=False)
+                await self.publish(turn, "reply", text=streamed, final=False)
                 turn.timing.mark("reply_text_published")
                 await speak(streamed, final=False)
             elif event["type"] == "answer.complete":
@@ -338,9 +279,7 @@ class VoiceSession:
                     raise RuntimeError("Final agent answer differs from spoken deltas")
                 if not streamed:
                     streamed = answer
-                    await self.publish(
-                        turn, topic=REPLY_TOPIC, text=answer, final=False
-                    )
+                    await self.publish(turn, "reply", text=answer, final=False)
                     turn.timing.mark("reply_text_published")
                 await speak(streamed, final=True)
                 complete = True
@@ -368,7 +307,7 @@ class VoiceSession:
                             turn.timing.mark("tts_first_audio")
                             await self.play(pcm, turn)
             turn.timing.mark("tts_completed")
-            await self.speaker.wait_for_playout()
+            await self.wait_for_playout()
             turn.timing.mark("reply_playout_done")
 
         async with asyncio.TaskGroup() as tasks:
@@ -391,10 +330,12 @@ class VoiceSession:
                     async for piece in stream:
                         turn.timing.mark("stt_first_text")
                         text += piece
-                        await self.publish(turn, text=text.strip(), final=False)
+                        await self.publish(
+                            turn, "transcript", text=text.strip(), final=False
+                        )
             turn.timing.mark("stt_completed")
             logger.info("Transcription finished for turn %s", turn.id)
-            await self.publish(turn, text=text.strip(), final=True)
+            await self.publish(turn, "transcript", text=text.strip(), final=True)
             turn.timing.mark("transcript_published")
             if text.strip():
                 stage = "assistant response"
@@ -409,20 +350,17 @@ class VoiceSession:
                         "stt": stt_timing,
                         "tts": {"segments": tts_timing},
                     }
-                await self.publish(
-                    turn, topic=REPLY_TOPIC, text=reply, final=True, **fields
-                )
+                await self.publish(turn, "reply", text=reply, final=True, **fields)
                 self.watch_background()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("%s failed for turn %s", stage, turn.id)
-            if self.turn is turn:
-                self.speaker.clear_queue()
             await self.publish(
                 turn,
-                topic=TRANSCRIPT_TOPIC if stage == "transcription" else REPLY_TOPIC,
-                error=f"{stage.capitalize()} failed. Try another recording.",
+                "error",
+                stage=stage,
+                message=f"{stage.capitalize()} failed. Try another recording.",
             )
         finally:
             turn.finish()
@@ -453,14 +391,14 @@ class VoiceSession:
     async def announce(self, turn: Turn) -> None:
         try:
             reply = await self.respond(turn, BACKGROUND_PROMPT, [])
-            await self.publish(turn, topic=REPLY_TOPIC, text=reply, final=True)
+            await self.publish(turn, "reply", text=reply, final=True)
             self.watch_background()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Background announcement failed for turn %s", turn.id)
             await self.publish(
-                turn, topic=REPLY_TOPIC, error="The background result could not be read"
+                turn, "error", message="The background result could not be read"
             )
         finally:
             if self.turn is turn:
@@ -475,67 +413,40 @@ class VoiceSession:
         task = self.turn_task
         self.turn = None
         self.turn_task = None
-        if not self.closed:
-            self.speaker.clear_queue()
+        self.playhead = 0.0
         if turn is None:
             return
         turn.finish()
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        if not self.closed:
-            self.speaker.clear_queue()
-            await self.room.local_participant.publish_data(
-                json.dumps(
-                    {
-                        "turn_id": turn.id,
-                        "cancelled": True,
-                        **({"error": message} if message else {}),
-                    }
-                ),
-                reliable=True,
-                destination_identities=[self.device_identity],
-                topic=REPLY_TOPIC,
-            )
-
-    async def expire(self) -> None:
-        await asyncio.sleep(600)
-        await self.close()
-
-    def _stop(self) -> None:
-        self.closed = True
-        self._audio_retired = False
-        self.speaker.clear_queue()
-        if self.turn:
-            self.turn.finish()
-            self.turn = None
-
-    async def _close_audio(self) -> None:
-        if not self._audio_retired:
-            self._audio_retired = True
-            await self.speaker.aclose()
-
-    async def _finish_close(self) -> None:
-        tasks = [task for task in self.tasks if task is not asyncio.current_task()]
-        for task in tasks:
-            task.cancel()
-        try:
-            async with AsyncExitStack() as cleanup:
-                cleanup.push_async_callback(self.room.disconnect)
-                cleanup.push_async_callback(self._close_audio)
-                cleanup.push_async_callback(self.agent.close)
-                await asyncio.gather(*tasks, return_exceptions=True)
-                if not self._audio_retired:
-                    self.speaker.clear_queue()
-        finally:
-            self.close_done.set()
+        await self.send(
+            {
+                "type": "cancelled",
+                "turn_id": turn.id,
+                **({"message": message} if message else {}),
+            }
+        )
 
     async def close(self) -> None:
         if self.closed:
             await self.close_done.wait()
             return
-        self._stop()
-        await self._finish_close()
+        self.closed = True
+        if self.turn:
+            self.turn.finish()
+            self.turn = None
+        for waiter in self.receipts.values():
+            waiter.cancel()
+        tasks = [task for task in self.tasks if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        try:
+            async with AsyncExitStack() as cleanup:
+                cleanup.push_async_callback(self.agent.close)
+                await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            self.close_done.set()
 
 
 class VoiceSessions:
@@ -543,15 +454,15 @@ class VoiceSessions:
         self.current: VoiceSession | None = None
         self.lock = asyncio.Lock()
 
-    async def create(self, *, profile: bool = False) -> dict[str, str]:
+    async def connect(self, socket: WebSocket, hello: Hello) -> VoiceSession:
         async with self.lock:
-            if self.current is not None and not self.current.closed:
-                raise ValueError("A microphone session is already connected")
-            session = VoiceSession(VoiceSettings.from_env(), profile=profile)
-            result = await session.connect()
-            self.current = session
-            return result
+            previous, self.current = self.current, VoiceSession(socket, hello)
+            if previous is not None and not previous.closed:
+                logger.warning("Device %s replaced by a new connection", previous.id)
+                await previous.close()
+                await previous.socket.close(4000, "Replaced by a new connection")
+            return self.current
 
-    async def close(self, session_id: str | None = None) -> None:
-        if self.current and (session_id is None or self.current.id == session_id):
+    async def close(self) -> None:
+        if self.current:
             await self.current.close()

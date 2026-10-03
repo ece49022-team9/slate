@@ -10,9 +10,7 @@ import uvicorn
 from fastapi import FastAPI
 from slate.agent.code_mode import (
     DeviceClient,
-    ModalSandbox,
     MontyExecutor,
-    SandboxExecutor,
 )
 from slate.breadboard import breadboard, build_image
 from slate.device import DeviceSDK, FirmwareDevice, router
@@ -21,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @asynccontextmanager
-async def device_http(voice, *, proxy_headers: bool = True):
+async def device_http(voice):
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.state.voice = voice
@@ -29,9 +27,7 @@ async def device_http(voice, *, proxy_headers: bool = True):
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
         server = uvicorn.Server(
-            uvicorn.Config(
-                app, log_level="warning", lifespan="off", proxy_headers=proxy_headers
-            )
+            uvicorn.Config(app, log_level="warning", lifespan="off")
         )
         task = asyncio.create_task(server.serve(sockets=[listener]))
         try:
@@ -47,7 +43,7 @@ async def device_http(voice, *, proxy_headers: bool = True):
             await asyncio.wait_for(task, 5)
 
 
-async def verify_mode(mode, bench, voice, device_url):
+async def verify(bench, voice, device_url):
     turn = SimpleNamespace(scope=uuid4().hex, id=uuid4().hex)
     commands = []
     peer = FirmwareDevice(bench.link, lambda: turn.id)
@@ -64,11 +60,7 @@ async def verify_mode(mode, bench, voice, device_url):
             httpx.AsyncClient(base_url=device_url)
         )
         device = DeviceClient(client)
-        executor = (
-            MontyExecutor(device)
-            if mode == "monty"
-            else SandboxExecutor(device, ModalSandbox())
-        )
+        executor = MontyExecutor(device)
         resources.push_async_callback(executor.close)
         initial = await device.get_status(turn.scope)
         small = await executor.execute(
@@ -93,17 +85,6 @@ async def verify_mode(mode, bench, voice, device_url):
         assert large["revision"] < text["revision"] == status["revision"]
         assert status["color"] == "#0000ff" and status["text"] == "A"
         assert status["radius"] == 40
-        if mode == "modal":
-            denied = await executor.execute(
-                turn.scope,
-                "import urllib.request\n"
-                "urllib.request.urlopen('https://example.com', timeout=3)",
-            )
-            assert denied["status"] == "error" and not denied["calls"], denied
-            looping = await executor.execute(turn.scope, "while True: pass")
-            assert looping["error"]["type"] == "TimeoutError", looping
-            recovered = await executor.execute(turn.scope, "sum(range(10))")
-            assert recovered["result"] == 45, recovered
         await bench.sleep(0.1)
         pixels = bench.oled.frames[-1].pixels
         assert sum(bool(pixel) for pixel in pixels[: 90 * 128]) > 2 * sum(
@@ -143,7 +124,7 @@ async def verify_mode(mode, bench, voice, device_url):
             assert "ended" in expired["error"]["message"], expired
         assert len(commands) == count, "Expired scope reached the firmware"
         print(
-            f"slate.device_code: {mode} passed real HTTP + QEMU firmware receipts; "
+            "slate.device_code: monty passed real HTTP + QEMU firmware receipts; "
             "color, radius, glyph SPI pixels, partial failure and scope expiry verified"
         )
 
@@ -151,11 +132,10 @@ async def verify_mode(mode, bench, voice, device_url):
 async def run():
     voice = SimpleNamespace(current=None)
     async with breadboard() as bench, device_http(voice) as device_url:
-        for mode in ("monty", "modal"):
-            await verify_mode(mode, bench, voice, device_url)
+        await verify(bench, voice, device_url)
     print(
-        "slate.device_code: LiveKit transport was replaced by the fixture; "
-        "HTTP routes, typed SDK, Monty, the Modal sandbox and QEMU firmware were real"
+        "slate.device_code: the device socket was replaced by the fixture; "
+        "HTTP routes, typed SDK, Monty and QEMU firmware were real"
     )
 
 

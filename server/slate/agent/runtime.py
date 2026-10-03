@@ -5,6 +5,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import tarfile
 import tomllib
 from pathlib import Path
@@ -13,10 +14,11 @@ from urllib.request import urlopen
 from slate.board import ROOT
 
 SOURCE = ROOT / ".local/hermes"
-PROFILE = ROOT / ".local/hermes-home"
+PROFILE = Path(os.environ.get("SLATE_HERMES_HOME", ROOT / ".local/hermes-home"))
 CONFIG = ROOT / "experiments/agent.toml"
 GUARD = ROOT / "hermes/slate-guard"
 BROWSER = ROOT / ".local/browser.json"
+ARCHIVE = ROOT / ".local/hermes-source.tar.gz"
 TOOLSETS = [
     "memory",
     "session_search",
@@ -47,9 +49,6 @@ def command() -> list[str]:
 
 
 def configure_tools(config: dict) -> None:
-    uv = shutil.which("uv")
-    if uv is None:
-        raise RuntimeError("Slate device MCP requires uv on PATH")
     config.setdefault("platform_toolsets", {})["api_server"] = list(TOOLSETS)
     config.setdefault("terminal", {})["backend"] = "modal"
     config.setdefault("bot_desktop", {})["placement"] = "gateway"
@@ -62,24 +61,20 @@ def configure_tools(config: dict) -> None:
     if "slate-guard" not in enabled:
         enabled.append("slate-guard")
     server = config.setdefault("mcp_servers", {}).setdefault("slate-device", {})
-    server.update(
-        {
-            "command": str(Path(uv).resolve()),
-            "args": [
-                "--directory",
-                str(ROOT),
-                "run",
-                "--no-sync",
-                "python",
-                "-m",
-                "slate.agent.device_mcp",
-            ],
-        }
-    )
-    server.setdefault("env", {}).update(
+    server.update({"command": sys.executable, "args": ["-m", "slate.agent.device_mcp"]})
+    env = server.setdefault("env", {})
+    env.update(
         SLATE_DEVICE_MODE=os.getenv("SLATE_DEVICE_MODE", "monty"),
         SLATE_DEVICE_URL=os.getenv("SLATE_DEVICE_URL", "http://127.0.0.1:8000"),
     )
+    for name in (
+        "SLATE_PUBLIC_URL",
+        "PYTHONPATH",
+        "MODAL_TOKEN_ID",
+        "MODAL_TOKEN_SECRET",
+    ):
+        if value := os.getenv(name):
+            env[name] = value
     config.setdefault("tools", {}).setdefault("tool_search", {})["enabled"] = "off"
     if profile := os.getenv("MODAL_PROFILE"):
         server["env"]["MODAL_PROFILE"] = profile
@@ -106,6 +101,27 @@ def install_guard() -> None:
     shutil.copyfile(GUARD / "plugin.yaml", target / "plugin.yaml")
     shutil.copyfile(GUARD / "__init__.py", target / "__init__.py")
     shutil.copyfile(ROOT / "server/slate/agent/guard.py", target / "policy.py")
+
+
+def write_profile(key: str, host: str = "127.0.0.1") -> None:
+    path = PROFILE / "config.yaml"
+    config = json.loads(path.read_text()) if path.exists() else {}
+    cfg = settings()
+    config.update(
+        model={"default": cfg["model"], "provider": cfg["provider"]},
+        agent={"max_turns": "unlimited"},
+        auth={"adopt_external_logins": False},
+    )
+    config.setdefault("browser", {})["backend"] = "off"
+    config.setdefault("gateway", {})["api_server"] = {
+        "enabled": True,
+        "host": host,
+        "port": 8642,
+        "key": key,
+    }
+    configure_tools(config)
+    install_guard()
+    path.write_text(json.dumps(config, indent=2))
 
 
 def environment() -> dict[str, str]:
@@ -140,26 +156,25 @@ def verify_source() -> None:
 def setup() -> None:
     os.umask(0o077)
     cfg = settings()
-    archive = ROOT / ".local/hermes-source.tar.gz"
-    archive.parent.mkdir(parents=True, exist_ok=True)
+    ARCHIVE.parent.mkdir(parents=True, exist_ok=True)
     if (
-        not archive.exists()
-        or hashlib.sha256(archive.read_bytes()).hexdigest() != cfg["source_sha256"]
+        not ARCHIVE.exists()
+        or hashlib.sha256(ARCHIVE.read_bytes()).hexdigest() != cfg["source_sha256"]
     ):
         url = (
             f"https://codeload.github.com/{cfg['repository']}/tar.gz/{cfg['revision']}"
         )
         with urlopen(url, timeout=120) as response:
-            archive.write_bytes(response.read())
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != cfg["source_sha256"]:
+            ARCHIVE.write_bytes(response.read())
+    if hashlib.sha256(ARCHIVE.read_bytes()).hexdigest() != cfg["source_sha256"]:
         raise RuntimeError("Hermes source checksum does not match the pinned revision")
     if not SOURCE.exists():
-        with tarfile.open(archive) as source:
+        with tarfile.open(ARCHIVE) as source:
             for member in source.getmembers():
                 parts = Path(member.name).parts
                 if len(parts) > 1:
                     member.name = str(Path("hermes", *parts[1:]))
-                    source.extract(member, archive.parent, filter="data")
+                    source.extract(member, ARCHIVE.parent, filter="data")
         (SOURCE / ".slate-revision").write_text(cfg["revision"])
     verify_source()
     subprocess.run(
@@ -182,23 +197,7 @@ def setup() -> None:
     key = PROFILE / "api-key"
     if not key.exists():
         key.write_text(secrets.token_urlsafe(32))
-    config = {
-        "model": {"default": cfg["model"], "provider": cfg["provider"]},
-        "agent": {"max_turns": "unlimited"},
-        "browser": {"backend": "off"},
-        "gateway": {
-            "api_server": {
-                "enabled": True,
-                "host": "127.0.0.1",
-                "port": 8642,
-                "key": key.read_text().strip(),
-            }
-        },
-        "auth": {"adopt_external_logins": False},
-    }
-    configure_tools(config)
-    install_guard()
-    (PROFILE / "config.yaml").write_text(json.dumps(config, indent=2))
+    write_profile(key.read_text().strip())
     subprocess.run(
         [*command(), "run", "--no-sync", "hermes", "pm", "install", "agent-browser"],
         cwd=SOURCE,
@@ -212,7 +211,7 @@ def setup() -> None:
             "--no-sync",
             "python",
             "-c",
-            "import pm; pm.sync_venv(['modal'], explicit=True)",
+            "import pm; pm.sync_venv(['messaging', 'mcp', 'modal'], explicit=True)",
         ],
         cwd=SOURCE,
         env=environment(),
@@ -232,11 +231,7 @@ def main() -> None:
         return
     verify_source()
     if args.command == "start":
-        config_path = PROFILE / "config.yaml"
-        config = json.loads(config_path.read_text())
-        configure_tools(config)
-        install_guard()
-        config_path.write_text(json.dumps(config, indent=2))
+        write_profile((PROFILE / "api-key").read_text().strip())
     hermes_args = (
         ["gateway", "run", "--replace"]
         if args.command == "start"

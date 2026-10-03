@@ -26,7 +26,7 @@ def build_server(*, mode: str | None = None) -> MCPServer:
     device = DeviceClient(client)
     sandbox = ModalSandbox()
     executor = (
-        SandboxExecutor(device, sandbox)
+        SandboxExecutor(device, sandbox, os.environ["SLATE_PUBLIC_URL"])
         if selected == "modal"
         else MontyExecutor(device)
     )
@@ -66,15 +66,15 @@ def build_server(*, mode: str | None = None) -> MCPServer:
             "Await device.set_orb(color, radius), device.show_text(text), "
             "and device.get_status(). Color is #RRGGBB; radius is 10..45; "
             "text is printable ASCII with at most 64 characters. "
-            "Results include actual firmware receipts. No file, network, shell, "
-            "or other host capabilities. "
+            "Results include actual firmware receipts. "
             + "Python REPL state persists within this scope; failures reset it. "
             "The final expression returns a value. "
             + (
-                "Runs in Monty, a restricted Python subset. "
+                "Runs in Monty, a restricted Python subset with no file, network "
+                "or shell access. "
                 if selected == "monty"
-                else "Runs in CPython 3.12 with the standard library inside an "
-                "isolated Modal container. "
+                else "Runs in CPython 3.12 with the standard library, httpx and "
+                "internet access inside an isolated Modal container. "
             )
             + "Never blindly replay failed code: completed actions remain applied.\n"
             + DEVICE_STUBS

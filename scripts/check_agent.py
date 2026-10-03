@@ -12,13 +12,26 @@ import httpx
 import websockets
 from slate.agent.agent import BACKGROUND_PROMPT, Agent
 from slate.board import ROOT
+from slate.browser.modal import live
 from slate.voice.client import speak
+from slate.voice.device import CLOUD
 from slate.voice.firmware import simulate_firmware
 from slate.voice.session import spoken_part
 
 CONFIG = tomllib.loads((ROOT / "experiments/agent.toml").read_text())
 LOG = ROOT / CONFIG["tracking"]["log"]
 ARTIFACTS = ROOT / CONFIG["tracking"]["raw_runs"]
+
+
+def cloud_agent() -> Agent:
+    settings = json.loads(CLOUD.read_text())
+    return Agent(
+        client=httpx.AsyncClient(
+            base_url=settings["agent_url"],
+            headers={"Authorization": "Bearer " + settings["agent_key"]},
+            timeout=httpx.Timeout(30, read=60),
+        )
+    )
 
 
 def record(case: str, status: str, started: float, **fields) -> None:
@@ -263,46 +276,37 @@ async def background_task(agent: Agent) -> bool:
         return False
 
 
-async def voice(
-    api_url: str = "http://127.0.0.1:8000", harness: str = "hermes"
-) -> bool:
+async def voice() -> bool:
     started = time.monotonic()
+    case = "qemu-cloud-hermes-csm"
     try:
         prompt = ARTIFACTS / "spoken-input.wav"
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
         if not prompt.exists():
             prompt.write_bytes(await speak("What is seven plus five?"))
-        result = await simulate_firmware(prompt, api_url, "left")
-        reply_path = ARTIFACTS / f"spoken-reply-{harness}.wav"
-        reply_path.write_bytes(result.audio)
-        if not result.transcript or not result.audio:
-            raise AssertionError("Voice turn did not return a transcript and audio")
+        result = await simulate_firmware(prompt, "left")
+        if not result.transcript or not result.reply_audio_bytes:
+            raise AssertionError("Voice turn did not return a transcript and speech")
         if not any(answer in result.reply.casefold() for answer in ("12", "twelve")):
             raise AssertionError("Voice reply did not contain twelve")
         record(
-            f"qemu-livekit-{harness}-csm",
+            case,
             "passed",
             started,
             transcript=result.transcript,
             reply=result.reply,
-            reply_audio_bytes=len(result.audio),
-            artifact=str(reply_path.relative_to(ROOT)),
+            reply_audio_bytes=result.reply_audio_bytes,
             input_sha256=hashlib.sha256(prompt.read_bytes()).hexdigest(),
         )
         return True
     except Exception as error:
-        record(
-            f"qemu-livekit-{harness}-csm",
-            "failed",
-            started,
-            error_type=type(error).__name__,
-        )
+        record(case, "failed", started, error_type=type(error).__name__)
         raise
 
 
 async def run(args: argparse.Namespace) -> None:
     results = []
-    agent = Agent()
+    agent = cloud_agent()
     try:
         results.append(
             await check(
@@ -319,7 +323,7 @@ async def run(args: argparse.Namespace) -> None:
             await check("session-recall", "What was the test word?", nonce, agent)
         )
         if args.browser:
-            browser_state = json.loads((ROOT / ".local/browser.json").read_text())
+            browser_state = await live()
             browser_state["trial"] = uuid4().hex
             browser_state["fixture_url"] += "&slate_trial=" + browser_state["trial"]
             results.append(
@@ -357,7 +361,7 @@ async def run(args: argparse.Namespace) -> None:
                     "terminal",
                 )
             )
-            browser_state = json.loads((ROOT / ".local/browser.json").read_text())
+            browser_state = await live()
             browser_state["trial"] = uuid4().hex
             browser_state["fixture_url"] += "&slate_trial=" + browser_state["trial"]
             results.append(await purchase_denied(agent, browser_state))
@@ -374,7 +378,7 @@ async def run(args: argparse.Namespace) -> None:
             )
             results.append(wrote_memory)
             await agent.close()
-            agent = Agent()
+            agent = cloud_agent()
             results.append(
                 await check(
                     "memory-recall-new-session",
@@ -391,7 +395,7 @@ async def run(args: argparse.Namespace) -> None:
     finally:
         await agent.close()
     if args.voice:
-        results.append(await voice(args.api_url, args.harness))
+        results.append(await voice())
     if not all(results):
         raise SystemExit(1)
 
@@ -403,13 +407,8 @@ if __name__ == "__main__":
     parser.add_argument("--memory", action="store_true")
     parser.add_argument("--tools", action="store_true")
     parser.add_argument("--voice", action="store_true")
-    parser.add_argument("--voice-only", action="store_true")
-    parser.add_argument("--api-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--harness", choices=["hermes", "openai"], default="hermes")
     arguments = parser.parse_args()
     if arguments.status:
         status()
-    elif arguments.voice_only:
-        asyncio.run(voice(arguments.api_url, arguments.harness))
     else:
         asyncio.run(run(arguments))

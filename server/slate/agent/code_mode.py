@@ -14,8 +14,10 @@ from slate.device import DeviceStatus, OrbRequest, TextRequest
 
 logger = logging.getLogger("slate.agent.code_mode")
 RUNNER_PATH = "/opt/slate/runner.py"
-SANDBOX_IMAGE = modal.Image.debian_slim(python_version="3.12").add_local_file(
-    Path(__file__).with_name("sandbox_runner.py"), RUNNER_PATH
+SANDBOX_IMAGE = (
+    modal.Image.debian_slim(python_version="3.12")
+    .uv_pip_install("httpx==0.28.1")
+    .add_local_file(Path(__file__).with_name("sandbox_runner.py"), RUNNER_PATH)
 )
 DEVICE_STUBS = """from typing import TypedDict
 class DeviceReceipt(TypedDict):
@@ -46,7 +48,8 @@ class DeviceClient:
             raise ValueError("Device scope must be an opaque capability identifier")
         response = await self.client.request(
             "GET" if body is None else "POST",
-            f"/api/device/{scope}/{operation}",
+            f"/api/device/{operation}",
+            headers={"Authorization": f"Bearer {scope}"},
             **({"json": body} if body is not None else {}),
             timeout=3,
         )
@@ -277,10 +280,11 @@ class MontyExecutor:
 
 
 class RunnerFailure(Exception):
-    def __init__(self, error: dict, output: str) -> None:
+    def __init__(self, error: dict, output: str, calls: list) -> None:
         super().__init__(error["message"])
         self.kind = error["type"]
         self.output = output
+        self.calls = calls
 
 
 class Runner:
@@ -327,7 +331,6 @@ class ModalSandbox:
                 self.sandbox = await modal.Sandbox.create.aio(
                     app=app,
                     image=SANDBOX_IMAGE,
-                    block_network=True,
                     cpu=1,
                     memory=512,
                     timeout=3600,
@@ -377,10 +380,15 @@ class ModalSandbox:
 
 
 class SandboxExecutor:
+    """Runs agent code in a Modal sandbox. The sandbox calls the public device
+    routes itself, authorized by the turn scope, so device calls never pass back
+    through this process."""
+
     def __init__(
         self,
         device: DeviceClient,
         sandbox,
+        url: str,
         *,
         max_calls: int = 12,
         max_output: int = 16_384,
@@ -388,11 +396,12 @@ class SandboxExecutor:
     ) -> None:
         self.device = device
         self.sandbox = sandbox
+        self.url = url
         self.max_calls = max_calls
         self.max_output = max_output
         self.timeout = timeout
         self.runner: Runner | None = None
-        self.bound: ScopedDevice | None = None
+        self.scope: str | None = None
         self.closing: set[asyncio.Task] = set()
         self.lock = asyncio.Lock()
         self.closed = False
@@ -404,67 +413,52 @@ class SandboxExecutor:
         except Exception:
             logger.exception("Idle sandbox runner did not exit after end of input")
 
-    async def _retire(self) -> None:
-        runner, self.runner = self.runner, None
-        if self.bound:
-            await self.bound.revoke()
-        self.bound = None
+    def _retire(self) -> None:
+        runner, self.runner, self.scope = self.runner, None, None
         if runner is not None:
             task = asyncio.create_task(self._close_runner(runner))
             self.closing.add(task)
             task.add_done_callback(self.closing.discard)
 
     async def _discard(self) -> None:
-        self.runner = None
-        if self.bound:
-            await self.bound.revoke()
-        self.bound = None
+        self.runner = self.scope = None
         for task in tuple(self.closing):
             task.cancel()
         await asyncio.gather(*self.closing, return_exceptions=True)
         await self.sandbox.terminate()
 
-    async def _dispatch(self, message: dict) -> dict:
-        reply = {"id": message["id"]}
-        try:
-            if message["method"] not in ("set_orb", "show_text", "get_status"):
-                raise ValueError("Unknown device capability")
-            value = await getattr(self.bound, message["method"])(**message["args"])
-            return {**reply, "type": "result", "value": value}
-        except Exception as error:
-            return {
-                **reply,
-                "type": "error",
-                "error": f"{type(error).__name__}: {error}",
-            }
-
     async def execute(self, scope: str, code: str) -> dict:
         async with self.lock:
             if self.closed:
                 raise RuntimeError("Device code executor has closed")
-            calls: list[dict] = []
             in_flight = False
             try:
                 async with asyncio.timeout(self.timeout):
                     validate_code(code)
                     scope_status = await self.device.get_status(scope)
-                    if self.bound is None or self.bound.scope != scope:
-                        await self._retire()
+                    if self.runner is None or self.scope != scope:
+                        self._retire()
                         self.runner = await self.sandbox.spawn()
-                        self.bound = ScopedDevice(self.device, scope, self.max_calls)
-                    self.bound.calls = calls
-                    self.bound.active = True
+                        self.scope = scope
                     in_flight = True
-                    await self.runner.send({"type": "execute", "code": code})
-                    while (message := await self.runner.receive())["type"] == "call":
-                        await self.runner.send(await self._dispatch(message))
+                    await self.runner.send(
+                        {
+                            "code": code,
+                            "url": self.url,
+                            "scope": scope,
+                            "max_calls": self.max_calls,
+                        }
+                    )
+                    message = await self.runner.receive()
                     in_flight = False
                     if message["type"] == "failed":
-                        raise RunnerFailure(message["error"], message["output"])
+                        raise RunnerFailure(
+                            message["error"], message["output"], message["calls"]
+                        )
                     return completed(
                         message["value"],
                         message["output"],
-                        calls,
+                        message["calls"],
                         scope_status,
                         self.max_output,
                     )
@@ -472,21 +466,16 @@ class SandboxExecutor:
                 await self._discard()
                 raise
             except RunnerFailure as error:
-                await self._retire()
+                self._retire()
                 return failed(
-                    error.kind, str(error), error.output, calls, self.max_output
+                    error.kind, str(error), error.output, error.calls, self.max_output
                 )
             except Exception as error:
                 if in_flight:
                     await self._discard()
                 else:
-                    await self._retire()
-                return failed(
-                    type(error).__name__, str(error), "", calls, self.max_output
-                )
-            finally:
-                if self.bound:
-                    self.bound.active = False
+                    self._retire()
+                return failed(type(error).__name__, str(error), "", [], self.max_output)
 
     async def close(self) -> None:
         async with self.lock:

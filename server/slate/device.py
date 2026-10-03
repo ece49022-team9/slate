@@ -1,17 +1,16 @@
 import asyncio
+import hmac
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
-from livekit import rtc
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from slate.link import Link
-from slate.voice.routes import require_local
-from slate.voice.settings import WORKER_IDENTITY
 
 logger = logging.getLogger("slate.device")
 router = APIRouter(prefix="/device", tags=["device"])
@@ -146,23 +145,28 @@ class FirmwareDevice:
             receipt["text"] = bytes.fromhex(receipt.pop("text_hex")).decode("ascii")
             return DeviceStatus.model_validate(receipt)
 
-    async def rpc(self, data: rtc.RpcInvocationData) -> str:
-        if data.caller_identity != WORKER_IDENTITY:
-            raise rtc.RpcError(1501, "Only the Slate worker can control this device")
-        try:
-            command = DeviceCommand.model_validate_json(data.payload)
-            return (await self.execute(command)).model_dump_json()
-        except (ValueError, RuntimeError, TimeoutError) as error:
-            logger.warning("Device command failed: %s", error)
-            raise rtc.RpcError(1505, str(error)) from error
+
+bearer = HTTPBearer(auto_error=False)
 
 
-def scoped_device(request: Request, scope: str) -> DeviceSDK:
-    require_local(request)
+def scoped_device(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> DeviceSDK:
+    if credentials is None:
+        raise HTTPException(401, "Send the turn scope as a bearer token")
+    scope = credentials.credentials
     session = request.app.state.voice.current
-    if session is None or session.turn is None or session.turn.scope != scope:
+    if (
+        session is None
+        or session.turn is None
+        or not hmac.compare_digest(session.turn.scope.encode(), scope.encode())
+    ):
         raise HTTPException(409, "This device turn has ended")
     return session.device_sdk(session.turn)
+
+
+Scoped = Annotated[DeviceSDK, Depends(scoped_device)]
 
 
 async def receipt(work: Awaitable[DeviceStatus]) -> DeviceStatus:
@@ -170,21 +174,21 @@ async def receipt(work: Awaitable[DeviceStatus]) -> DeviceStatus:
         return await work
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
-    except (rtc.RpcError, RuntimeError, TimeoutError) as error:
+    except (RuntimeError, TimeoutError) as error:
         logger.warning("Device unavailable: %s", error)
         raise HTTPException(503, "Device did not acknowledge the command") from error
 
 
-@router.post("/{scope}/set_orb", response_model=DeviceStatus)
-async def set_orb(scope: str, body: OrbRequest, request: Request):
-    return await receipt(scoped_device(request, scope).set_orb(body))
+@router.post("/set_orb", response_model=DeviceStatus)
+async def set_orb(body: OrbRequest, device: Scoped):
+    return await receipt(device.set_orb(body))
 
 
-@router.post("/{scope}/show_text", response_model=DeviceStatus)
-async def show_text(scope: str, body: TextRequest, request: Request):
-    return await receipt(scoped_device(request, scope).show_text(body))
+@router.post("/show_text", response_model=DeviceStatus)
+async def show_text(body: TextRequest, device: Scoped):
+    return await receipt(device.show_text(body))
 
 
-@router.get("/{scope}/status", response_model=DeviceStatus)
-async def get_status(scope: str, request: Request):
-    return await receipt(scoped_device(request, scope).get_status())
+@router.get("/status", response_model=DeviceStatus)
+async def get_status(device: Scoped):
+    return await receipt(device.get_status())

@@ -1,19 +1,27 @@
 import asyncio
+import re
 import wave
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import Awaitable
+from dataclasses import dataclass
 from pathlib import Path
 
-from livekit import rtc
+import numpy as np
+import soxr
 
 from slate.board import ROOT
 from slate.breadboard import breadboard, build_image
 from slate.link import Link, open_board
 from slate.voice.audio import MAX_AUDIO_SECONDS
-from slate.voice.device import VoiceResult, transcribe_audio
-from slate.voice.timing import Timeline
 
 RATE = 16_000
 KEYS = {"left": "l", "right": "r", "mix": "m"}
+
+
+@dataclass
+class FirmwareTurn:
+    transcript: str
+    reply: str
+    reply_audio_bytes: int
 
 
 def stereo_pcm(path: Path, slot: int = 0) -> bytes:
@@ -32,59 +40,48 @@ def stereo_pcm(path: Path, slot: int = 0) -> bytes:
         data = audio.readframes(count)
         if len(data) != count * channels * 2:
             raise ValueError("WAV data is truncated")
-    pcm = data
+    samples = np.frombuffer(data, dtype="<i2").reshape(-1, channels)
     if rate != RATE:
-        resampler = rtc.AudioResampler(rate, RATE, num_channels=channels)
-        converted = resampler.push(rtc.AudioFrame(data, rate, channels, count))
-        converted += resampler.flush()
-        pcm = b"".join(frame.data.tobytes() for frame in converted)
+        samples = soxr.resample(samples, rate, RATE).astype("<i2")
     if channels == 1:
-        count = len(pcm) // 2
-        stereo = bytearray(count * 4)
-        for i in range(count):
-            start = i * 4 + slot * 2
-            stereo[start : start + 2] = pcm[i * 2 : i * 2 + 2]
-        pcm = bytes(stereo)
+        stereo = np.zeros((len(samples), 2), dtype="<i2")
+        stereo[:, slot] = samples[:, 0]
+        samples = stereo
     padding = bytes(RATE * 4 // 5)
-    return padding + pcm + padding
+    return padding + samples.tobytes() + padding
 
 
-async def capture(
-    link: Link, channel: str, samples: int, sound: Awaitable[None]
-) -> AsyncIterator[bytes]:
-    link.type(KEYS[channel] + "a1")
-    await link.wait_for("slate.state: 1")
-    while not link.audio.empty():
-        link.audio.get_nowait()
-    player = asyncio.ensure_future(sound)
+async def speak_turn(link: Link, channel: str, sound: Awaitable[None]) -> FirmwareTurn:
+    """Talk to the firmware the way a person would: hold Listen while speaking,
+    then release. The firmware streams to the cloud on its own."""
+    link.type(KEYS[channel])
+    await link.wait_for("slate.mic.channel:")
+    transcript = asyncio.ensure_future(link.wait_for("slate.transcript:", 180))
+    reply = asyncio.ensure_future(link.wait_for("slate.reply:", 600))
+    audio = asyncio.ensure_future(link.wait_for("slate.reply.audio:", 660))
     try:
-        while samples > 0:
-            chunk = await asyncio.wait_for(link.audio.get(), timeout=5)
-            chunk = chunk[: samples * 2]
-            samples -= len(chunk) // 2
-            yield chunk
-        await player
+        link.type("1")
+        await link.wait_for("slate.state: 1")
+        await sound
+        link.type("3")
+        heard = (await transcript).split("slate.transcript:", 1)[1].strip()
+        said = (await reply).split("slate.reply:", 1)[1].strip()
+        received = re.search(r"(\d+) bytes", await audio)
+        if received is None:
+            raise RuntimeError("slate.voice: firmware did not report reply audio")
+        return FirmwareTurn(heard, said, int(received.group(1)))
     finally:
-        player.cancel()
-        link.type("x0")
+        for waiter in (transcript, reply, audio):
+            waiter.cancel()
+        await asyncio.gather(transcript, reply, audio, return_exceptions=True)
 
 
-async def simulate_firmware(
-    input_file: Path, api_url: str, channel: str, *, profile: bool = False
-) -> VoiceResult:
-    timing = Timeline()
-    timing.mark("build_requested")
+async def simulate_firmware(input_file: Path, channel: str = "left") -> FirmwareTurn:
     await asyncio.to_thread(build_image)
-    timing.mark("build_completed")
     async with breadboard(realtime=True) as bench:
-        timing.mark("board_ready")
+        await bench.link.wait_for("slate.cloud: connected", 90)
         stereo = stereo_pcm(input_file, bench.slot)
-        audio = capture(bench.link, channel, len(stereo) // 4, bench.play(stereo))
-        result = await transcribe_audio(
-            audio, api_url, RATE, profile=profile, device_link=bench.link
-        )
-        result.timings["simulator"] = timing.snapshot()
-        return result
+        return await speak_turn(bench.link, channel, bench.play(stereo))
 
 
 async def speaker(path: Path) -> None:
@@ -95,16 +92,11 @@ async def speaker(path: Path) -> None:
     await asyncio.sleep(0.8)
 
 
-async def board_firmware(
-    input_file: Path, api_url: str, channel: str, port: str
-) -> VoiceResult:
-    with wave.open(str(input_file), "rb") as audio:
-        seconds = audio.getnframes() / audio.getframerate()
+async def board_firmware(input_file: Path, channel: str, port: str) -> FirmwareTurn:
     link, task = await open_board(port, ROOT / ".local/bench-serial.log")
     try:
-        samples = int((seconds + 1.6) * RATE)
-        audio = capture(link, channel, samples, speaker(input_file))
-        return await transcribe_audio(audio, api_url, RATE, device_link=link)
+        await link.wait_for("slate.cloud: connected", 60)
+        return await speak_turn(link, channel, speaker(input_file))
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

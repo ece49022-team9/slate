@@ -7,7 +7,7 @@ from pathlib import Path
 from slate.voice.audio import read_wav
 from slate.voice.client import speak, transcribe
 from slate.voice.device import VoiceResult, simulate
-from slate.voice.firmware import board_firmware, simulate_firmware
+from slate.voice.firmware import FirmwareTurn, board_firmware, simulate_firmware
 
 SMOKE_TEXT = "Slate is ready. The voice system is working."
 
@@ -25,6 +25,12 @@ def show_turn(result: VoiceResult, output: Path) -> None:
         save_audio(output, result.audio)
 
 
+def show_firmware_turn(result: FirmwareTurn) -> None:
+    print(f"slate.stt: {result.transcript}")
+    print(f"slate.agent: {result.reply}")
+    print(f"slate.voice: firmware received {result.reply_audio_bytes} bytes of speech")
+
+
 async def run(args: argparse.Namespace) -> None:
     started = time.monotonic()
     if args.command == "stt":
@@ -34,20 +40,13 @@ async def run(args: argparse.Namespace) -> None:
     elif args.command == "tts":
         save_audio(args.output, await speak(args.text, args.max_seconds))
     elif args.command == "simulate":
-        show_turn(
-            await simulate(args.input, args.api_url, args.sample_rate), args.output
-        )
+        show_turn(await simulate(args.input), args.output)
     elif args.command == "firmware":
-        if args.port:
-            show_turn(
-                await board_firmware(args.input, args.api_url, args.channel, args.port),
-                args.output,
-            )
-        else:
-            show_turn(
-                await simulate_firmware(args.input, args.api_url, args.channel),
-                args.output,
-            )
+        show_firmware_turn(
+            await board_firmware(args.input, args.channel, args.port)
+            if args.port
+            else await simulate_firmware(args.input, args.channel)
+        )
     else:
         audio = await speak(SMOKE_TEXT)
         save_audio(args.output, audio)
@@ -76,20 +75,14 @@ def main() -> None:
     check = commands.add_parser("check", help="Generate speech and transcribe it")
     check.add_argument("--output", type=Path, default=Path(".local/voice-check.wav"))
     device = commands.add_parser(
-        "simulate", help="Send a WAV through LiveKit as a device"
+        "simulate", help="Send a 24 kHz WAV to the cloud as a device would"
     )
     device.add_argument("input", type=Path)
-    device.add_argument("--api-url", default="http://127.0.0.1:8000")
     device.add_argument("--output", type=Path, default=Path(".local/reply.wav"))
-    device.add_argument(
-        "--sample-rate", type=int, choices=[16000, 24000, 48000], default=16000
-    )
     firmware = commands.add_parser(
-        "firmware", help="Play a WAV into the simulated board's mic and LiveKit"
+        "firmware", help="Speak a WAV into the simulated or real board's mic"
     )
     firmware.add_argument("input", type=Path)
-    firmware.add_argument("--api-url", default="http://127.0.0.1:8000")
-    firmware.add_argument("--output", type=Path, default=Path(".local/reply.wav"))
     firmware.add_argument("--channel", choices=["left", "right", "mix"], default="left")
     firmware.add_argument(
         "--port", help="Use the board on this serial port and play the WAV aloud"

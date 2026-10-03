@@ -5,6 +5,7 @@ import signal
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 from mcp import ClientSession
@@ -78,11 +79,15 @@ class CodeModeTests(DeviceFixture):
         self.assertEqual(
             [request.url.path for request in self.requests],
             [
-                "/api/device/scope-a/status",
-                "/api/device/scope-a/set_orb",
-                "/api/device/scope-a/show_text",
-                "/api/device/scope-a/status",
+                "/api/device/status",
+                "/api/device/set_orb",
+                "/api/device/show_text",
+                "/api/device/status",
             ],
+        )
+        self.assertEqual(
+            {request.headers["Authorization"] for request in self.requests},
+            {"Bearer scope-a"},
         )
 
     async def test_scope_change_discards_repl_state(self):
@@ -174,7 +179,7 @@ class CodeModeTests(DeviceFixture):
             "open('/etc/passwd').read()",
             "import os\nos.getenv('HOME')",
             "device.client",
-            "await device._call('DELETE', '/api/device/scope-b/status')",
+            "await device._call('DELETE', '/api/device/status')",
             "device.get_status.__globals__",
         ):
             with self.subTest(code=code):
@@ -246,7 +251,10 @@ class CodeModeTests(DeviceFixture):
             ("monty", {"execute_device_code"}),
             ("modal", {"execute_device_code"}),
         ):
-            with self.subTest(mode=mode):
+            with (
+                self.subTest(mode=mode),
+                patch.dict(os.environ, {"SLATE_PUBLIC_URL": "https://slate.test"}),
+            ):
                 server = build_server(mode=mode)
                 tools = await server.list_tools()
                 self.assertEqual({tool.name for tool in tools}, names)
@@ -258,7 +266,9 @@ class LocalDeviceHTTPTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.repo = Path(__file__).resolve().parents[1]
         self.requests = []
+        self.scopes = []
         self.active = True
+        self.reject: set[str] = set()
         self.entered = asyncio.Event()
         self.disconnected = asyncio.Event()
         self.block_orb = False
@@ -269,6 +279,11 @@ class LocalDeviceHTTPTests(unittest.IsolatedAsyncioTestCase):
                 path = header.split(" ")[1]
                 name = path.rsplit("/", 1)[-1]
                 self.requests.append(name)
+                self.scopes.extend(
+                    line.split(":", 1)[1].strip()
+                    for line in header.splitlines()
+                    if line.lower().startswith("authorization:")
+                )
                 length = next(
                     (
                         int(line.split(":")[1])
@@ -284,12 +299,13 @@ class LocalDeviceHTTPTests(unittest.IsolatedAsyncioTestCase):
                     await reader.read()
                     self.disconnected.set()
                     return
+                accepted = self.active and name not in self.reject
                 body = json.dumps(
                     receipt("get_status" if name == "status" else name)
-                    if self.active
+                    if accepted
                     else {"detail": "Device scope is inactive"}
                 ).encode()
-                status = b"200 OK" if self.active else b"409 Conflict"
+                status = b"200 OK" if accepted else b"409 Conflict"
                 writer.write(
                     b"HTTP/1.1 " + status + b"\r\nContent-Type: application/json\r\n"
                     b"Connection: close\r\nContent-Length: "
@@ -390,15 +406,19 @@ class LocalSandbox:
                 await process.wait()
 
 
-class SandboxExecutorTests(DeviceFixture):
-    async def executor(self, device, **limits):
+class SandboxExecutorTests(LocalDeviceHTTPTests):
+    async def executor(self, **limits):
         self.sandbox = LocalSandbox()
-        executor = SandboxExecutor(device, self.sandbox, **limits)
+        client = httpx.AsyncClient(base_url=self.device_url)
+        self.addAsyncCleanup(client.aclose)
+        executor = SandboxExecutor(
+            DeviceClient(client), self.sandbox, self.device_url, **limits
+        )
         self.addAsyncCleanup(executor.close)
         return executor
 
-    async def test_cpython_program_composes_sdk_and_keeps_scope_state(self):
-        executor = await self.executor(self.setup_device())
+    async def test_cpython_program_calls_the_device_service_with_its_scope(self):
+        executor = await self.executor()
         first = await executor.execute(
             "scope-a",
             "import asyncio, statistics\n"
@@ -413,6 +433,8 @@ class SandboxExecutorTests(DeviceFixture):
         self.assertEqual(
             [call["status"] for call in first["calls"]], ["completed", "completed"]
         )
+        self.assertEqual(sorted(self.requests), ["set_orb", "show_text", "status"])
+        self.assertEqual(set(self.scopes), {"Bearer scope-a"})
         kept = await executor.execute("scope-a", "orb['revision']")
         self.assertEqual(kept["result"], 1)
         fresh = await executor.execute("scope-b", "orb")
@@ -421,21 +443,18 @@ class SandboxExecutorTests(DeviceFixture):
         self.assertEqual(self.sandbox.terminated, 0)
 
     async def test_device_errors_are_python_exceptions_and_failures_reset_state(self):
-        executor = await self.executor(self.setup_device())
+        self.reject = {"show_text"}
+        executor = await self.executor()
         caught = await executor.execute(
             "scope-a",
             "value = 7\n"
-            "try:\n    await device.set_orb('blue', 99)\n"
+            "try:\n    await device.show_text('Ready')\n"
             "except Exception as error:\n    message = str(error)\n"
             "message",
         )
         self.assertEqual(caught["status"], "completed")
-        self.assertIn("ValidationError", caught["result"])
+        self.assertIn("409", caught["result"])
         self.assertEqual(caught["calls"][0]["status"], "failed")
-        self.assertEqual(
-            [request.url.path for request in self.requests],
-            ["/api/device/scope-a/status"],
-        )
         failure = await executor.execute("scope-a", "raise KeyError('boom')")
         self.assertEqual(failure["error"]["type"], "KeyError")
         self.assertTrue(failure["state_reset"])
@@ -444,7 +463,7 @@ class SandboxExecutorTests(DeviceFixture):
         self.assertEqual(self.sandbox.terminated, 0)
 
     async def test_runaway_program_discards_the_sandbox_and_next_run_works(self):
-        executor = await self.executor(self.setup_device(), timeout=1)
+        executor = await self.executor(timeout=1)
         async with asyncio.timeout(5):
             stuck = await executor.execute("scope-a", "while True:\n    pass")
         self.assertEqual(stuck["error"]["type"], "TimeoutError")
@@ -452,7 +471,7 @@ class SandboxExecutorTests(DeviceFixture):
         self.assertEqual((await executor.execute("scope-a", "6 * 7"))["result"], 42)
 
     async def test_call_budget_stops_the_program_after_acknowledged_calls(self):
-        executor = await self.executor(self.setup_device(), max_calls=2)
+        executor = await self.executor(max_calls=2)
         result = await executor.execute(
             "scope-a", "for _ in range(5):\n    await device.show_text('Ready')"
         )
@@ -463,43 +482,29 @@ class SandboxExecutorTests(DeviceFixture):
         )
 
     async def test_inactive_scope_runs_no_code(self):
-        def inactive(request):
-            self.requests.append(request)
-            return httpx.Response(409, json={"detail": "This device turn has ended"})
-
-        executor = await self.executor(self.setup_device(inactive))
+        self.active = False
+        executor = await self.executor()
         result = await executor.execute("scope-a", "await device.set_orb('#112233')")
         self.assertEqual(result["status"], "error")
-        self.assertIn("ended", result["error"]["message"])
+        self.assertIn("inactive", result["error"]["message"])
         self.assertEqual(result["calls"], [])
         self.assertEqual(self.sandbox.processes, [])
 
-    async def test_cancellation_stops_pending_call_and_discards_sandbox(self):
-        entered = asyncio.Event()
-        cancelled = asyncio.Event()
-
-        async def handle(request):
-            if request.url.path.endswith("/set_orb"):
-                entered.set()
-                try:
-                    await asyncio.Future()
-                finally:
-                    cancelled.set()
-            return httpx.Response(200, json=receipt())
-
-        executor = await self.executor(self.setup_device(handle))
+    async def test_cancellation_drops_the_pending_call_and_discards_sandbox(self):
+        self.block_orb = True
+        executor = await self.executor()
         task = asyncio.create_task(
             executor.execute("scope-a", "await device.set_orb('#112233', 24)")
         )
         try:
-            await asyncio.wait_for(entered.wait(), 3)
+            await asyncio.wait_for(self.entered.wait(), 5)
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await asyncio.wait_for(task, 3)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        self.assertTrue(cancelled.is_set())
+        await asyncio.wait_for(self.disconnected.wait(), 3)
         self.assertEqual(self.sandbox.terminated, 1)
         self.assertEqual((await executor.execute("scope-a", "1 + 1"))["result"], 2)
 
