@@ -26,12 +26,16 @@ canvas { display: block; width: 100%; max-width: 384px; aspect-ratio: 1; image-r
 .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 button { padding: 8px 12px; border-radius: 8px; background: #1e2522; border: 1px solid #3a4540; color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
 button:hover { background: #28312d; }
+button:disabled { opacity: .45; cursor: default; }
 button[aria-pressed=true] { color: #0f1512; background: var(--accent); border-color: var(--accent); }
 #problems { list-style: none; padding: 0; margin: 14px 0 0; font-size: 13px; }
 #problems li { margin: 6px 0; color: var(--dim); }
 #problems b { font-weight: 600; margin-right: 6px; }
 #problems .warning b { color: #f0c674; }
 #problems .error b { color: #f28b82; }
+#voice-log { min-height: 120px; max-height: 260px; overflow-y: auto; background: #0b0d0c; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; margin: 14px 0 0; }
+label { font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+select { padding: 6px 8px; border-radius: 8px; border: 1px solid #3a4540; background: #0b0d0c; color: inherit; }
 #console { height: 260px; overflow-y: auto; background: #0b0d0c; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; margin: 0; }
 form { display: flex; gap: 8px; margin-top: 10px; }
 input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid #3a4540; background: #0b0d0c; color: inherit; font-family: ui-monospace, monospace; }
@@ -61,10 +65,26 @@ p { color: var(--dim); font-size: 13px; line-height: 1.55; margin: 12px 0 0; }
 </div>
 <p>The picture is rebuilt from the SPI bytes the flashed firmware sends to the SSD1351. In Listen, sound on the mic makes the orb grow and turn white.</p>
 </section>
+<section>
+<h2>Voice</h2>
+<div class="row">
+<label><input type="radio" name="mode" value="live" checked> Always listening (GPT-Live + Hermes)</label>
+<label><input type="radio" name="mode" value="cascade"> Push to talk (Kyutai, Hermes, CSM)</label>
+</div>
+<div class="row">
+<label>Echo <select id="echo"><option value="0">Off</option><option value="0.25">Quiet</option><option value="0.6">Loud</option></select></label>
+</div>
+<div class="row">
+<button id="call" aria-pressed="false">Start call</button>
+<button id="talk" disabled>Hold to talk</button>
+</div>
+<pre id="voice-log" aria-live="polite"></pre>
+<p>Your voice reaches Slate through the simulated firmware mic, and Slate's reply plays here. Echo feeds that reply back into the simulated mics, quieter and slightly late, the way a speaker on the device would. Use headphones so your own speakers don't add real echo.</p>
+</section>
 <section class="wide">
 <h2>Serial</h2>
 <pre id="console" aria-live="polite"></pre>
-<form id="keys"><input id="text" autocomplete="off" placeholder="0-5 state · l/r/m mic · a/x audio stream"><button>Send</button></form>
+<form id="keys"><input id="text" autocomplete="off" placeholder="0-5 state · l/r/m mic · a/x mic and speaker tap · c live call"><button>Send</button></form>
 </section>
 </main>
 <script>
@@ -193,16 +213,7 @@ document.querySelector('#keys').onsubmit = event => {
 };
 
 let microphone;
-document.querySelector('#mic').onclick = async event => {
-  const button = event.currentTarget;
-  if (microphone) {
-    microphone.stream.getTracks().forEach(track => track.stop());
-    microphone.socket.close();
-    await microphone.audio.close();
-    microphone = null;
-    button.setAttribute('aria-pressed', 'false');
-    return;
-  }
+async function startMicrophone(listen = true) {
   let stream;
   let audio;
   let socket;
@@ -227,16 +238,166 @@ document.querySelector('#mic').onclick = async event => {
       socket.send(pcm.buffer);
     };
     audio.createMediaStreamSource(stream).connect(worklet);
-    const response = await fetch('/state/1', {method: 'POST'});
-    if (!response.ok) throw new Error('Could not enter Listen state');
+    worklet.connect(audio.destination);
+    await audio.resume();
+    if (listen) {
+      const response = await fetch('/state/1', {method: 'POST'});
+      if (!response.ok) throw new Error('Could not enter Listen state');
+    }
     microphone = {stream, audio, socket};
-    button.setAttribute('aria-pressed', 'true');
+    document.querySelector('#mic').setAttribute('aria-pressed', 'true');
   } catch (e) {
     stream?.getTracks().forEach(track => track.stop());
     socket?.close();
     if (audio) await audio.close();
+    throw e;
+  }
+}
+async function stopMicrophone() {
+  if (!microphone) return;
+  microphone.stream.getTracks().forEach(track => track.stop());
+  microphone.socket.close();
+  await microphone.audio.close();
+  microphone = null;
+  document.querySelector('#mic').setAttribute('aria-pressed', 'false');
+}
+document.querySelector('#mic').onclick = async () => {
+  try {
+    if (microphone) await stopMicrophone();
+    else await startMicrophone();
+  } catch (e) {
     error.textContent = `Microphone unavailable: ${e.message}`;
   }
+};
+
+const PLAYER = `registerProcessor('player', class extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.queue = [];
+    this.offset = 0;
+    this.port.onmessage = ({data}) => {
+      this.queue.push(data);
+      while (this.queue.reduce((n, chunk) => n + chunk.length, 0) > 48000) { this.queue.shift(); this.offset = 0; }
+    };
+  }
+  process(_, outputs) {
+    const out = outputs[0][0];
+    let i = 0;
+    while (i < out.length && this.queue.length) {
+      const head = this.queue[0];
+      const n = Math.min(out.length - i, head.length - this.offset);
+      out.set(head.subarray(this.offset, this.offset + n), i);
+      i += n;
+      this.offset += n;
+      if (this.offset === head.length) { this.queue.shift(); this.offset = 0; }
+    }
+    return true;
+  }
+});`;
+
+let call;
+const voiceLog = document.querySelector('#voice-log');
+const callButton = document.querySelector('#call');
+const talkButton = document.querySelector('#talk');
+
+async function startCall() {
+  const live = document.querySelector('input[name=mode]:checked').value === 'live';
+  const echo = Number(document.querySelector('#echo').value);
+  const ownsMicrophone = !microphone;
+  if (ownsMicrophone) await startMicrophone(false);
+  const response = await fetch('/call', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({live, echo})});
+  const body = await response.json();
+  if (!response.ok) {
+    if (ownsMicrophone) await stopMicrophone();
+    throw new Error(body.detail);
+  }
+  const audio = new AudioContext({sampleRate: 24000});
+  call = {live, audio, socket: null, ownsMicrophone, timer: null};
+  try {
+    const workletUrl = URL.createObjectURL(new Blob([PLAYER], {type: 'text/javascript'}));
+    try {
+      await audio.audioWorklet.addModule(workletUrl);
+    } finally {
+      URL.revokeObjectURL(workletUrl);
+    }
+    const player = new AudioWorkletNode(audio, 'player');
+    player.connect(audio.destination);
+    await audio.resume();
+    const socket = new WebSocket(`ws://${location.host}/speaker`);
+    socket.binaryType = 'arraybuffer';
+    socket.onmessage = ({data}) => {
+      const pcm = new Int16Array(data);
+      const samples = new Float32Array(pcm.length);
+      for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
+      player.port.postMessage(samples, [samples.buffer]);
+    };
+    socket.onerror = () => { error.textContent = 'Speaker stream unavailable'; };
+    call.socket = socket;
+    call.timer = setInterval(() => showCall().catch(e => {
+      error.textContent = `Call status unavailable: ${e.message}`;
+    }), 1000);
+  } catch (e) {
+    await endCall();
+    throw e;
+  }
+  callButton.textContent = 'End call';
+  callButton.setAttribute('aria-pressed', 'true');
+  talkButton.disabled = live;
+  voiceLog.textContent = live ? 'Connecting to GPT-Live…' : 'Hold to talk, then let go.';
+}
+
+async function endCall() {
+  const current = call;
+  call = null;
+  clearInterval(current.timer);
+  current.socket?.close();
+  await current.audio.close();
+  if (current.ownsMicrophone) await stopMicrophone();
+  const response = await fetch('/call', {method: 'DELETE'});
+  const body = await response.json();
+  callButton.textContent = 'Start call';
+  callButton.setAttribute('aria-pressed', 'false');
+  talkButton.disabled = true;
+  voiceLog.textContent += body.seconds ? `\nCall ended: ${body.seconds}.` : '\nCall ended.';
+}
+
+async function showCall() {
+  if (!call) return;
+  const status = await (await fetch('/call', {cache: 'no-store'})).json();
+  if (!call) return;
+  if (!status.active) {
+    voiceLog.textContent = status.error ? `Call ended: ${status.error}` : 'Call ended.';
+    await endCall();
+    return;
+  }
+  const lines = [];
+  if (status.live) {
+    lines.push(status.ready ? `Listening · ${status.handoffs} handoffs to Hermes` : 'Connecting to GPT-Live…');
+    for (const part of status.words) lines.push(`${part.role}: ${part.text}`);
+  } else {
+    lines.push(status.talking ? 'Recording…' : 'Hold to talk, then let go.');
+    for (const turn of status.turns) lines.push(`You: ${turn.heard}
+Slate: ${turn.said}`);
+  }
+  if (status.echo) lines.push(`Echo: ${status.echo_seconds} s of Slate's voice fed back into the mics`);
+  if (status.error) lines.push(`Error: ${status.error}`);
+  voiceLog.textContent = lines.join('\n');
+}
+
+callButton.onclick = async () => {
+  callButton.disabled = true;
+  try {
+    if (call) await endCall();
+    else await startCall();
+  } catch (e) {
+    error.textContent = `Call failed: ${e.message}`;
+  } finally {
+    callButton.disabled = false;
+  }
+};
+talkButton.onpointerdown = () => fetch('/call/talk', {method: 'POST'});
+talkButton.onpointerup = talkButton.onpointerleave = talkButton.onpointercancel = () => {
+  if (call && !call.live) fetch('/call/talk', {method: 'DELETE'});
 };
 
 (async () => {

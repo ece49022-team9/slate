@@ -8,8 +8,8 @@ BAUD = 921_600
 
 
 class Link:
-    """The firmware's serial port: text lines, plus audio frames marked by a zero
-    byte and a little-endian length."""
+    """The firmware's serial port: text lines and mic/speaker frames marked by
+    byte 0/1 and a little-endian length."""
 
     def __init__(
         self,
@@ -21,6 +21,7 @@ class Link:
         self.timeout = timeout
         self.lines: list[str] = []
         self.audio: asyncio.Queue[bytes] = asyncio.Queue()
+        self.speaker: asyncio.Queue[bytes] = asyncio.Queue()
         self.buffer = bytearray()
         self.text = bytearray()
         self.waiters: list[tuple[str, asyncio.Future]] = []
@@ -31,16 +32,21 @@ class Link:
         buffer = self.buffer
         buffer += data
         while buffer:
-            if buffer[0] == 0:
+            if buffer[0] in (0, 1):
                 if len(buffer) < 3:
                     return
                 size = buffer[1] | buffer[2] << 8
                 if len(buffer) < 3 + size:
                     return
-                self.audio.put_nowait(bytes(buffer[3 : 3 + size]))
+                queue = self.audio if buffer[0] == 0 else self.speaker
+                queue.put_nowait(bytes(buffer[3 : 3 + size]))
                 del buffer[: 3 + size]
                 continue
-            stops = [i for i in (buffer.find(0), buffer.find(b"\n")) if i >= 0]
+            stops = [
+                i
+                for i in (buffer.find(0), buffer.find(1), buffer.find(b"\n"))
+                if i >= 0
+            ]
             end = min(stops, default=len(buffer))
             self.text += buffer[:end]
             del buffer[:end]

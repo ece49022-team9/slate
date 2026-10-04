@@ -20,6 +20,7 @@
 
 struct CloudEvent {
   SlateState state;
+  bool toggle_live;
   uint16_t count;
   int16_t samples[MIC_FRAME_SAMPLES];
 };
@@ -61,6 +62,7 @@ static bool ethernet_started = false;
 static String mode, ssid, password, url, token;
 static bool configured, connected, active_turn, recording;
 static String turn_id;
+static std::atomic<bool> live{false}, audio_tap{false};
 static unsigned long retry_ms = 1000;
 static unsigned long finish_at, error_at;
 static size_t reply_bytes;
@@ -104,6 +106,32 @@ static void receive_text(uint8_t* payload, size_t length) {
     send_json(receipt);
     return;
   }
+  if (!strcmp(type, "live")) {
+    const char* state = document["state"] | "";
+    if (!strcmp(state, "started")) {
+      Serial.printf("slate.live: started %s\n", document["call_id"] | "");
+    } else if (!strcmp(state, "ended")) {
+      String line = "slate.live: ended " + String(document["seconds"] | 0.0) + "s";
+      const char* error = document["error"] | "";
+      if (*error) line += " error=" + String(error);
+      Serial.println(line);
+      live.store(false);
+      slate_request_state(IDLE);
+    }
+    return;
+  }
+  if (!strcmp(type, "heard") || !strcmp(type, "said")) {
+    Serial.printf("slate.live.%s: %s\n", type, document["text"] | "");
+    return;
+  }
+  if (live.load()) {
+    if (!strcmp(type, "error")) {
+      Serial.printf("slate.cloud.error: %s\n", document["message"] | "unknown error");
+      return;
+    }
+    if (!strcmp(type, "reply") || !strcmp(type, "transcript") ||
+        !strcmp(type, "turn") || !strcmp(type, "cancelled")) return;
+  }
   const char* incoming_turn = document["turn_id"] | "";
   if (!strcmp(type, "turn")) {
     if (active_turn) turn_id = incoming_turn;
@@ -111,7 +139,7 @@ static void receive_text(uint8_t* payload, size_t length) {
   }
   bool announcement = document["announcement"] | false;
   bool global_error = !strcmp(type, "error") && !incoming_turn[0];
-  if (!announcement && !global_error && (!active_turn || (turn_id.length() && turn_id != incoming_turn))) {
+  if (!live.load() && !announcement && !global_error && (!active_turn || (turn_id.length() && turn_id != incoming_turn))) {
     Serial.println("slate.cloud: ignored inactive turn");
     return;
   }
@@ -160,7 +188,8 @@ static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
     }
   } else if (type == WStype_DISCONNECTED) {
     ready.store(false);
-    bool interrupted = active_turn;
+    bool interrupted = active_turn || live.load();
+    if (live.exchange(false)) Serial.println("slate.live: ended disconnected");
     connected = active_turn = recording = false;
     turn_id = "";
     finish_at = 0;
@@ -172,6 +201,7 @@ static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
   } else if (type == WStype_TEXT) {
     receive_text(payload, length);
   } else if (type == WStype_BIN) {
+    cloud_tap(1, payload, length);
     if (active_turn || slate_get_state() == SLATE_RESPOND) {
       reply_bytes += length;
       if (finish_at) finish_at = millis() + 1000;
@@ -415,8 +445,30 @@ static void cloud_task(void* starter) {
     }
     while (xQueueReceive(events, &event, 0) == pdTRUE) {
       if (!connected) continue;
-      if (event.count) {
-        if (recording && !socket.sendBIN(reinterpret_cast<uint8_t*>(event.samples), event.count * sizeof(int16_t))) {
+      if (event.toggle_live) {
+        if (live.exchange(!live.load())) {
+          send_type("hangup");
+          slate_request_state(IDLE);
+          Serial.println("slate.live: hangup");
+        } else {
+          if (active_turn) send_type("cancel");
+          active_turn = recording = false;
+          turn_id = "";
+          finish_at = error_at = 0;
+          reply_bytes = 0;
+          slate_request_state(SLATE_LISTEN);
+          send_type("live");
+          Serial.println("slate.live: requested");
+        }
+      } else if (live.load() && !event.count) {
+        if (event.state == IDLE) {
+          send_type("hangup");
+          live.store(false);
+          slate_request_state(IDLE);
+          Serial.println("slate.live: hangup");
+        }
+      } else if (event.count) {
+        if ((recording || live.load()) && !socket.sendBIN(reinterpret_cast<uint8_t*>(event.samples), event.count * sizeof(int16_t))) {
           Serial.println("slate.cloud: audio send failed");
         }
       } else if (event.state == SLATE_LISTEN) {
@@ -472,7 +524,7 @@ void cloud_state(SlateState state) {
 }
 
 void cloud_audio(const int16_t* samples, size_t count) {
-  if (!ready.load() || slate_get_state() != SLATE_LISTEN || !count || count > MIC_FRAME_SAMPLES) return;
+  if (!ready.load() || (!live.load() && slate_get_state() != SLATE_LISTEN) || !count || count > MIC_FRAME_SAMPLES) return;
   if (uxQueueSpacesAvailable(events) < 3) {
     static uint32_t last_drop;
     if (millis() - last_drop >= 1000) {
@@ -485,4 +537,34 @@ void cloud_audio(const int16_t* samples, size_t count) {
   event.count = count;
   memcpy(event.samples, samples, count * sizeof(int16_t));
   if (xQueueSend(events, &event, 0) != pdTRUE) Serial.println("slate.cloud: audio queue full");
+}
+
+void cloud_toggle_live() {
+  if (!ready.load()) {
+    Serial.println("slate.live: cloud disconnected");
+    return;
+  }
+  CloudEvent event = {};
+  event.toggle_live = true;
+  if (xQueueSend(events, &event, 0) != pdTRUE) Serial.println("slate.live: control queue full");
+}
+
+bool cloud_live() { return live.load(); }
+
+void cloud_audio_tap(bool enabled) { audio_tap.store(enabled); }
+
+void cloud_tap(uint8_t marker, const uint8_t* payload, size_t length) {
+  // One buffer per marker: the loop task taps the mic (0), the cloud task the speaker (1).
+  static uint8_t frames[2][3 + 2048];
+  if (!audio_tap.load() || marker > 1) return;
+  if (length > sizeof(frames[0]) - 3) {
+    Serial.println("slate.audio: tap frame too large");
+    return;
+  }
+  uint8_t* frame = frames[marker];
+  frame[0] = marker;
+  frame[1] = length;
+  frame[2] = length >> 8;
+  memcpy(frame + 3, payload, length);
+  Serial.write(frame, length + 3);
 }
