@@ -108,10 +108,16 @@ A device opens one WebSocket to `wss://<service>/api/device/socket` with `Author
 | --- | --- |
 | Device → Slate | `{"type":"hello","rate":16000}` first; the server resamples to 24 kHz |
 | Device → Slate | `{"type":"start"}`, binary mic frames, then `{"type":"end"}`; `{"type":"cancel"}` discards the turn |
+| Device → Slate | `{"type":"live"}` starts a live call and `{"type":"hangup"}` ends it; mic frames stream the whole call |
 | Device → Slate | `{"type":"receipt", ...}` for each command, with the firmware's state or an `error` |
 | Slate → device | `turn`, `transcript` and `reply` (`text`, `final`), `tool`, `approval`, `error`, `cancelled`, each with `turn_id` |
 | Slate → device | `{"type":"command","request_id","operation","arguments"}` for `set_orb`, `show_text`, `get_status` |
+| Slate → device | `live` with `state` `started` or `ended` (`seconds`, maybe `error`), and `heard` and `said` word deltas, each with `call_id` |
 | Slate → device | binary 24 kHz reply speech, paced about 0.3 s ahead of playback |
+
+A live call runs GPT-Live in the service. GPT-Live listens the whole time, decides when the user has finished and when to stop talking, and hands questions and tasks to Hermes. Each handoff gets the words said since the previous one, plus the device scope and approvals of a turn of its own; GPT-Live speaks the part of Hermes's answer before `---`. If GPT-Live's connection drops, the call starts a new session seeded with the conversation so far. Background results arriving during a call are given to GPT-Live to say. Its voice prompt is [live.md](server/slate/voice/live.md), and it needs `OPENAI_API_KEY`, which `make cloud-setup` copies from Doppler into the Modal secret.
+
+`GET /api/voice/reports`, with the device token, returns timing, usage, and words for the connected device's recent turns and live calls, including a call in progress. `SLATE_PROFILE=1` on the service adds speech-model timings to turn reports.
 
 One device is connected at a time; a new connection replaces the old one. Recordings are limited to two minutes. To send a recording as a device, without QEMU:
 

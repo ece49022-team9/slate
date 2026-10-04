@@ -159,7 +159,7 @@ class Slate:
         env = {
             name: value
             for name, value in os.environ.items()
-            if name != "PYTHONPATH"
+            if name not in ("PYTHONPATH", "OPENAI_API_KEY")
             and (not name.startswith("MODAL_") or name.startswith("MODAL_TOKEN_"))
         }
         env["HERMES_HOME"] = str(runtime.PROFILE)
@@ -233,6 +233,7 @@ def setup() -> None:
             "MODAL_TOKEN_ID": modal_login["token_id"],
             "MODAL_TOKEN_SECRET": modal_login["token_secret"],
             "SLATE_PUBLIC_URL": settings.get("url", ""),
+            "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
         },
     )
     saved = {entry.path for entry in state.listdir("/", recursive=True)}

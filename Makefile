@@ -10,7 +10,7 @@ setup:
 	npm --prefix web ci
 
 cloud-setup:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.cloud setup
+	MODAL_PROFILE=$(MODAL_PROFILE) doppler run -- uv run python -m slate.cloud setup
 
 cloud-deploy:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.cloud deploy
