@@ -199,6 +199,8 @@ To send audio through the simulated firmware, the cloud agent, and the real spee
 make sim-voice
 ```
 
+`make duplex-profile` compares live calls with push to talk on the simulated firmware: the time from the end of the spoken question to Slate's first sound and to its answer, and, with "Wait, stop." spoken over a longer answer, how long Slate keeps talking. `ECHO=0.6` adds the speaker echo. `make cost-profile` runs the same 15-turn conversation through both and prices it; run the service with `SLATE_PROFILE=1` for the speech-model timings. Both use the deployed service, or `API_URL=http://127.0.0.1:8000` for one on the Mac, which the firmware reaches at 10.0.2.2. Results go to `experiments/progress.jsonl`.
+
 Pass `INPUT=path/to/speech.wav` to use a different recording. The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` on the underlying Python command picks left (default), right, or mix. The command boots QEMU, waits for the firmware to connect to the cloud, plays the WAV into its mic model while holding listen, and prints the transcript, the reply, and how much speech the firmware received. Haptics are not started until their pins are confirmed.
 
 ### Bench
