@@ -10202,7 +10202,7 @@
 		(uuid "267c03e0-3eef-41b5-b77a-06bbf3f6649a")
 	)
 	(label "OLED_CS"
-		(at 53.34 130.81 180)
+		(at 53.34 128.27 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10302,7 +10302,7 @@
 		(uuid "4896b3b1-22be-489b-9122-834da703ac7f")
 	)
 	(label "SDCS"
-		(at 53.34 138.43 180)
+		(at 53.34 125.73 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10322,7 +10322,7 @@
 		(uuid "49447753-3f8f-479b-ad0d-bd3a0ac3c9e3")
 	)
 	(label "OLED_RST"
-		(at 53.34 135.89 180)
+		(at 53.34 130.81 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10332,7 +10332,7 @@
 		(uuid "4b81194c-a2d9-4771-8d36-313f5c2da566")
 	)
 	(label "MISO_SD"
-		(at 53.34 128.27 180)
+		(at 53.34 123.19 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10402,7 +10402,7 @@
 		(uuid "626136c3-c237-4962-9b5e-38c2bd6fe9de")
 	)
 	(label "SPI_CLK"
-		(at 53.34 123.19 180)
+		(at 53.34 135.89 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10492,7 +10492,7 @@
 		(uuid "8936ffae-5627-4e46-91ee-eaf0e8e47c14")
 	)
 	(label "SPI_MOSI"
-		(at 53.34 125.73 180)
+		(at 53.34 138.43 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -13722,7 +13722,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Button_Switch_THT:SW_NKK_GW12LJP"
+		(property "Footprint" "Button_Switch_SMD:SW_SPST_CK_KMS2xxGP"
 			(at 431.8 151.13 0)
 			(hide yes)
 			(show_name no)
