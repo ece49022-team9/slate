@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { VoiceConnection, type VoiceState } from './voice'
+import { VoiceConnection, type Approval, type VoiceState } from './voice'
 
 const labels: Record<VoiceState, string> = {
   offline: 'Microphone disconnected',
@@ -8,6 +8,7 @@ const labels: Record<VoiceState, string> = {
   starting: 'Opening microphone…',
   recording: 'Listening',
   transcribing: 'Finishing the transcript…',
+  responding: 'Working on your request…',
 }
 
 export default function App() {
@@ -15,7 +16,11 @@ export default function App() {
   const [state, setState] = useState<VoiceState>('offline')
   const [transcript, setTranscript] = useState('')
   const [final, setFinal] = useState(false)
+  const [reply, setReply] = useState('')
+  const [audioBlocked, setAudioBlocked] = useState(false)
   const [error, setError] = useState('')
+  const [tool, setTool] = useState('')
+  const [approval, setApproval] = useState<Approval>()
 
   useEffect(() => {
     const cancel = () => {
@@ -36,13 +41,16 @@ export default function App() {
     const client = new VoiceConnection(setState, (text, done) => {
       setTranscript(text)
       setFinal(done)
-    }, setError)
+    }, setReply, setAudioBlocked, setError, (name, request) => {
+      setTool(name)
+      setApproval(request)
+    })
     connection.current = client
     void client.connect()
   }
 
-  const canTalk = state === 'ready' || state === 'starting' || state === 'recording'
-  const busy = state === 'starting' || state === 'recording' || state === 'transcribing'
+  const canTalk = state === 'ready' || state === 'starting' || state === 'recording' || state === 'transcribing' || state === 'responding'
+  const busy = state === 'starting' || state === 'recording' || state === 'transcribing' || state === 'responding'
 
   return (
     <main>
@@ -84,14 +92,28 @@ export default function App() {
                 void connection.current?.finish()
               }
             }}
-            onBlur={() => { if (state === 'recording') void connection.current?.cancel() }}
+            onBlur={() => { if (state === 'recording' || state === 'starting') void connection.current?.cancel() }}
           >
             {state === 'recording' ? 'Listening…' : 'Talk'}
           </button>
           {busy && <button className="secondary" onClick={() => void connection.current?.cancel()}>Cancel</button>}
+          {audioBlocked && <button className="secondary" onClick={() => void connection.current?.enableAudio()}>Enable reply audio</button>}
         </div>
-        <p className="hint">Audio is sent only while you hold Talk. This test shows text and does not speak back.</p>
+        <p className="hint">Audio is sent only while you hold Talk. Hold Talk during a reply to interrupt it.</p>
         {error && <p role="alert" className="error">{error}</p>}
+        {tool && <p role="status">Using {tool}…</p>}
+        {approval && (
+          <section aria-label="Tool approval">
+            <p>Allow this tool request?</p>
+            <pre>{approval.command}</pre>
+            <button onClick={() => void connection.current?.approve(approval, 'once')}>Allow once</button>
+            <button className="secondary" onClick={() => void connection.current?.approve(approval, 'deny')}>Deny</button>
+          </section>
+        )}
+      </section>
+      <section aria-label="Reply" className="transcript">
+        <h2>Slate</h2>
+        <p aria-live="polite">{reply || 'Slate’s reply will appear here.'}</p>
       </section>
       <section aria-label="Transcript" className="transcript">
         <h2>Transcript</h2>

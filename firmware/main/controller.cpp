@@ -6,6 +6,8 @@
 #include "slate_state.h"
 #include "display.h"
 #include "mic.h"
+#include "perf.h"
+#include "cloud.h"
 
 static QueueHandle_t state_queue;
 static std::atomic<SlateState> current_state{IDLE};
@@ -29,16 +31,19 @@ static void apply_state(SlateState state) {
   display_set_state(state);
   mic_set_state(state);
   current_state.store(state);
+  cloud_state(state);
   ESP_LOGI("slate.state", "%s", names[state]);
 }
 
 static void control_task(void*) {
   SlateState state;
+  perf_stack(PerfTask::CONTROL);
   for (;;) {
     if (xQueueReceive(state_queue, &state, portMAX_DELAY) == pdTRUE &&
         state != current_state.load()) {
       apply_state(state);
     }
+    perf_stack(PerfTask::CONTROL);
   }
 }
 
