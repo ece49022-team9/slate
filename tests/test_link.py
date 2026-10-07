@@ -19,7 +19,7 @@ def encode(item) -> bytes:
     kind, value = item
     if kind == "line":
         return value.encode() + b"\r\n"
-    return bytes([0, len(value) & 0xFF, len(value) >> 8]) + value
+    return bytes([int(kind == "speaker"), len(value) & 0xFF, len(value) >> 8]) + value
 
 
 def parse(stream: bytes, cuts: list[int]) -> Link:
@@ -36,7 +36,13 @@ def parse(stream: bytes, cuts: list[int]) -> Link:
 
 class LinkTests(unittest.TestCase):
     @settings(max_examples=200)
-    @given(st.lists(st.one_of(lines, frames), max_size=12), st.lists(st.integers(0)))
+    @given(
+        st.lists(
+            st.one_of(lines, frames, frames.map(lambda item: ("speaker", item[1]))),
+            max_size=12,
+        ),
+        st.lists(st.integers(0)),
+    )
     def test_recovers_lines_and_audio_at_any_chunking(self, items, cuts):
         link = parse(b"".join(map(encode, items)), cuts)
         audio = []
@@ -44,3 +50,8 @@ class LinkTests(unittest.TestCase):
             audio.append(link.audio.get_nowait())
         self.assertEqual(link.lines, [value for kind, value in items if kind == "line"])
         self.assertEqual(audio, [value for kind, value in items if kind == "audio"])
+
+        speaker = []
+        while not link.speaker.empty():
+            speaker.append(link.speaker.get_nowait())
+        self.assertEqual(speaker, [value for kind, value in items if kind == "speaker"])

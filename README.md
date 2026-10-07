@@ -108,10 +108,16 @@ A device opens one WebSocket to `wss://<service>/api/device/socket` with `Author
 | --- | --- |
 | Device → Slate | `{"type":"hello","rate":16000}` first; the server resamples to 24 kHz |
 | Device → Slate | `{"type":"start"}`, binary mic frames, then `{"type":"end"}`; `{"type":"cancel"}` discards the turn |
+| Device → Slate | `{"type":"live"}` starts a live call and `{"type":"hangup"}` ends it; mic frames stream the whole call |
 | Device → Slate | `{"type":"receipt", ...}` for each command, with the firmware's state or an `error` |
 | Slate → device | `turn`, `transcript` and `reply` (`text`, `final`), `tool`, `approval`, `error`, `cancelled`, each with `turn_id` |
 | Slate → device | `{"type":"command","request_id","operation","arguments"}` for `set_orb`, `show_text`, `get_status` |
+| Slate → device | `live` with `state` `started` or `ended` (`seconds`, maybe `error`), and `heard` and `said` word deltas, each with `call_id` |
 | Slate → device | binary 24 kHz reply speech, paced about 0.3 s ahead of playback |
+
+A live call runs GPT-Live in the service. GPT-Live listens the whole time, decides when the user has finished and when to stop talking, and hands questions and tasks to Hermes. Each handoff gets the words said since the previous one, plus the device scope and approvals of a turn of its own; GPT-Live speaks the part of Hermes's answer before `---`. If GPT-Live's connection drops, the call starts a new session seeded with the conversation so far. Background results arriving during a call are given to GPT-Live to say. Its voice prompt is [live.md](server/slate/voice/live.md), and it needs `OPENAI_API_KEY`, which `make cloud-setup` copies from Doppler into the Modal secret.
+
+`GET /api/voice/reports`, with the device token, returns timing, usage, and words for the connected device's recent turns and live calls, including a call in progress. `SLATE_PROFILE=1` on the service adds speech-model timings to turn reports.
 
 One device is connected at a time; a new connection replaces the old one. Recordings are limited to two minutes. To send a recording as a device, without QEMU:
 
@@ -185,13 +191,15 @@ QEMU boots the exact image `make flash` writes. Python plays the parts on the br
 
 QEMU runs the same 520 KB SRAM map, the WROOM-32's 4 MB flash, and no PSRAM, so heap and stack limits are the real ones. Its CPU is not cycle-accurate: every instruction costs 4 ns, with no flash cache misses or wait states. `make calibrate-sim` runs the same workload on the board and in QEMU and writes the hardware/QEMU timing ratios to `firmware/sim_calibration.toml`; the simulator check scales its timings by those ratios. Until then it reports timing as uncalibrated. `make bench` applies the same budgets to the board's own report.
 
-`make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
+`make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. The Voice panel starts a call from the firmware: always listening sends `c` for a live call, and push to talk holds Listen while you hold Talk. Both turn on the audio tap (`a`), which copies the mic frames and the reply speech the firmware receives to serial, so the page plays Slate's voice. Echo feeds that speech back into the simulated mics, quieter and 40 ms late, the way a speaker beside the mics would. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
 
 To send audio through the simulated firmware, the cloud agent, and the real speech services, run:
 
 ```sh
 make sim-voice
 ```
+
+`make duplex-profile` compares live calls with push to talk on the simulated firmware: the time from the end of the spoken question to Slate's first sound and to its answer, and, with "Wait, stop." spoken over a longer answer, how long Slate keeps talking. `ECHO=0.6` adds the speaker echo. `make cost-profile` runs the same 15-turn conversation through both and prices it; run the service with `SLATE_PROFILE=1` for the speech-model timings. Both use the deployed service, or `API_URL=http://127.0.0.1:8000` for one on the Mac, which the firmware reaches at 10.0.2.2. Results go to `experiments/progress.jsonl`.
 
 Pass `INPUT=path/to/speech.wav` to use a different recording. The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` on the underlying Python command picks left (default), right, or mix. The command boots QEMU, waits for the firmware to connect to the cloud, plays the WAV into its mic model while holding listen, and prints the transcript, the reply, and how much speech the firmware received. Haptics are not started until their pins are confirmed.
 
