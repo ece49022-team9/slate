@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"name": "slate",
+			"path": "../../../../../Apps/Documents/PlatformIO/Projects/slate"
+		}
+	],
+	"settings": {}
+}
