@@ -1,64 +1,92 @@
 #include "speaker.h"
 #include "Arduino.h"
-#include "driver/i2s.h"
+#include "driver/i2s_std.h"
 
-static constexpr i2s_port_t SPEAKER_I2S = I2S_NUM_1;
+static i2s_chan_handle_t speaker_tx;
 
-static constexpr int SPEAKER_BCLK = 6;
-static constexpr int SPEAKER_DATA = 15;
-static constexpr int SPEAKER_LRCLK = 17;
-static constexpr int SPEAKER_SD = 16;
+static constexpr gpio_num_t SPEAKER_BCLK = GPIO_NUM_26;
+static constexpr gpio_num_t SPEAKER_DATA = GPIO_NUM_27;
+static constexpr gpio_num_t SPEAKER_LRCLK = GPIO_NUM_25;
 
+//static constexpr int SPEAKER_SD = 4;
 static constexpr int SPEAKER_RATE = 16000;
 
 void speaker_start() {
-  pinMode(SPEAKER_SD, OUTPUT);
-  digitalWrite(SPEAKER_SD, LOW);
+  Serial.println("SPEAKER 1");
 
-  i2s_config_t config = {
-      .mode = static_cast<i2s_mode_t>(
-          I2S_MODE_MASTER | I2S_MODE_TX),
-      .sample_rate = SPEAKER_RATE,
-      .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-      .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-      .communication_format = I2S_COMM_FORMAT_I2S,
-      .intr_alloc_flags = 0,
-      .dma_buf_count = 8,
-      .dma_buf_len = 256,
-      .use_apll = false,
-      .tx_desc_auto_clear = true,
-      .fixed_mclk = 0,
+  //pinMode(SPEAKER_SD, OUTPUT);
+  //digitalWrite(SPEAKER_SD, LOW);
+
+  Serial.println("SPEAKER 2");
+
+  i2s_chan_config_t channel_config =
+      I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+
+  Serial.println("SPEAKER 3");
+
+  ESP_ERROR_CHECK(
+      i2s_new_channel(&channel_config, &speaker_tx, nullptr));
+
+  Serial.println("SPEAKER 4");
+
+  i2s_std_config_t config = {
+      .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SPEAKER_RATE),
+      .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
+          I2S_DATA_BIT_WIDTH_16BIT,
+          I2S_SLOT_MODE_MONO),
+      .gpio_cfg = {
+          .mclk = I2S_GPIO_UNUSED,
+          .bclk = SPEAKER_BCLK,
+          .ws = SPEAKER_LRCLK,
+          .dout = SPEAKER_DATA,
+          .din = I2S_GPIO_UNUSED,
+          .invert_flags = {
+              .mclk_inv = false,
+              .bclk_inv = false,
+              .ws_inv = false,
+          },
+      },
   };
 
-  i2s_pin_config_t pins = {
-      .bck_io_num = SPEAKER_BCLK,
-      .ws_io_num = SPEAKER_LRCLK,
-      .data_out_num = SPEAKER_DATA,
-      .data_in_num = I2S_PIN_NO_CHANGE,
-  };
+  config.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
 
-  i2s_driver_install(SPEAKER_I2S, &config, 0, nullptr);
-  i2s_set_pin(SPEAKER_I2S, &pins);
-  i2s_zero_dma_buffer(SPEAKER_I2S);
+  Serial.println("SPEAKER 5");
 
-  digitalWrite(SPEAKER_SD, HIGH);
+  ESP_ERROR_CHECK(
+      i2s_channel_init_std_mode(speaker_tx, &config));
+
+  Serial.println("SPEAKER 6");
+
+  ESP_ERROR_CHECK(i2s_channel_enable(speaker_tx));
+
+  Serial.println("SPEAKER 7");
+
+  //digitalWrite(SPEAKER_SD, HIGH);
+
+  Serial.println("SPEAKER 8");
 }
 
 size_t speaker_write(const uint8_t* data, size_t bytes) {
   size_t written = 0;
 
-  i2s_write(
-      SPEAKER_I2S,
+  esp_err_t error = i2s_channel_write(
+      speaker_tx,
       data,
       bytes,
       &written,
-      portMAX_DELAY
-  );
+      portMAX_DELAY);
+
+  if (error != ESP_OK) {
+    return 0;
+  }
 
   return written;
 }
 
 void speaker_stop() {
-  digitalWrite(SPEAKER_SD, LOW);
-  i2s_zero_dma_buffer(SPEAKER_I2S);
+  //digitalWrite(SPEAKER_SD, LOW);
+
+  if (speaker_tx != nullptr) {
+    i2s_channel_disable(speaker_tx);
+  }
 }
