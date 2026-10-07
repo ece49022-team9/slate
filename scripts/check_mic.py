@@ -14,11 +14,12 @@ def reference(samples: list[tuple[int, int]], channel: str) -> list[int]:
     previous_input = previous_output = 0.0
     output = []
     for left, right in samples:
-        value = (
-            (left + right) / 2
-            if channel == "mix"
-            else (left if channel == "left" else right)
-        )
+        if channel == "mix":
+            value = (left + right) / 2
+        elif channel == "left":
+            value = left
+        else:
+            value = right
         filtered = c_float(
             c_float(value - previous_input).value
             + c_float(c_float(0.995).value * previous_output).value
@@ -47,9 +48,10 @@ async def record(
     await bench.sleep(0.3)
     link.type("x0")
     await link.wait_for("slate.state: 0")
-    audio = b""
+    chunks = []
     while not link.audio.empty():
-        audio += link.audio.get_nowait()
+        chunks.append(link.audio.get_nowait())
+    audio = b"".join(chunks)
     return list(struct.unpack(f"<{len(audio) // 2}h", audio))
 
 
