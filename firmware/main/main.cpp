@@ -5,12 +5,14 @@
 #include "mic.h"
 #include "pdm.h"
 #include "oled.h"
+#include "speaker.h"
 
 void setup() {
   Serial.begin(921600);
   mic_start();
   slate_start();
   pdm_start();
+  speaker_start();
   Serial.printf("slate.boot: %s PDM mic on CLK=%d DATA=%d\n", BOARD_MCU, MIC_CLK, MIC_DATA);
   oled_start();
   Serial.printf("slate.boot: OLED on CLK=%d MOSI=%d CS=%d DC=%d RESET=%d at %u Hz\n",
