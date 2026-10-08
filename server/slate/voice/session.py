@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from livekit import rtc
 
+from slate.api.events import EventBus
 from slate.voice.audio import SAMPLE_RATE
 from slate.voice.client import transcribe_stream
 from slate.voice.settings import TRANSCRIPT_TOPIC, WORKER_IDENTITY, VoiceSettings
@@ -17,8 +18,9 @@ logger = logging.getLogger("slate.voice.session")
 
 
 class VoiceSession:
-    def __init__(self, settings: VoiceSettings) -> None:
+    def __init__(self, settings: VoiceSettings, events: EventBus | None = None) -> None:
         self.settings = settings
+        self.events = events
         self.id = uuid4().hex
         self.room_name = f"slate-{self.id}"
         self.device_identity = f"device-{self.id}"
@@ -42,6 +44,33 @@ class VoiceSession:
         if not task.cancelled() and (error := task.exception()):
             logger.error("Session task failed", exc_info=error)
 
+    def report(self, state: str, *, online: bool = True) -> None:
+        """Tell the web dashboard what the device is doing right now."""
+        if self.events is None:
+            return
+        self.events.publish(
+            "device.status",
+            {
+                "online": online,
+                "state": state,
+                "battery_percent": None,
+                "wifi_rssi": None,
+                "firmware_version": None,
+            },
+            device_id=self.device_identity,
+        )
+
+    def report_request(self, turn: Turn, text: str) -> None:
+        """Show what the user said as the first step of a request."""
+        if self.events is None or not text:
+            return
+        self.events.publish(
+            "agent.step",
+            {"step_id": "request", "kind": "request", "status": "done", "title": text},
+            device_id=self.device_identity,
+            session_id=turn.id,
+        )
+
     async def connect(self) -> dict[str, str]:
         self.room.on("track_subscribed", self.track_subscribed)
         self.room.on("track_unsubscribed", self.track_unsubscribed)
@@ -60,6 +89,7 @@ class VoiceSession:
                 "cancel_turn", self.cancel_turn
             )
             self.spawn(self.expire())
+            self.report("idle")
         except BaseException:
             await self.close()
             raise
@@ -147,12 +177,14 @@ class VoiceSession:
         turn = Turn()
         self.turn = turn
         self.turn_task = self.spawn(self.transcribe(turn))
+        self.report("listen")
         return turn.id
 
     async def end_turn(self, data: rtc.RpcInvocationData) -> str:
         turn = self.requested_turn(data)
         if not turn.ending:
             turn.ending = True
+            self.report("transcribe")
             await asyncio.sleep(0.3)
             turn.finish()
         return turn.id
@@ -183,6 +215,8 @@ class VoiceSession:
             if self.turn is turn:
                 self.turn = None
             await self.publish(turn, text=text.strip(), final=True)
+            self.report_request(turn, text.strip())
+            self.report("idle")
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -192,6 +226,7 @@ class VoiceSession:
             await self.publish(
                 turn, error="Transcription failed. Try another recording."
             )
+            self.report("error")
         finally:
             turn.finish()
             if self.turn is turn:
@@ -209,6 +244,8 @@ class VoiceSession:
             self.turn = None
         if message and not self.closed:
             await self.publish(turn, error=message)
+        if not self.closed:
+            self.report("idle")
 
     async def expire(self) -> None:
         await asyncio.sleep(600)
@@ -219,6 +256,7 @@ class VoiceSession:
             await self.close_done.wait()
             return
         self.closed = True
+        self.report("idle", online=False)
         if self.turn:
             self.turn.finish()
         tasks = [task for task in self.tasks if task is not asyncio.current_task()]
@@ -232,7 +270,8 @@ class VoiceSession:
 
 
 class VoiceSessions:
-    def __init__(self) -> None:
+    def __init__(self, events: EventBus | None = None) -> None:
+        self.events = events
         self.current: VoiceSession | None = None
         self.lock = asyncio.Lock()
 
@@ -240,7 +279,7 @@ class VoiceSessions:
         async with self.lock:
             if self.current is not None and not self.current.closed:
                 raise ValueError("A microphone session is already connected")
-            session = VoiceSession(VoiceSettings.from_env())
+            session = VoiceSession(VoiceSettings.from_env(), self.events)
             result = await session.connect()
             self.current = session
             return result

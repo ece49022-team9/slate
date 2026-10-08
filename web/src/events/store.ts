@@ -32,6 +32,10 @@ function reduce(state: SlateState, event: SlateEvent): SlateState {
       return { ...state, sessions: [{ ...session, steps }, ...others].slice(0, 10) }
     }
 
+    // Backend lost our place. Start over; it replays everything next.
+    case 'system.resync':
+        return initial
+
     // Schema rule: ignore event types we don't know yet.
     default:
       return state

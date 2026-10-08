@@ -40,6 +40,10 @@ export type AgentStep = {
 
 export type AgentStepEvent = Envelope<'agent.step', AgentStep>
 
+// System
+
+export type SystemResyncEvent = Envelope<'system.resync', Record<string, never>>
+
 // All events the web app understands. Unknown types are ignored.
 
-export type SlateEvent = DeviceStatusEvent | AgentStepEvent
+export type SlateEvent = DeviceStatusEvent | AgentStepEvent | SystemResyncEvent

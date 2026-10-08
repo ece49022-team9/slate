@@ -1,6 +1,10 @@
 import { mockFeed } from './events/mock'
+import { socketFeed } from './events/socket'
 import { useSlateEvents } from './events/store'
 import type { AgentStepStatus, DeviceState } from './types/events'
+
+// Add ?mock to the URL to use sample data without the backend.
+const feed = new URLSearchParams(window.location.search).has('mock') ? mockFeed : socketFeed
 
 const stateLabels: Record<DeviceState, string> = {
   idle: 'Idle',
@@ -22,7 +26,7 @@ function time(ts: string): string {
 }
 
 export default function Dashboard() {
-  const { device, lastSeen, sessions } = useSlateEvents(mockFeed)
+  const { device, lastSeen, sessions } = useSlateEvents(feed)
 
   return (
     <>

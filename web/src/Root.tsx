@@ -28,7 +28,7 @@ export default function Root() {
       </nav>
       {tab === 'dashboard' ? (
         <main>
-          <p className="eyebrow">Dashboard · sample data</p>
+          <p className="eyebrow">Dashboard</p>
           <h1>Slate</h1>
           <Dashboard />
         </main>
