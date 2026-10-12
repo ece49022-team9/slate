@@ -136,6 +136,8 @@ class Breadboard:
         self.toggles: Counter[int] = Counter()
         self.spi_bytes = 0
         self.audio_bytes = 0
+        self.speaker_pcm = bytearray()
+        self.speaker_blocks: list[tuple[int, int]] = []
 
     async def wires(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -151,6 +153,9 @@ class Breadboard:
             elif kind == b"S":
                 self.spi_bytes += size
                 self.oled.spi(ns, payload)
+            elif kind == b"P":
+                self.speaker_pcm.extend(payload)
+                self.speaker_blocks.append((ns, size))
             elif kind == b"O":
                 self.output += payload
             elif kind == b"T":
@@ -272,7 +277,9 @@ def build_image() -> Path:
 
 
 @asynccontextmanager
-async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
+async def breadboard(
+    realtime: bool = False, boot_message: str = "slate.state: 0"
+) -> AsyncIterator[Breadboard]:
     if not QEMU.exists():
         raise RuntimeError(f"slate.breadboard: {QEMU} is missing; run make sim-setup")
     board, _ = load()
@@ -297,7 +304,7 @@ async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
                 writer.close()
 
         server = await asyncio.start_unix_server(connection, path)
-        booted = asyncio.create_task(bench.link.wait_for("slate.state: 0", 30))
+        booted = asyncio.create_task(bench.link.wait_for(boot_message, 30))
         process = await asyncio.create_subprocess_exec(
             str(QEMU),
             "-machine",

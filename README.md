@@ -134,3 +134,26 @@ MODAL_PROFILE=sudarshan-1 uv run python -m slate.voice firmware .local/voice-che
 ```
 
 [Proposal](https://docs.google.com/document/d/1dz02PJORUFB1m--cltmt9tKI_VPXVcO9dAPNODxkFbo/edit) · [Work split](https://notes.granola.ai/t/a576ba7f-ef74-42ac-b631-dfefc260f884-008umkv4)
+
+### Speaker simulation
+
+The standalone test currently in `firmware/main/main.cpp` initializes I2S1 and
+repeats a one-second 440 Hz tone. Run `make sim-speaker-check` to build that
+firmware and check its transmit DMA output in QEMU. The checker verifies the
+full one-second tone as 16-bit stereo PCM, equal left/right channels, frequency,
+and amplitude, then saves the captured audio to `.local/speaker.wav`.
+
+The updated `sim/qemu.patch` models I2S1 transmit DMA and completion interrupts.
+Rebuild QEMU before running the speaker check. If your QEMU checkout already has
+the older Slate patch, use a fresh directory:
+
+```sh
+SLATE_QEMU_DIR="$HOME/esp/qemu-slate-speaker" make sim-setup
+SLATE_QEMU="$HOME/esp/qemu-slate-speaker/build/qemu-system-xtensa" make sim-speaker-check
+```
+
+This check uses the speaker test's boot message, `AFTER SPEAKER START`; the other
+simulator checks expect the full application and `slate.state: 0`. The speaker
+model captures DMA bytes at the configured simulator sample rate (16 kHz), not
+individual I2S pin transitions. It does not validate physical GPIO wiring,
+amplifier power, SD/EN voltage, or the actual hardware clock frequency.

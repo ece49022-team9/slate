@@ -10,8 +10,12 @@ fi
 cd "$QEMU_DIR"
 if git apply --reverse --check "$ROOT/sim/qemu.patch" 2> /dev/null; then
     echo "slate.qemu: Slate patch already applied"
-else
+elif git apply --check "$ROOT/sim/qemu.patch"; then
     git apply "$ROOT/sim/qemu.patch"
+else
+    echo "slate.qemu: checkout has an older patch or conflicting changes." >&2
+    echo "Use a fresh checkout: SLATE_QEMU_DIR=\"\$HOME/esp/qemu-slate-speaker\" make sim-setup" >&2
+    exit 1
 fi
 if [ "$(uname -s)" = Darwin ]; then
     brew install libgcrypt glib pixman libslirp

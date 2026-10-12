@@ -8,20 +8,36 @@
 #include "speaker.h"
 #include "power.h"
 
-void setup() {
-  Serial.begin(921600);
+//void setup() {
+  //Serial.begin(921600);
   //power_start();
+  /*
   mic_start();
   slate_start();
   pdm_start();
+  */
+void setup() {
+  Serial.begin(921600);
+  Serial.println("BEFORE SPEAKER START");
   speaker_start();
+  Serial.println("AFTER SPEAKER START");
+}
+
+void loop() {
+  Serial.println("Starting speaker test");
+  speaker_test();
+  Serial.println("Speaker test done");
+  delay(500);
+}
+
+/*
   Serial.printf("slate.boot: %s PDM mic on CLK=%d DATA=%d\n", BOARD_MCU, MIC_CLK, MIC_DATA);
   oled_start();
   Serial.printf("slate.boot: OLED on CLK=%d MOSI=%d CS=%d DC=%d RESET=%d at %u Hz\n",
                 OLED_CLK, OLED_DATA, OLED_CS, OLED_DC, OLED_RESET, OLED_SPI_HZ);
   Serial.println("slate.boot: Send 0-5 to change state, l/r/m to pick a mic, a/x to stream audio");
   Serial.println("slate.state: 0");
-}
+  */
 
 static void send_audio(const int16_t* samples, size_t count) {
   uint16_t bytes = count * sizeof(int16_t);
@@ -29,7 +45,7 @@ static void send_audio(const int16_t* samples, size_t count) {
   Serial.write(header, sizeof(header));
   Serial.write(reinterpret_cast<const uint8_t*>(samples), bytes);
 }
-
+/*
 void loop() {
   //power_update();
   static SlateState reported_state = IDLE;
@@ -87,3 +103,4 @@ void loop() {
   }
   delay(20);
 }
+*/

@@ -132,9 +132,9 @@ new file mode 100644
 index 0000000..d6a2366
 --- /dev/null
 +++ b/hw/misc/esp32_i2s.c
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,289 @@
 +/*
-+ * ESP32 I2S receive with DMA, enough for the ESP-IDF PDM RX driver.
++ * ESP32 I2S receive and transmit DMA for 16-bit stereo PCM.
 + *
 + * Received PCM is pushed with esp32_i2s_push() as interleaved 16-bit
 + * left/right samples. When none is queued, the microphone slots read silence.
@@ -149,6 +149,7 @@ index 0000000..d6a2366
 +#include "hw/qdev-properties.h"
 +#include "exec/address-spaces.h"
 +#include "hw/misc/esp32_i2s.h"
++#include "hw/misc/slate_board.h"
 +
 +#define R_CONF (0x08 / 4)
 +#define R_INT_RAW (0x0c / 4)
@@ -156,6 +157,8 @@ index 0000000..d6a2366
 +#define R_INT_ENA (0x14 / 4)
 +#define R_INT_CLR (0x18 / 4)
 +#define R_RXEOF_NUM (0x24 / 4)
++#define R_OUT_LINK (0x30 / 4)
++#define R_OUT_EOF_DES_ADDR (0x38 / 4)
 +#define R_IN_LINK (0x34 / 4)
 +#define R_IN_EOF_DES_ADDR (0x3c / 4)
 +#define R_LC_CONF (0x60 / 4)
@@ -180,6 +183,50 @@ index 0000000..d6a2366
 +static uint32_t esp32_i2s_eof_bytes(Esp32I2sState *s)
 +{
 +    return MAX(s->regs[R_RXEOF_NUM], 1) * 4;
++}
++
++static void esp32_i2s_schedule_tx(Esp32I2sState *s)
++{
++    if (!s->tx_linked || !(s->regs[R_CONF] & BIT(4))) {
++        timer_del(&s->tx_timer);
++        return;
++    }
++    if (!timer_pending(&s->tx_timer) && s->tx_descriptor) {
++        uint32_t desc[3];
++        address_space_read(&address_space_memory, s->tx_descriptor,
++                           MEMTXATTRS_UNSPECIFIED, desc, sizeof(desc));
++        uint32_t length = (desc[0] >> 12) & 0xfff;
++        int64_t ns = (int64_t) MAX(length, 4) * NANOSECONDS_PER_SECOND
++                     / ((int64_t) s->sample_rate * 4);
++        timer_mod(&s->tx_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + ns);
++    }
++}
++
++static void esp32_i2s_transmit_block(void *opaque)
++{
++    Esp32I2sState *s = ESP32_I2S(opaque);
++    uint32_t desc[3];
++    address_space_read(&address_space_memory, s->tx_descriptor,
++                       MEMTXATTRS_UNSPECIFIED, desc, sizeof(desc));
++    uint32_t length = (desc[0] >> 12) & 0xfff;
++    if (!length || length > (desc[0] & 0xfff) || !(desc[0] & BIT(31))) {
++        error_report("esp32.i2s: invalid/unowned TX DMA descriptor");
++        s->tx_linked = false;
++        return;
++    }
++    g_autofree uint8_t *data = g_malloc(length);
++    address_space_read(&address_space_memory, desc[1],
++                       MEMTXATTRS_UNSPECIFIED, data, length);
++    slate_board_speaker(data, length);
++    s->regs[R_OUT_EOF_DES_ADDR] = s->tx_descriptor;
++    /* TX descriptors remain owned by DMA for the circular ESP-IDF ring. */
++    s->tx_descriptor = desc[2];
++    s->regs[R_INT_RAW] |= BIT(11);
++    if (desc[0] & BIT(30)) {
++        s->regs[R_INT_RAW] |= BIT(12);
++    }
++    esp32_i2s_update_irq(s);
++    esp32_i2s_schedule_tx(s);
 +}
 +
 +static void esp32_i2s_schedule(Esp32I2sState *s)
@@ -257,6 +304,16 @@ index 0000000..d6a2366
 +        s->regs[reg] = value;
 +        esp32_i2s_update_irq(s);
 +        return;
++    case R_OUT_LINK:
++        if (value & IN_LINK_STOP) {
++            s->tx_linked = false;
++        }
++        if (value & (IN_LINK_START | BIT(30))) {
++            s->tx_descriptor = DMA_BASE | (value & IN_LINK_ADDR);
++            s->tx_linked = true;
++        }
++        s->regs[reg] = value & ~(IN_LINK_START | IN_LINK_STOP | BIT(30));
++        break;
 +    case R_IN_LINK:
 +        if (value & IN_LINK_STOP) {
 +            s->linked = false;
@@ -274,6 +331,9 @@ index 0000000..d6a2366
 +        s->regs[reg] = value;
 +        break;
 +    case R_LC_CONF:
++        if (value & BIT(1)) {
++            s->tx_linked = false;
++        }
 +        if (value & LC_IN_RST) {
 +            s->linked = false;
 +        }
@@ -283,6 +343,7 @@ index 0000000..d6a2366
 +        s->regs[reg] = value;
 +    }
 +    esp32_i2s_schedule(s);
++    esp32_i2s_schedule_tx(s);
 +}
 +
 +void esp32_i2s_push(Esp32I2sState *s, const uint8_t *data, uint32_t len)
@@ -306,6 +367,9 @@ index 0000000..d6a2366
 +    memset(s->regs, 0, sizeof(s->regs));
 +    s->linked = false;
 +    s->descriptor = 0;
++    s->tx_descriptor = 0;
++    s->tx_linked = false;
++    timer_del(&s->tx_timer);
 +    timer_del(&s->timer);
 +    fifo8_reset(&s->audio);
 +}
@@ -327,6 +391,7 @@ index 0000000..d6a2366
 +    sysbus_init_irq(SYS_BUS_DEVICE(obj), &s->irq);
 +    fifo8_create(&s->audio, AUDIO_BYTES);
 +    timer_init_ns(&s->timer, QEMU_CLOCK_VIRTUAL, esp32_i2s_receive_block, s);
++    timer_init_ns(&s->tx_timer, QEMU_CLOCK_VIRTUAL, esp32_i2s_transmit_block, s);
 +}
 +
 +static Property esp32_i2s_properties[] = {
@@ -377,7 +442,7 @@ new file mode 100644
 index 0000000..e7c4f5f
 --- /dev/null
 +++ b/hw/misc/slate_board.c
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,191 @@
 +/*
 + * Slate breadboard bridge. QEMU and the Slate part models run in lockstep over
 + * one character device, so a run replays exactly given the same inputs.
@@ -386,6 +451,7 @@ index 0000000..e7c4f5f
 + * (2 bytes), payload. All integers are little endian.
 + *   'G' payload: pin, level
 + *   'S' payload: bytes written on VSPI
++ *   'P' payload: I2S1 TX DMA bytes (16-bit interleaved stereo)
 + *   'O' payload: bytes written by UART0
 + *   'T' empty: emulated time reached the next tick; QEMU waits for Python
 + *
@@ -455,6 +521,15 @@ index 0000000..e7c4f5f
 +{
 +    if (slate_board && chr == slate_board->uart) {
 +        slate_board_append(slate_board, 'O', byte);
++    }
++}
++
++void slate_board_speaker(const uint8_t *data, uint16_t len)
++{
++    if (slate_board) {
++        slate_board_flush(slate_board);
++        slate_board_send(slate_board, 'P', qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL),
++                         data, len);
 +    }
 +}
 +
@@ -585,7 +660,7 @@ index e000470..9b1a9fb 100644
  
  #define TYPE_ESP32_SOC "xtensa.esp32"
  #define ESP32_SOC(obj) OBJECT_CHECK(Esp32SocState, (obj), TYPE_ESP32_SOC)
-@@ -415,6 +417,11 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
+@@ -415,6 +417,15 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
      qdev_realize(DEVICE(&s->gpio), &s->periph_bus, &error_fatal);
      esp32_soc_add_periph_device(sys_mem, &s->gpio, DR_REG_GPIO_BASE);
  
@@ -593,23 +668,28 @@ index e000470..9b1a9fb 100644
 +    esp32_soc_add_periph_device(sys_mem, &s->i2s0, DR_REG_I2S_BASE);
 +    sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2s0), 0,
 +                       qdev_get_gpio_in(intmatrix_dev, ETS_I2S0_INTR_SOURCE));
++    qdev_realize(DEVICE(&s->i2s1), &s->periph_bus, &error_fatal);
++    esp32_soc_add_periph_device(sys_mem, &s->i2s1, DR_REG_I2S1_BASE);
++    sysbus_connect_irq(SYS_BUS_DEVICE(&s->i2s1), 0,
++                       qdev_get_gpio_in(intmatrix_dev, ETS_I2S1_INTR_SOURCE));
 +
      for (int i = 0; i < ESP32_UART_COUNT; ++i) {
          const hwaddr uart_base[] = {DR_REG_UART_BASE, DR_REG_UART1_BASE, DR_REG_UART2_BASE};
          qdev_realize(DEVICE(&s->uart[i]), &s->periph_bus, &error_fatal);
-@@ -524,7 +531,6 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
+@@ -524,7 +531,5 @@ static void esp32_soc_realize(DeviceState *dev, Error **errp)
      esp32_soc_add_unimp_device(sys_mem, "esp32.slc", DR_REG_SLC_BASE, 0x1000);
      esp32_soc_add_unimp_device(sys_mem, "esp32.slchost", DR_REG_SLCHOST_BASE, 0x1000);
      esp32_soc_add_unimp_device(sys_mem, "esp32.apbctrl", DR_REG_APB_CTRL_BASE, 0x1000);
 -    esp32_soc_add_unimp_device(sys_mem, "esp32.i2s0", DR_REG_I2S_BASE, 0x1000);
-     esp32_soc_add_unimp_device(sys_mem, "esp32.i2s1", DR_REG_I2S1_BASE, 0x1000);
+-    esp32_soc_add_unimp_device(sys_mem, "esp32.i2s1", DR_REG_I2S1_BASE, 0x1000);
      esp32_soc_add_unimp_device(sys_mem, "esp32.rmt", DR_REG_RMT_BASE, 0x1000);
      esp32_soc_add_unimp_device(sys_mem, "esp32.pcnt", DR_REG_PCNT_BASE, 0x1000);
-@@ -597,6 +603,7 @@ static void esp32_soc_init(Object *obj)
+@@ -597,6 +603,8 @@ static void esp32_soc_init(Object *obj)
      object_property_add_alias(obj, "serial2", OBJECT(&s->uart[2]), "chardev");
  
      object_initialize_child(obj, "gpio", &s->gpio, TYPE_ESP32_GPIO);
 +    object_initialize_child(obj, "i2s0", &s->i2s0, TYPE_ESP32_I2S);
++    object_initialize_child(obj, "i2s1", &s->i2s1, TYPE_ESP32_I2S);
  
      object_initialize_child(obj, "dport", &s->dport, TYPE_ESP32_DPORT);
  
@@ -707,7 +787,7 @@ new file mode 100644
 index 0000000..ffc7c84
 --- /dev/null
 +++ b/include/hw/misc/esp32_i2s.h
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,25 @@
 +#pragma once
 +
 +#include "hw/sysbus.h"
@@ -723,6 +803,9 @@ index 0000000..ffc7c84
 +    qemu_irq irq;
 +    Fifo8 audio;
 +    QEMUTimer timer;
++    QEMUTimer tx_timer;
++    uint32_t tx_descriptor;
++    bool tx_linked;
 +    uint32_t sample_rate;
 +    uint32_t regs[0x100 / 4];
 +    uint32_t descriptor;
@@ -735,7 +818,7 @@ new file mode 100644
 index 0000000..2b4efc2
 --- /dev/null
 +++ b/include/hw/misc/slate_board.h
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,30 @@
 +#pragma once
 +
 +#include "hw/ssi/ssi.h"
@@ -743,6 +826,8 @@ index 0000000..2b4efc2
 +#include "qemu/fifo8.h"
 +#include "qemu/timer.h"
 +#include "hw/misc/esp32_i2s.h"
++
++void slate_board_speaker(const uint8_t *data, uint16_t len);
 +
 +#define TYPE_SLATE_BOARD "slate.board"
 +OBJECT_DECLARE_SIMPLE_TYPE(SlateBoardState, SLATE_BOARD)
@@ -776,11 +861,12 @@ index fc1f927..06dc006 100644
  #include "hw/misc/esp32_dport.h"
  #include "hw/misc/esp32_rtc_cntl.h"
  #include "hw/misc/esp32_rng.h"
-@@ -37,6 +38,7 @@ typedef struct Esp32SocState {
+@@ -37,6 +38,8 @@ typedef struct Esp32SocState {
      Esp32TWAIState twai;
      ESP32UARTState uart[ESP32_UART_COUNT];
      Esp32GpioState gpio;
 +    Esp32I2sState i2s0;
++    Esp32I2sState i2s1;
      Esp32RngState rng;
      Esp32RtcCntlState rtc_cntl;
      Esp32FrcTimerState frc_timer[ESP32_FRC_COUNT];

@@ -1,6 +1,7 @@
 #include "speaker.h"
 #include "Arduino.h"
 #include "driver/i2s_std.h"
+#include <math.h>
 
 static i2s_chan_handle_t speaker_tx;
 
@@ -15,20 +16,17 @@ void speaker_start() {
 
   //pinMode(SPEAKER_SD, OUTPUT);
   //digitalWrite(SPEAKER_SD, LOW);
-
-
   i2s_chan_config_t channel_config =
       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
 
   ESP_ERROR_CHECK(
       i2s_new_channel(&channel_config, &speaker_tx, nullptr));
 
-
   i2s_std_config_t config = {
       .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SPEAKER_RATE),
       .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-          I2S_DATA_BIT_WIDTH_16BIT,
-          I2S_SLOT_MODE_MONO),
+        I2S_DATA_BIT_WIDTH_16BIT,
+        I2S_SLOT_MODE_STEREO),
       .gpio_cfg = {
           .mclk = I2S_GPIO_UNUSED,
           .bclk = SPEAKER_BCLK,
@@ -42,8 +40,6 @@ void speaker_start() {
           },
       },
   };
-
-  config.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
 
 
   ESP_ERROR_CHECK(
@@ -78,5 +74,30 @@ void speaker_stop() {
 
   if (speaker_tx != nullptr) {
     i2s_channel_disable(speaker_tx);
+  }
+}
+void speaker_test() {
+  const int frequency = 440;
+  const int duration_ms = 1000;
+
+  const int samples = SPEAKER_RATE * duration_ms / 1000;
+
+  int16_t buffer[256];
+
+  for (int i = 0; i < samples; i += 128) {
+    int count = min(128, samples - i);
+
+    for (int j = 0; j < count; j++) {
+      float t = (float)(i + j) / SPEAKER_RATE;
+      int16_t sample =
+          (int16_t)(sin(2.0 * PI * frequency * t) * 20000);
+
+      buffer[j * 2] = sample;
+      buffer[j * 2 + 1] = sample;
+    }
+
+    speaker_write(
+        (const uint8_t*)buffer,
+        count * 2 * sizeof(int16_t));
   }
 }

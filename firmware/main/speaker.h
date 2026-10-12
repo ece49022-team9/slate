@@ -8,3 +8,4 @@ void speaker_start();
 size_t speaker_write(const uint8_t* data, size_t bytes);
 
 void speaker_stop();
+void speaker_test();
