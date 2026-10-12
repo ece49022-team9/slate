@@ -246,8 +246,11 @@ def tone(hz: float, amplitude: int, seconds: float, rate: int) -> list[int]:
     ]
 
 
-def build_image() -> Path:
-    subprocess.run(["make", "firmware"], cwd=ROOT, check=True)
+def build_image(environment: str = "esp32dev") -> Path:
+    build = BUILD.parent / environment
+    subprocess.run(
+        ["make", "firmware", f"FIRMWARE_ENV={environment}"], cwd=ROOT, check=True
+    )
     IMAGE.parent.mkdir(exist_ok=True)
     subprocess.run(
         [
@@ -262,13 +265,13 @@ def build_image() -> Path:
             "-o",
             str(IMAGE),
             "0x1000",
-            str(BUILD / "bootloader.bin"),
+            str(build / "bootloader.bin"),
             "0x8000",
-            str(BUILD / "partitions.bin"),
+            str(build / "partitions.bin"),
             "0xe000",
             str(BOOT_APP),
             "0x10000",
-            str(BUILD / "firmware.bin"),
+            str(build / "firmware.bin"),
         ],
         check=True,
         stdout=subprocess.DEVNULL,

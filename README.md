@@ -137,9 +137,10 @@ MODAL_PROFILE=sudarshan-1 uv run python -m slate.voice firmware .local/voice-che
 
 ### Speaker simulation
 
-The standalone test currently in `firmware/main/main.cpp` initializes I2S1 and
-repeats a one-second 440 Hz tone. Run `make sim-speaker-check` to build that
-firmware and check its transmit DMA output in QEMU. The checker verifies the
+The default firmware runs the normal Slate application. The separate
+`speaker-test` PlatformIO environment initializes I2S1 and repeats a one-second
+440 Hz tone. Run `make sim-speaker-check` to build that test firmware and check
+its transmit DMA output in QEMU. The checker verifies the
 full one-second tone as 16-bit stereo PCM, equal left/right channels, frequency,
 and amplitude, then saves the captured audio to `.local/speaker.wav`.
 

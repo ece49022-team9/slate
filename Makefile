@@ -1,5 +1,6 @@
 .PHONY: setup server web check board firmware flash monitor ports sim-setup sim sim-check sim-speaker-check bench voice-deploy voice-check livekit
 
+FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
 ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
 PORT ?= $(if $(filter 1,$(words $(ESP32_PORTS))),$(firstword $(ESP32_PORTS)))
@@ -26,7 +27,7 @@ board:
 	uv run python -m slate.board
 
 firmware: board
-	uv tool run --from platformio==6.2.0 pio run -d firmware
+	uv tool run --from platformio==6.2.0 pio run -d firmware -e $(FIRMWARE_ENV)
 
 ports:
 	uv tool run --from platformio==6.2.0 pio device list

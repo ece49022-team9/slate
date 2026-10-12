@@ -1,4 +1,4 @@
-"""Validate the current standalone speaker-test firmware through QEMU I2S1 DMA."""
+"""Validate the dedicated speaker-test firmware through QEMU I2S1 DMA."""
 
 import asyncio
 import math
@@ -59,7 +59,7 @@ async def check() -> None:
 def main() -> None:
     from slate.breadboard import build_image
 
-    build_image()
+    build_image("speaker-test")
     asyncio.run(check())
 
 
