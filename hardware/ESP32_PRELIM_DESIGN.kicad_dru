@@ -1,0 +1,7 @@
+(version 1)
+(rule "U4 pin-to-EP"
+  (constraint clearance (min 0.15mm))
+  (condition "A.memberOfFootprint('U4') && B.memberOfFootprint('U4')"))
+(rule "Vendor peg holes"
+  (constraint hole_clearance (min 0.15mm))
+  (condition "(A.memberOfFootprint('J5') && B.memberOfFootprint('J5')) || (A.memberOfFootprint('SW*') && B.memberOfFootprint('SW*'))"))
