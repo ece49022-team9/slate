@@ -22633,7 +22633,7 @@
 		(dnp no)
 		(uuid "ee7329ce-9526-4e81-8d6e-433602c6fbe2")
 		(property "Reference" "R18"
-			(at 479.806 220.98 0)
+			(at 481.33 220.98 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -22643,8 +22643,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1.78k"
-			(at 479.806 223.52 0)
+		(property "Value" "2k"
+			(at 481.838 223.52 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
