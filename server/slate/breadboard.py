@@ -136,6 +136,7 @@ class Breadboard:
         self.toggles: Counter[int] = Counter()
         self.spi_bytes = 0
         self.audio_bytes = 0
+        self.speaker_listeners: set[asyncio.Queue[bytes]] = set()
         self.speaker_pcm = bytearray()
         self.speaker_blocks: list[tuple[int, int]] = []
 
@@ -154,8 +155,7 @@ class Breadboard:
                 self.spi_bytes += size
                 self.oled.spi(ns, payload)
             elif kind == b"P":
-                self.speaker_pcm.extend(payload)
-                self.speaker_blocks.append((ns, size))
+                self.capture_speaker(ns, payload)
             elif kind == b"O":
                 self.output += payload
             elif kind == b"T":
@@ -166,6 +166,16 @@ class Breadboard:
                 await writer.drain()
             else:
                 raise RuntimeError(f"slate.breadboard: unknown message {kind!r}")
+
+    def capture_speaker(self, ns: int, payload: bytes) -> None:
+        if not self.realtime:
+            self.speaker_pcm.extend(payload)
+            self.speaker_blocks.append((ns, len(payload)))
+        for queue in self.speaker_listeners:
+            if queue.full():
+                while not queue.empty():
+                    queue.get_nowait()
+            queue.put_nowait(payload)
 
     async def tick(self, ns: int) -> None:
         self.now = ns
@@ -333,8 +343,14 @@ async def breadboard(
             start_new_session=True,
         )
         try:
-            async with asyncio.timeout(60):
-                await booted
+            try:
+                async with asyncio.timeout(180):
+                    await booted
+            except TimeoutError:
+                raise RuntimeError(
+                    f"slate.breadboard: boot timed out at {bench.now / 1e9:.3f}s "
+                    f"emulated; see {SERIAL} and {QEMU_LOG}"
+                ) from None
             yield bench
         finally:
             if process.returncode is None:

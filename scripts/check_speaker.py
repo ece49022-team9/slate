@@ -36,14 +36,29 @@ def check_tone(pcm: bytes) -> tuple[int, float]:
     return len(frames), rms
 
 
-async def check() -> None:
+def check_silence(pcm: bytes) -> None:
+    check_tone(pcm)
+    frames = list(struct.iter_unpack("<hh", pcm))
+    start = next(i for i, pair in enumerate(frames) if pair != (0, 0))
+    tail = frames[start + RATE - 1 :]
+    if len(tail) < RATE // 4:
+        raise ValueError("Need at least 250 ms of silence after speaker playback")
+    if any(pair != (0, 0) for pair in tail):
+        raise ValueError("Speaker output is not silent after playback")
+
+
+async def check(combined: bool = False) -> None:
     from slate.board import ROOT
     from slate.breadboard import breadboard
 
-    async with breadboard(boot_message="AFTER SPEAKER START") as bench:
-        await bench.link.wait_for("Speaker test done", 10)
-        # DMA completion follows queueing; allow the final buffers to drain.
-        await bench.sleep(0.3)
+    boot = "slate.state: 0" if combined else "slate.speaker: ready"
+    async with breadboard(boot_message=boot) as bench:
+        if combined:
+            bench.link.type("t")
+        # Bound capture in emulated time; no firmware debug prints are needed.
+        async with bench.timeout(4):
+            await bench.sleep(2)
+        check_silence(bytes(bench.speaker_pcm))
         pcm = bytes(bench.speaker_pcm)
         path = ROOT / ".local/speaker.wav"
         with wave.open(str(path), "wb") as audio:
@@ -59,8 +74,9 @@ async def check() -> None:
 def main() -> None:
     from slate.breadboard import build_image
 
-    build_image("speaker-test")
-    asyncio.run(check())
+    for environment in ("speaker-test", "esp32dev"):
+        build_image(environment)
+        asyncio.run(check(combined=environment == "esp32dev"))
 
 
 if __name__ == "__main__":

@@ -1,8 +1,10 @@
+import asyncio
 import struct
 from array import array
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
@@ -131,6 +133,92 @@ async def microphone(socket: WebSocket):
             socket.app.state.bench.feed(stereo(array("h", data), socket.app))
     except WebSocketDisconnect:
         return
+
+
+@app.post("/speaker-test")
+async def speaker_test(request: Request):
+    bench = request.app.state.bench
+    if getattr(bench, "speaker_testing", False):
+        raise HTTPException(409, "A speaker test is already running")
+    bench.speaker_testing = True
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=128)
+    bench.speaker_listeners.add(queue)
+    pcm = bytearray()
+    started = False
+    try:
+        bench.link.type("t")
+        # Capture the finite firmware test before playing it. QEMU may advance
+        # more slowly than wall time; a live 100 ms buffer cannot cover that.
+        async with asyncio.timeout(45):
+            while len(pcm) < 80_000:
+                packet = await queue.get()
+                if not started:
+                    first = next(
+                        (i for i in range(0, len(packet), 4) if any(packet[i : i + 4])),
+                        None,
+                    )
+                    if first is None:
+                        continue
+                    # Preserve the zero sample immediately before the sine starts.
+                    packet = packet[max(0, first - 4) :]
+                    started = True
+                pcm.extend(packet)
+        return Response(
+            bytes(pcm[:80_000]),
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store"},
+        )
+    except TimeoutError:
+        raise HTTPException(
+            504, "Timed out waiting for firmware speaker audio"
+        ) from None
+    finally:
+        bench.speaker_listeners.discard(queue)
+        bench.speaker_testing = False
+
+
+@app.get("/speaker-worklet.js")
+async def speaker_worklet():
+    return FileResponse(
+        Path(__file__).with_name("speaker-worklet.js"),
+        media_type="text/javascript",
+    )
+
+
+@app.websocket("/speaker")
+async def speaker(socket: WebSocket):
+    await socket.accept()
+    bench = socket.app.state.bench
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=8)
+    bench.speaker_listeners.add(queue)
+
+    async def send():
+        while True:
+            payload = await queue.get()
+            async with asyncio.timeout(1):
+                await socket.send_bytes(payload)
+
+    async def receive():
+        while True:
+            await socket.receive_bytes()
+
+    tasks = [asyncio.create_task(send()), asyncio.create_task(receive())]
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+    except (WebSocketDisconnect, ConnectionError, TimeoutError):
+        pass
+    finally:
+        bench.speaker_listeners.discard(queue)
+        for task in tasks:
+            task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await socket.close()
+            except RuntimeError:
+                pass
 
 
 def main():

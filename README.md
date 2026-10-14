@@ -88,7 +88,7 @@ make sim-check  # run the simulator checks
 make bench      # flash the board and run the hardware checks
 ```
 
-`make flash` and `make monitor` pick the board automatically when exactly one USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>`. Over serial, send `0` through `5` for idle, listen, mute, transcribe, respond, or error; `l`, `r`, or `m` (while idle) to pick the left mic, right mic, or their mix; and `a` or `x` to turn audio streaming on or off. In listen, the firmware prints the mic's sample count, RMS, and peak every half second. With streaming on, it also sends the filtered mic audio as binary frames: a zero byte, a two-byte little-endian length, then 16-bit samples. Text never contains a zero byte, so the host can tell them apart. The ROM's boot messages use 115200 baud and look garbled at 921600.
+`make flash` and `make monitor` pick the board automatically when exactly one USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>`. Over serial, send `0` through `5` for idle, listen, mute, transcribe, respond, or error; `l`, `r`, or `m` (while idle) to pick the left mic, right mic, or their mix; `a` or `x` to turn audio streaming on or off; and `t` to play a one-second 440 Hz speaker test without blocking the mic or display. In listen, the firmware prints the mic's sample count, RMS, and peak every half second. With streaming on, it also sends the filtered mic audio as binary frames: a zero byte, a two-byte little-endian length, then 16-bit samples. Text never contains a zero byte, so the host can tell them apart. The ROM's boot messages use 115200 baud and look garbled at 921600.
 
 The mic schematic has two MP34DT01-M parts that share PDM clock and data: MK1 has L/R grounded (left slot) and MK2 has L/R tied high (right slot). The breadboard has one mic for now, on the left slot. I2S0 turns both slots into interleaved 16 kHz PCM. The firmware picks left, right, or an even mix, removes DC, and queues up to one second of audio. Mute and cancel clear the queue and the filter; transcribe keeps the queue so it can drain. The orb grows and brightens with the mic level while listening.
 
@@ -96,23 +96,27 @@ The mic schematic has two MP34DT01-M parts that share PDM clock and data: MK1 ha
 
 [hardware/board.toml](hardware/board.toml) says which part is wired to which pin. [hardware/parts.toml](hardware/parts.toml) lists the parts we can use, with inventory counts from the class sheet, pin limits, supply range, and datasheet timing. `make board` checks the wiring and writes [firmware/main/board.h](firmware/main/board.h); `make firmware`, `make flash`, and `make check` run the same check. It rejects pins the chip lacks, input-only pins driving a part, flash/PSRAM/USB pins, shared pins, supply mismatches, and a PDM clock outside the mic's range. It warns about boot pins, SPI clocks above the datasheet limit, and wires long enough to ring (`wire_cm` on a device). To try another board, change `mcu`; `esp32-wrover-e`, for example, fails because its PSRAM uses GPIO16/17.
 
-Current wiring: OLED clock GPIO18, MOSI GPIO23, CS GPIO5, D/C GPIO16, reset GPIO17 at 16 MHz; PDM clock GPIO26 and data GPIO36. GPIO39 is input-only on the ESP32 and cannot drive the PDM clock. The SSD1351 datasheet lists 4.5 MHz as its SPI limit; the panel works at 16 MHz on the bench, so the checker only warns.
+Current wiring: OLED clock GPIO18, MOSI GPIO23, CS GPIO5, D/C GPIO16, reset GPIO17 at 16 MHz; PDM clock GPIO26 and data GPIO36; speaker BCLK GPIO14, LRCLK GPIO25, and DIN GPIO27. The amplifier’s BCLK wire must use GPIO14 so it does not share the mic clock. GPIO39 is input-only on the ESP32 and cannot drive the PDM clock. The SSD1351 datasheet lists 4.5 MHz as its SPI limit; the panel works at 16 MHz on the bench, so the checker only warns.
 
 ### Simulator
 
-`make sim-setup` builds Espressif's QEMU with [sim/qemu.patch](sim/qemu.patch). The patch adds working GPIO output registers, an I2S0 receiver with DMA for the PDM mic, and a bridge to Python. It also fixes a QEMU bug that sent a stray command byte before every SPI transfer, which byte-swapped the OLED's pixels.
+`make sim-setup` builds Espressif's QEMU with [sim/qemu.patch](sim/qemu.patch). The patch adds working GPIO output registers, an I2S0 receiver with DMA for the PDM mic, an I2S1 transmitter with DMA for the speaker, and a bridge to Python. It also fixes a QEMU bug that sent a stray command byte before every SPI transfer, which byte-swapped the OLED's pixels.
 
 QEMU counts time by instructions (4 ns each, close to the ESP32's 240 MHz) instead of following the Mac's clock. The bridge sends pin changes, SPI bytes, and serial output to Python in order, and every emulated millisecond it stops and waits. Python answers with any serial keys or mic audio due at that moment, then lets it continue. Tests wait on emulated time, so the same inputs give the same run: `check_breadboard.py` runs twice and requires identical serial output and identical frames. The checks run as fast as the Mac allows; `make sim` and the LiveKit command pace emulated time to the wall clock.
 
 QEMU boots the exact image `make flash` writes. Python plays the parts on the breadboard: an SSD1351 that decodes the Adafruit library's SPI commands into display memory, and a mic that feeds PCM into the slot set by `slot` in `board.toml`. The host talks to the emulated serial port the same way it would talk to the board.
 
-`make sim-check` runs three checks against that image:
+`make sim-check` runs the display and microphone checks against the normal
+image, then checks speaker output in both the dedicated and normal images:
 
 - [check_breadboard.py](scripts/check_breadboard.py): two identical runs; the idle orb is drawn; a 440 Hz tone on the mic's slot reaches the meter within 5% RMS; the other slot stays silent; the orb grows and brightens while it hears sound; the panel runs at about 33 fps.
 - [check_mic.py](scripts/check_mic.py): Hypothesis generates stereo audio for each channel. The streamed output must match an independent DC-filter calculation within one step, replay identically, and start clean after a muted turn. Failures are shrunk and saved for replay.
 - [check_display.py](scripts/check_display.py): all six state colors, a blank panel on mute, a centered orb that fits the panel, smooth breathing, and 15 generated state sequences. It saves a frame to `.local/display-listen.png`.
+- [check_speaker.py](scripts/check_speaker.py): a full second of 440 Hz stereo output through I2S1 DMA in the dedicated and normal firmware, followed by silence; checks channel agreement, frequency, and amplitude, then saves `.local/speaker.wav`. Run it alone with `make sim-speaker-check`.
 
-`make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
+`make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Click **Enable speaker audio** to hear firmware output through your computer, or **Test speaker output** to capture and play the full test tone. Speaker mute and volume are independent of mic input. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
+
+Speaker playback uses 16 kHz, 16-bit stereo PCM, resampled to your output device’s rate with bounded buffers. The test captures the complete tone before playback so slow emulation does not break it into beeps. `node tests/test_speaker_worklet.cjs` checks browser playback without audio hardware. QEMU checks DMA output; physical wiring, amplifier power, and I2S pin timing still need a hardware check. Rebuild with `make sim-setup` if your QEMU predates speaker support.
 
 To send audio through the firmware and the real transcription service, start `make livekit` and `make server`, then run:
 
@@ -121,7 +125,6 @@ MODAL_PROFILE=sudarshan-1 uv run python -m slate.voice firmware .local/voice-che
 ```
 
 The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` picks left (default), right, or mix. The command boots the simulator, plays the WAV into the mic, reads the firmware's streamed audio, and publishes it as a LiveKit microphone track using the start/end-turn RPCs. The same serial audio stream works on the real board; the firmware does not connect to LiveKit over Wi-Fi yet. [LiveKit's ESP32 examples](https://github.com/livekit/client-sdk-esp32/tree/main/components/livekit/examples) cover that later step. Haptics are not started until their pins are confirmed.
-
 
 ### Bench
 
@@ -134,27 +137,3 @@ MODAL_PROFILE=sudarshan-1 uv run python -m slate.voice firmware .local/voice-che
 ```
 
 [Proposal](https://docs.google.com/document/d/1dz02PJORUFB1m--cltmt9tKI_VPXVcO9dAPNODxkFbo/edit) · [Work split](https://notes.granola.ai/t/a576ba7f-ef74-42ac-b631-dfefc260f884-008umkv4)
-
-### Speaker simulation
-
-The default firmware runs the normal Slate application. The separate
-`speaker-test` PlatformIO environment initializes I2S1 and repeats a one-second
-440 Hz tone. Run `make sim-speaker-check` to build that test firmware and check
-its transmit DMA output in QEMU. The checker verifies the
-full one-second tone as 16-bit stereo PCM, equal left/right channels, frequency,
-and amplitude, then saves the captured audio to `.local/speaker.wav`.
-
-The updated `sim/qemu.patch` models I2S1 transmit DMA and completion interrupts.
-Rebuild QEMU before running the speaker check. If your QEMU checkout already has
-the older Slate patch, use a fresh directory:
-
-```sh
-SLATE_QEMU_DIR="$HOME/esp/qemu-slate-speaker" make sim-setup
-SLATE_QEMU="$HOME/esp/qemu-slate-speaker/build/qemu-system-xtensa" make sim-speaker-check
-```
-
-This check uses the speaker test's boot message, `AFTER SPEAKER START`; the other
-simulator checks expect the full application and `slate.state: 0`. The speaker
-model captures DMA bytes at the configured simulator sample rate (16 kHz), not
-individual I2S pin transitions. It does not validate physical GPIO wiring,
-amplifier power, SD/EN voltage, or the actual hardware clock frequency.

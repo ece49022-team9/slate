@@ -41,12 +41,18 @@ class BoardTests(unittest.TestCase):
             [
                 "clk on GPIO26: ESP32-S3-DevKitC-1 has no GPIO26",
                 "data on GPIO23: ESP32-S3-DevKitC-1 has no GPIO23",
+                "din on GPIO27: ESP32-S3-DevKitC-1 has no GPIO27",
+                "lrclk on GPIO25: ESP32-S3-DevKitC-1 has no GPIO25",
             ],
         )
 
     def test_shared_pin_is_rejected(self):
         self.mic["pins"]["clk"] = 18
         self.assertEqual(self.errors(), ["clk on GPIO18: already used by oled.clk"])
+
+    def test_speaker_clock_cannot_share_mic_clock(self):
+        self.board["device"]["speaker"]["pins"]["bclk"] = 26
+        self.assertEqual(self.errors(), ["bclk on GPIO26: already used by mic.clk"])
 
     def test_pdm_clock_must_fit_the_mic(self):
         self.mic["sample_hz"] = 8000

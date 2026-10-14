@@ -26,5 +26,6 @@ if [ ! -f build/build.ninja ]; then
         --disable-werror --disable-docs --disable-sdl --disable-gtk \
         --disable-cocoa --disable-gnutls
 fi
+build/pyvenv/bin/meson setup --reconfigure build -Dwerror=false -Ddtc:werror=false
 ninja -C build qemu-system-xtensa
 echo "slate.qemu: built $QEMU_DIR/build/qemu-system-xtensa"

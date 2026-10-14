@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <atomic>
 #include <math.h>
 #include "board.h"
 #include "slate_state.h"
@@ -11,18 +12,23 @@
 #ifdef SLATE_SPEAKER_TEST
 void setup() {
   Serial.begin(921600);
-  Serial.println("BEFORE SPEAKER START");
   speaker_start();
-  Serial.println("AFTER SPEAKER START");
+  Serial.println("slate.speaker: ready");
+  speaker_test();
 }
 
 void loop() {
-  Serial.println("Starting speaker test");
-  speaker_test();
-  Serial.println("Speaker test done");
   delay(500);
 }
 #else
+static std::atomic<bool> speaker_test_running{false};
+
+static void play_speaker_test(void*) {
+  speaker_test();
+  speaker_test_running.store(false);
+  vTaskDelete(nullptr);
+}
+
 void setup() {
   Serial.begin(921600);
   //power_start();
@@ -34,7 +40,7 @@ void setup() {
   oled_start();
   Serial.printf("slate.boot: OLED on CLK=%d MOSI=%d CS=%d DC=%d RESET=%d at %u Hz\n",
                 OLED_CLK, OLED_DATA, OLED_CS, OLED_DC, OLED_RESET, OLED_SPI_HZ);
-  Serial.println("slate.boot: Send 0-5 to change state, l/r/m to pick a mic, a/x to stream audio");
+  Serial.println("slate.boot: Send 0-5 to change state, l/r/m to pick a mic, a/x to stream audio, t to test speaker");
   Serial.println("slate.state: 0");
 }
 
@@ -65,6 +71,12 @@ void loop() {
     } else if (key == 'a' || key == 'x') {
       streaming = key == 'a';
       Serial.printf("slate.audio: %s\n", streaming ? "streaming" : "off");
+    } else if (key == 't' && !speaker_test_running.exchange(true)) {
+      if (xTaskCreate(play_speaker_test, "speaker-test", 4096, nullptr, 5,
+                      nullptr) != pdPASS) {
+        speaker_test_running.store(false);
+        Serial.println("slate.speaker: could not start test");
+      }
     }
   }
   SlateState state = slate_get_state();

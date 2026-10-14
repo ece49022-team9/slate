@@ -11,3 +11,7 @@ part = "mp34dt01"
 pins = { clk = 26, data = 36 }
 slot = "left"
 sample_hz = 16_000
+
+[device.speaker]
+part = "max98357a"
+pins = { bclk = 14, lrclk = 25, din = 27 }

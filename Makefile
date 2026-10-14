@@ -53,6 +53,7 @@ sim-check:
 	uv run python scripts/check_breadboard.py
 	uv run python scripts/check_mic.py
 	uv run python scripts/check_display.py
+	uv run python scripts/check_speaker.py
 
 sim-speaker-check:
 	uv run python scripts/check_speaker.py

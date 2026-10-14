@@ -10,3 +10,6 @@ constexpr unsigned OLED_SPI_HZ = 16000000;
 constexpr int MIC_CLK = 26;
 constexpr int MIC_DATA = 36;
 constexpr unsigned MIC_SAMPLE_HZ = 16000;
+constexpr int SPEAKER_BCLK = 14;
+constexpr int SPEAKER_LRCLK = 25;
+constexpr int SPEAKER_DIN = 27;
