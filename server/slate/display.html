@@ -56,15 +56,21 @@ p { color: var(--dim); font-size: 13px; line-height: 1.55; margin: 12px 0 0; }
 <canvas id="screen" width="128" height="128" aria-label="SSD1351 panel"></canvas>
 <div class="row" id="states"></div>
 <div class="row">
-<button id="tone">Play 440 Hz tone</button>
+<button id="tone">Send 440 Hz tone to mic</button>
+<button id="speaker">Test speaker output</button>
 <button id="mic" aria-pressed="false">Use my microphone</button>
 </div>
-<p>The picture is rebuilt from the SPI bytes the flashed firmware sends to the SSD1351. In Listen, sound on the mic makes the orb grow and turn white.</p>
+<div class="row">
+<button id="enable-speaker">Enable speaker audio</button>
+<button id="mute-speaker" aria-pressed="false">Mute speaker</button>
+<label>Volume <input id="speaker-volume" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+</div>
+<p id="speaker-status" role="status">Speaker audio disabled</p>
 </section>
 <section class="wide">
 <h2>Serial</h2>
 <pre id="console" aria-live="polite"></pre>
-<form id="keys"><input id="text" autocomplete="off" placeholder="0-5 state · l/r/m mic · a/x audio stream"><button>Send</button></form>
+<form id="keys"><input id="text" autocomplete="off" placeholder="0-5 state · l/r/m mic · a/x audio · t speaker"><button>Send</button></form>
 </section>
 </main>
 <script>
@@ -116,6 +122,7 @@ function draw() {
     });
     y += boxHeight + 20;
   }
+  svg.setAttribute('viewBox', `0 0 720 ${Math.max(height, y)}`);
   document.querySelector('#problems').innerHTML = board.problems.map(p =>
     `<li class="${p.level}"><b>${p.level}</b>${p.device}: ${p.message}</li>`).join('');
 }
@@ -180,6 +187,165 @@ NAMES.forEach((name, state) => {
   document.querySelector('#states').append(button);
 });
 document.querySelector('#tone').onclick = () => fetch('/tone', {method: 'POST'});
+const speakerStatus = document.querySelector('#speaker-status');
+const enableSpeaker = document.querySelector('#enable-speaker');
+const muteSpeaker = document.querySelector('#mute-speaker');
+const speakerVolume = document.querySelector('#speaker-volume');
+let speakerAudio, speakerStarting, speakerMuted = false;
+
+function speakerGain() {
+  if (speakerAudio?.gain) speakerAudio.gain.gain.value = speakerMuted ? 0 : Number(speakerVolume.value);
+}
+function stopSpeaker() {
+  const old = speakerAudio;
+  speakerAudio = null;
+  if (old) {
+    clearInterval(old.timer);
+    old.testAbort?.abort();
+    old.testSource?.stop();
+    old.testDone?.();
+    old.socket.close();
+    old.worklet?.disconnect();
+    old.gain?.disconnect();
+    void old.audio.close();
+  }
+  enableSpeaker.textContent = 'Enable speaker audio';
+  speakerStatus.textContent = 'Speaker audio disabled';
+}
+async function startSpeaker() {
+  if (speakerStarting) return speakerStarting;
+  if (speakerAudio?.socket.readyState === WebSocket.OPEN) {
+    await speakerAudio.audio.resume();
+    return;
+  }
+  speakerStarting = (async () => {
+    stopSpeaker();
+    const audio = new AudioContext();
+    const session = {audio, socket: new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/speaker`), last: 0, bytes: 0};
+    speakerAudio = session;
+    speakerStatus.textContent = 'Connecting speaker audio…';
+    // Resume synchronously from the button gesture, before awaiting module loading.
+    const resumed = audio.resume();
+    const opened = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Audio connection timed out')), 5000);
+      session.socket.onopen = () => { clearTimeout(timeout); resolve(); };
+      session.socket.onerror = () => { clearTimeout(timeout); reject(new Error('Audio connection failed')); };
+      session.socket.onclose = () => { clearTimeout(timeout); reject(new Error('Audio connection closed')); };
+    });
+    session.socket.binaryType = 'arraybuffer';
+    try {
+      await Promise.all([resumed, opened, audio.audioWorklet.addModule('/speaker-worklet.js')]);
+      if (speakerAudio !== session) throw new Error('Audio connection closed');
+      session.worklet = new AudioWorkletNode(audio, 'slate-speaker', {numberOfInputs: 0, outputChannelCount: [2]});
+      session.gain = audio.createGain();
+      session.worklet.connect(session.gain).connect(audio.destination);
+      session.pending = 0;
+      session.worklet.port.onmessage = () => { session.pending = Math.max(0, session.pending - 1); };
+      speakerGain();
+      session.socket.onmessage = ({data}) => {
+        if (speakerAudio !== session || audio.state !== 'running' || document.hidden) return;
+        session.last = performance.now();
+        session.bytes += data.byteLength;
+        if (session.testing) return;
+        if (session.pending >= 16) { session.dropped = true; return; }
+        if (session.dropped) {
+          session.worklet.port.postMessage('reset');
+          session.dropped = false;
+        }
+        session.pending++;
+        session.worklet.port.postMessage({pcm: data, time: audio.currentTime}, [data]);
+      };
+      session.socket.onclose = () => {
+        if (speakerAudio === session) {
+          stopSpeaker();
+          speakerStatus.textContent = 'Speaker disconnected. Enable audio to reconnect.';
+        }
+      };
+      session.timer = setInterval(() => {
+        if (session.testing) return;
+        const receiving = session.last && performance.now() - session.last < 1000;
+        speakerStatus.textContent = `Speaker ${audio.state === 'running' ? 'enabled' : 'suspended'}${speakerMuted ? ' · muted' : ''} · ${receiving ? 'samples arriving' : 'waiting for samples'} · ${session.bytes} bytes received`;
+      }, 250);
+      enableSpeaker.textContent = 'Disable speaker audio';
+    } catch (e) {
+      if (speakerAudio === session) stopSpeaker();
+      throw e;
+    }
+  })();
+  try { await speakerStarting; } finally { speakerStarting = null; }
+}
+enableSpeaker.onclick = async () => {
+  if (speakerAudio) { stopSpeaker(); return; }
+  try { await startSpeaker(); } catch (e) { speakerStatus.textContent = `Speaker unavailable: ${e.message}`; }
+};
+muteSpeaker.onclick = () => {
+  speakerMuted = !speakerMuted;
+  muteSpeaker.setAttribute('aria-pressed', String(speakerMuted));
+  muteSpeaker.textContent = speakerMuted ? 'Unmute speaker' : 'Mute speaker';
+  speakerGain();
+};
+speakerVolume.oninput = speakerGain;
+document.querySelector('#speaker').onclick = async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  let session;
+  try {
+    await startSpeaker();
+    session = speakerAudio;
+    session.testing = true;
+    session.testAbort = new AbortController();
+    session.worklet.port.postMessage('reset');
+    speakerStatus.textContent = 'Preparing speaker test…';
+    const response = await fetch('/speaker-test', {method: 'POST', signal: session.testAbort.signal});
+    if (!response.ok) throw new Error((await response.json()).detail || 'Could not capture speaker test');
+    const pcm = new DataView(await response.arrayBuffer());
+    if (speakerAudio !== session || document.hidden) return;
+    const frames = pcm.byteLength / 4;
+    const clip = session.audio.createBuffer(2, frames, 16000);
+    for (let channel = 0; channel < 2; channel++) {
+      const samples = clip.getChannelData(channel);
+      for (let i = 0; i < frames; i++) samples[i] = pcm.getInt16(i * 4 + channel * 2, true) / 32768;
+    }
+    session.testSource = session.audio.createBufferSource();
+    session.testSource.buffer = clip;
+    session.testSource.connect(session.gain);
+    speakerStatus.textContent = 'Playing speaker test';
+    await new Promise(resolve => {
+      session.testDone = resolve;
+      session.testSource.onended = resolve;
+      session.testSource.start();
+    });
+  } catch (e) {
+    if (e.name !== 'AbortError') speakerStatus.textContent = `Speaker test failed: ${e.message}`;
+  } finally {
+    if (session) {
+      session.testSource?.disconnect();
+      session.testSource = null;
+      session.testDone = null;
+      session.testing = false;
+      session.worklet.port.postMessage('reset');
+    }
+    button.disabled = false;
+  }
+};
+document.addEventListener('visibilitychange', () => {
+  speakerAudio?.worklet?.port.postMessage('reset');
+  if (document.hidden) {
+    speakerAudio?.testAbort?.abort();
+    speakerAudio?.testSource?.stop();
+    speakerAudio?.testDone?.();
+  }
+});
+window.addEventListener('pagehide', () => {
+  stopSpeaker();
+  if (microphone) {
+    microphone.stream.getTracks().forEach(track => track.stop());
+    microphone.socket.close();
+    void microphone.audio.close();
+    microphone = null;
+    document.querySelector('#mic').setAttribute('aria-pressed', 'false');
+  }
+});
 document.querySelector('#keys').onsubmit = event => {
   event.preventDefault();
   const input = document.querySelector('#text');

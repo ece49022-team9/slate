@@ -47,7 +47,7 @@ def check(board: dict, parts: dict) -> list[Problem]:
             report("error", f"needs {low}-{high} V; board supplies {supply} V")
         if set(device["pins"]) != set(part["pins"]):
             report("error", f"pins must be {sorted(part['pins'])}")
-        for pin, gpio in device["pins"].items():
+        for pin, gpio in (device["pins"] | device.get("i2c", {})).items():
             where = f"{pin} on GPIO{gpio}"
             if gpio not in mcu["gpio"]:
                 report("error", f"{where}: {mcu['name']} has no GPIO{gpio}")
@@ -93,11 +93,15 @@ def header(board: dict) -> str:
     ]
     for name, device in board["device"].items():
         prefix = name.upper()
-        for pin, gpio in device["pins"].items():
+        for pin, gpio in (device["pins"] | device.get("i2c", {})).items():
             lines.append(f"constexpr int {prefix}_{pin.upper()} = {gpio};")
         for key, value in device.items():
             if key.endswith("_hz"):
                 lines.append(f"constexpr unsigned {prefix}_{key.upper()} = {value};")
+    enabled = int(board["device"]["power"].get("enabled", False))
+    lines.extend(
+        ["#ifndef POWER_ENABLED", f"#define POWER_ENABLED {enabled}", "#endif"]
+    )
     return "\n".join(lines) + "\n"
 
 

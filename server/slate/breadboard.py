@@ -136,6 +136,9 @@ class Breadboard:
         self.toggles: Counter[int] = Counter()
         self.spi_bytes = 0
         self.audio_bytes = 0
+        self.speaker_listeners: set[asyncio.Queue[bytes]] = set()
+        self.speaker_pcm = bytearray()
+        self.speaker_blocks: list[tuple[int, int]] = []
 
     async def wires(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -151,6 +154,8 @@ class Breadboard:
             elif kind == b"S":
                 self.spi_bytes += size
                 self.oled.spi(ns, payload)
+            elif kind == b"P":
+                self.capture_speaker(ns, payload)
             elif kind == b"O":
                 self.output += payload
             elif kind == b"T":
@@ -161,6 +166,16 @@ class Breadboard:
                 await writer.drain()
             else:
                 raise RuntimeError(f"slate.breadboard: unknown message {kind!r}")
+
+    def capture_speaker(self, ns: int, payload: bytes) -> None:
+        if not self.realtime:
+            self.speaker_pcm.extend(payload)
+            self.speaker_blocks.append((ns, len(payload)))
+        for queue in self.speaker_listeners:
+            if queue.full():
+                while not queue.empty():
+                    queue.get_nowait()
+            queue.put_nowait(payload)
 
     async def tick(self, ns: int) -> None:
         self.now = ns
@@ -241,8 +256,11 @@ def tone(hz: float, amplitude: int, seconds: float, rate: int) -> list[int]:
     ]
 
 
-def build_image() -> Path:
-    subprocess.run(["make", "firmware"], cwd=ROOT, check=True)
+def build_image(environment: str = "esp32dev") -> Path:
+    build = BUILD.parent / environment
+    subprocess.run(
+        ["make", "firmware", f"FIRMWARE_ENV={environment}"], cwd=ROOT, check=True
+    )
     IMAGE.parent.mkdir(exist_ok=True)
     subprocess.run(
         [
@@ -257,13 +275,13 @@ def build_image() -> Path:
             "-o",
             str(IMAGE),
             "0x1000",
-            str(BUILD / "bootloader.bin"),
+            str(build / "bootloader.bin"),
             "0x8000",
-            str(BUILD / "partitions.bin"),
+            str(build / "partitions.bin"),
             "0xe000",
             str(BOOT_APP),
             "0x10000",
-            str(BUILD / "firmware.bin"),
+            str(build / "firmware.bin"),
         ],
         check=True,
         stdout=subprocess.DEVNULL,
@@ -272,7 +290,9 @@ def build_image() -> Path:
 
 
 @asynccontextmanager
-async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
+async def breadboard(
+    realtime: bool = False, boot_message: str = "slate.state: 0"
+) -> AsyncIterator[Breadboard]:
     if not QEMU.exists():
         raise RuntimeError(f"slate.breadboard: {QEMU} is missing; run make sim-setup")
     board, _ = load()
@@ -297,7 +317,7 @@ async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
                 writer.close()
 
         server = await asyncio.start_unix_server(connection, path)
-        booted = asyncio.create_task(bench.link.wait_for("slate.state: 0", 30))
+        booted = asyncio.create_task(bench.link.wait_for(boot_message, 30))
         process = await asyncio.create_subprocess_exec(
             str(QEMU),
             "-machine",
@@ -323,8 +343,14 @@ async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
             start_new_session=True,
         )
         try:
-            async with asyncio.timeout(60):
-                await booted
+            try:
+                async with asyncio.timeout(180):
+                    await booted
+            except TimeoutError:
+                raise RuntimeError(
+                    f"slate.breadboard: boot timed out at {bench.now / 1e9:.3f}s "
+                    f"emulated; see {SERIAL} and {QEMU_LOG}"
+                ) from None
             yield bench
         finally:
             if process.returncode is None:

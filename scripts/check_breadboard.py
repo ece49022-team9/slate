@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import math
 
+from check_speaker import check_silence
 from slate.board import load
 from slate.breadboard import breadboard, build_image, tone
 
@@ -20,6 +21,9 @@ def rms(line: str) -> float:
 async def run(rate: int) -> tuple[str, str]:
     async with breadboard() as bench:
         link = bench.link
+        link.type("t")
+        await bench.sleep(2)
+        check_silence(bytes(bench.speaker_pcm))
         await bench.sleep(1)
         idle = bench.oled.frames[-1]
         assert idle.pixels[CENTER] == COLORS[0], "slate.breadboard: idle orb is wrong"
