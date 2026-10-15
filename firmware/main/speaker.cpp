@@ -77,14 +77,12 @@ size_t speaker_write(const uint8_t* data, size_t bytes) {
   return written;
 }
 
-void speaker_stop() {
-  //digitalWrite(SPEAKER_SD, LOW);
-
-  if (speaker_tx != nullptr) {
-    ESP_ERROR_CHECK(i2s_channel_disable(speaker_tx));
-    ESP_ERROR_CHECK(i2s_del_channel(speaker_tx));
-    speaker_tx = nullptr;
-  }
+bool speaker_stop() {
+  if (!speaker_tx) return true;
+  if (i2s_channel_disable(speaker_tx) != ESP_OK) return false;
+  if (i2s_del_channel(speaker_tx) != ESP_OK) return false;
+  speaker_tx = nullptr;
+  return true;
 }
 void speaker_test() {
   const int frequency = 440;

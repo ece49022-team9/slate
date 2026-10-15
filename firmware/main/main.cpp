@@ -9,8 +9,45 @@
 #include "speaker.h"
 #include "power.h"
 
+static std::atomic<bool> speaker_test_running{false};
+
+// Application-specific cleanup, polled while loop() remains quiescent.
+static void finish_shutdown() {
+  static bool requested = false;
+  static bool finished = false;
+  static uint32_t requested_at = 0;
+  if (finished) return;
+  if (!requested) {
+    requested = true;
+    requested_at = millis();
+  }
+  if (uint32_t(millis() - requested_at) >= 3000) {
+    Serial.println("power: shutdown cleanup timed out; power retained");
+    finished = true; // A failed shutdown, not permission to release the latch.
+    return;
+  }
+#ifndef SLATE_SPEAKER_TEST
+  // Request both tasks to stop even if one has not acknowledged yet.
+  bool capture_stopped = pdm_stop();
+  bool display_stopped = oled_stop();
+  if (!capture_stopped || !display_stopped) return;
+#endif
+  if (speaker_test_running.load()) return;
+#ifndef SLATE_SPEAKER_TEST
+  mic_set_state(IDLE);
+#endif
+  if (!speaker_stop()) {
+    Serial.println("power: speaker cleanup failed; power retained");
+    finished = true;
+    return;
+  }
+  power_finish_shutdown();
+  finished = true;
+}
+
 #ifdef SLATE_SPEAKER_TEST
 void setup() {
+  power_start();
   Serial.begin(921600);
   speaker_start();
   Serial.println("slate.speaker: ready");
@@ -18,10 +55,10 @@ void setup() {
 }
 
 void loop() {
-  delay(500);
+  if (power_update()) finish_shutdown();
+  delay(POWER_ENABLED ? 20 : 500);
 }
 #else
-static std::atomic<bool> speaker_test_running{false};
 
 static void play_speaker_test(void*) {
   speaker_test();
@@ -30,8 +67,8 @@ static void play_speaker_test(void*) {
 }
 
 void setup() {
+  power_start();
   Serial.begin(921600);
-  //power_start();
   mic_start();
   slate_start();
   pdm_start();
@@ -52,11 +89,17 @@ static void send_audio(const int16_t* samples, size_t count) {
 }
 
 void loop() {
-  //power_update();
+  bool shutting_down = power_update();
   static SlateState reported_state = IDLE;
   static bool streaming = false;
   static uint32_t last_meter = 0;
   static uint32_t meter_samples = 0;
+  if (shutting_down) {
+    streaming = false;
+    finish_shutdown();
+    delay(20);
+    return;
+  }
   static uint64_t meter_energy = 0;
   static int32_t meter_peak = 0;
   while (Serial.available()) {

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <atomic>
 #include <Adafruit_SSD1351.h>
 #include <SPI.h>
 #include "board.h"
@@ -11,12 +12,14 @@
 
 static Adafruit_SSD1351* oled;
 static uint16_t pixels[DISPLAY_PIXELS];
+static std::atomic<bool> stop_requested{false};
+static std::atomic<bool> stopped{false};
 
 static void draw(void*) {
   TickType_t next_frame = xTaskGetTickCount();
   uint32_t report_started = millis();
   uint32_t frames = 0;
-  for (;;) {
+  while (!stop_requested.load()) {
     uint32_t frame = xTaskGetTickCount() / pdMS_TO_TICKS(30);
     display_render(display_get_state(), frame, pixels);
     oled->drawRGBBitmap(0, 0, pixels, DISPLAY_WIDTH, DISPLAY_HEIGHT);
@@ -32,6 +35,15 @@ static void draw(void*) {
     }
     vTaskDelayUntil(&next_frame, pdMS_TO_TICKS(30));
   }
+  oled->fillScreen(0);
+  stopped.store(true); // No further SPI operations after this acknowledgment.
+  vTaskDelete(nullptr);
+}
+
+bool oled_stop() {
+  if (!oled) return true;
+  stop_requested.store(true);
+  return stopped.load();
 }
 
 void oled_start() {

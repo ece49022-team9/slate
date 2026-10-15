@@ -13,3 +13,13 @@ constexpr unsigned MIC_SAMPLE_HZ = 16000;
 constexpr int SPEAKER_BCLK = 14;
 constexpr int SPEAKER_LRCLK = 25;
 constexpr int SPEAKER_DIN = 27;
+constexpr int POWER_HOLD = 13;
+constexpr int POWER_SENSE = 15;
+constexpr int POWER_FG_ALRT = 35;
+constexpr int POWER_CHG_STAT = 34;
+constexpr int POWER_PGOOD = 39;
+constexpr int POWER_SDA = 21;
+constexpr int POWER_SCL = 22;
+#ifndef POWER_ENABLED
+#define POWER_ENABLED 0
+#endif

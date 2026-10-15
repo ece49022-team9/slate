@@ -1,3 +1,4 @@
+#include <atomic>
 #include "driver/gpio.h"
 #include "driver/i2s_pdm.h"
 #include "esp_log.h"
@@ -7,12 +8,16 @@
 #include "pdm.h"
 
 static i2s_chan_handle_t receiver;
+static std::atomic<bool> stop_requested{false};
+static std::atomic<bool> stopped{false};
 
 static void capture(void*) {
   int16_t samples[MIC_FRAME_SAMPLES * 2];
   for (;;) {
+    if (stop_requested.load()) break;
     size_t bytes = 0;
     esp_err_t error = i2s_channel_read(receiver, samples, sizeof(samples), &bytes, 1000);
+    if (stop_requested.load()) break;
     if (error != ESP_OK || bytes == 0 || bytes % 4 != 0) {
       ESP_LOGE("slate.pdm", "Capture failed: %s, %u bytes", esp_err_to_name(error), unsigned(bytes));
       mic_set_state(SLATE_ERROR);
@@ -25,6 +30,17 @@ static void capture(void*) {
       slate_request_state(SLATE_ERROR);
     }
   }
+  esp_err_t error = i2s_channel_disable(receiver);
+  if (error == ESP_OK) error = i2s_del_channel(receiver);
+  if (error == ESP_OK) stopped.store(true);
+  else ESP_LOGE("slate.pdm", "Stop failed: %s", esp_err_to_name(error));
+  vTaskDelete(nullptr);
+}
+
+bool pdm_stop() {
+  if (!receiver) return true;
+  stop_requested.store(true);
+  return stopped.load();
 }
 
 void pdm_start() {

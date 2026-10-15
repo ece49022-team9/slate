@@ -15,3 +15,13 @@ sample_hz = 16_000
 [device.speaker]
 part = "max98357a"
 pins = { bclk = 14, lrclk = 25, din = 27 }
+
+# Power hardware is opt-in; GPIO15 is a strapping pin.
+[device.power]
+part = "slate-power"
+enabled = false
+pins = { hold = 13, sense = 15, fg_alrt = 35, chg_stat = 34, pgood = 39 }
+
+[device.power.i2c]
+sda = 21
+scl = 22
