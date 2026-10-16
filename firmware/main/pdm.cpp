@@ -1,10 +1,12 @@
 #include "driver/gpio.h"
 #include "driver/i2s_pdm.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mic.h"
 #include "pdm.h"
+#include "perf.h"
 
 static i2s_chan_handle_t receiver;
 
@@ -20,7 +22,11 @@ static void capture(void*) {
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
     }
-    if (!mic_submit(samples, bytes / 4)) {
+    int64_t started = esp_timer_get_time();
+    bool accepted = mic_submit(samples, bytes / 4);
+    perf_time(PerfTimer::AUDIO, uint32_t(esp_timer_get_time() - started));
+    perf_stack(PerfTask::PDM);
+    if (!accepted) {
       mic_set_state(SLATE_ERROR);
       slate_request_state(SLATE_ERROR);
     }

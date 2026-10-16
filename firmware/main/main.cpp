@@ -1,10 +1,14 @@
 #include <Arduino.h>
 #include <math.h>
+#include <string.h>
 #include "board.h"
 #include "slate_state.h"
 #include "mic.h"
 #include "pdm.h"
 #include "oled.h"
+#include "perf.h"
+#include "cloud.h"
+#include "device_command.h"
 
 void setup() {
   Serial.begin(921600);
@@ -12,6 +16,7 @@ void setup() {
   slate_start();
   pdm_start();
   Serial.printf("slate.boot: %s PDM mic on CLK=%d DATA=%d\n", BOARD_MCU, MIC_CLK, MIC_DATA);
+  cloud_start();
   oled_start();
   Serial.printf("slate.boot: OLED on CLK=%d MOSI=%d CS=%d DC=%d RESET=%d at %u Hz\n",
                 OLED_CLK, OLED_DATA, OLED_CS, OLED_DC, OLED_RESET, OLED_SPI_HZ);
@@ -33,9 +38,34 @@ void loop() {
   static uint32_t meter_samples = 0;
   static uint64_t meter_energy = 0;
   static int32_t meter_peak = 0;
+  static char command[768];
+  static unsigned command_size = 0;
+  static bool command_open = false, command_overflow = false;
+  static char command_kind;
   while (Serial.available()) {
     char key = Serial.read();
-    if (key >= '0' && key <= '5') {
+    if (command_open) {
+      if (key == '\n') {
+        if (!command_overflow) {
+          command[command_size] = 0;
+          if (command_kind == '@') device_serial_command(command);
+          else cloud_provision(command);
+          memset(command, 0, sizeof(command));
+        } else {
+          Serial.println(command_kind == '@' ? "slate.device.error: command too long"
+                                              : "slate.net: provisioning command too long");
+        }
+        command_open = command_overflow = false;
+        command_size = 0;
+      } else if (command_size < (command_kind == '@' ? 191 : sizeof(command) - 1)) {
+        command[command_size++] = key;
+      } else {
+        command_overflow = true;
+      }
+    } else if (key == '@' || key == '!') {
+      command_open = true;
+      command_kind = key;
+    } else if (key >= '0' && key <= '5') {
       slate_request_state(static_cast<SlateState>(key - '0'));
     } else if (key == 'l' || key == 'r' || key == 'm') {
       MicChannel channel = key == 'l' ? MicChannel::LEFT
@@ -57,6 +87,7 @@ void loop() {
     size_t count;
     while ((count = mic_read(samples, MIC_FRAME_SAMPLES)) > 0) {
       if (streaming) send_audio(samples, count);
+      cloud_audio(samples, count);
       for (size_t i = 0; i < count; ++i) {
         int32_t sample = samples[i];
         int32_t magnitude = sample < 0 ? -sample : sample;
@@ -80,5 +111,6 @@ void loop() {
     meter_peak = 0;
     last_meter = millis();
   }
+  perf_stack(PerfTask::LOOP);
   delay(20);
 }

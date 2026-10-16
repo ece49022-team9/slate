@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from slate.board import ROOT, load
-from slate.link import Link
+from slate.link import BAUD, Link
+from slate.voice.device import CLOUD, cloud, socket_url
 
 QEMU = Path(
     os.environ.get(
@@ -170,8 +171,9 @@ class Breadboard:
     def reply(self) -> bytes:
         message = b""
         if self.uart:
-            message += struct.pack("<cH", b"U", len(self.uart)) + self.uart
-            self.uart.clear()
+            size = min(len(self.uart), BAUD * TICK_NS // 10_000_000_000)
+            message += struct.pack("<cH", b"U", size) + self.uart[:size]
+            del self.uart[:size]
         if self.audio:
             self.credit += self.per_tick
             chunk = self.audio[: self.credit]
@@ -266,7 +268,9 @@ def build_image() -> Path:
 
 
 @asynccontextmanager
-async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
+async def breadboard(
+    realtime: bool = False, connect_cloud: bool = True
+) -> AsyncIterator[Breadboard]:
     if not QEMU.exists():
         raise RuntimeError(f"slate.breadboard: {QEMU} is missing; run make sim-setup")
     board, _ = load()
@@ -306,6 +310,8 @@ async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
                     "shift=2,sleep=off",
                     "-seed",
                     "1",
+                    "-nic",
+                    "user,model=open_eth" if connect_cloud else "none",
                     "-drive",
                     f"file={IMAGE},if=mtd,format=raw",
                     "-chardev",
@@ -321,6 +327,21 @@ async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
                 )
             async with asyncio.timeout(60):
                 await booted
+            has_cloud = (
+                os.environ.get("SLATE_CLOUD_URL")
+                or os.environ.get("SLATE_DEVICE_TOKEN")
+                or CLOUD.exists()
+            )
+            if connect_cloud and has_cloud:
+                cloud_url, device_token = cloud()
+                network = asyncio.create_task(bench.link.wait_for("slate.net: up", 30))
+                bench.link.type("!net eth\n")
+                if any(line.startswith("slate.net: up ") for line in bench.link.lines):
+                    network.cancel()
+                    await asyncio.gather(network, return_exceptions=True)
+                else:
+                    await network
+                bench.link.type(f"!cloud {socket_url(cloud_url)} {device_token}\n")
             yield bench
         finally:
             if process is not None and process.returncode is None:

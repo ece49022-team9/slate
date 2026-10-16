@@ -18,7 +18,7 @@ def rms(line: str) -> float:
 
 
 async def run(rate: int) -> tuple[str, str]:
-    async with breadboard() as bench:
+    async with breadboard(connect_cloud=False) as bench:
         link = bench.link
         await bench.sleep(1)
         idle = bench.oled.frames[-1]
@@ -75,6 +75,7 @@ def main() -> None:
     board, _ = load()
     rate = board["device"]["mic"]["sample_hz"]
     summary, first = asyncio.run(run(rate))
+    build_image()
     _, second = asyncio.run(run(rate))
     assert first == second, (
         f"slate.breadboard: two runs with the same inputs differ: {first} {second}"
