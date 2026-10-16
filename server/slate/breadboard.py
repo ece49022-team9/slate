@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from array import array
 from collections import Counter, deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -121,8 +122,10 @@ class Breadboard:
         self.uart = bytearray()
         self.output = bytearray()
         self.audio = bytearray()
-        self.credit = 0
-        self.per_tick = rate * 4 * TICK_NS // 1_000_000_000
+        self.echo = bytearray()
+        self.rate = rate
+        self.buffered = 0
+        self.frames_drained = 0
         self.lead = rate * 4 * LEAD_MS // 1000
         self.played: list[asyncio.Future] = []
         self.alarms: list[tuple[int, Callable[[], None]]] = []
@@ -174,15 +177,19 @@ class Breadboard:
             size = min(len(self.uart), BAUD * TICK_NS // 10_000_000_000)
             message += struct.pack("<cH", b"U", size) + self.uart[:size]
             del self.uart[:size]
-        if self.audio:
-            self.credit += self.per_tick
-            chunk = self.audio[: self.credit]
-            del self.audio[: len(chunk)]
-            self.credit -= len(chunk)
+        if self.audio or self.echo:
+            drained = self.rate * self.now // 1_000_000_000
+            self.buffered = max(0, self.buffered - (drained - self.frames_drained) * 4)
+            self.frames_drained = drained
+            room = self.lead - self.buffered
+            voice, echo = bytes(self.audio[:room]), bytes(self.echo[:room])
+            del self.audio[: len(voice)]
+            del self.echo[: len(echo)]
+            chunk = mix(voice, echo)
+            self.buffered += len(chunk)
             self.audio_bytes += len(chunk)
             message += struct.pack("<cH", b"A", len(chunk)) + chunk
         if not self.audio:
-            self.credit = 0
             for future in self.played:
                 future.set_result(None)
             self.played.clear()
@@ -225,9 +232,23 @@ class Breadboard:
         await future
 
     def feed(self, stereo: bytes) -> None:
-        if not self.audio:
-            self.credit = self.lead
         self.audio += stereo
+
+    def feed_echo(self, stereo: bytes) -> None:
+        self.echo += stereo
+        maximum = self.rate * 4
+        if len(self.echo) > maximum:
+            del self.echo[: len(self.echo) - maximum]
+
+
+def mix(first: bytes, second: bytes) -> bytes:
+    if not first or not second:
+        return first or second
+    longer, shorter = sorted((first, second), key=len, reverse=True)
+    mixed = array("h", longer)
+    for index, sample in enumerate(array("h", shorter)):
+        mixed[index] = max(-32768, min(32767, mixed[index] + sample))
+    return mixed.tobytes()
 
 
 def tone(hz: float, amplitude: int, seconds: float, rate: int) -> list[int]:

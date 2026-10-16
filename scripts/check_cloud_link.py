@@ -50,7 +50,8 @@ async def offline(realtime: bool) -> None:
 
     async def handler(socket):
         assert socket.request.headers["Authorization"] == f"Bearer {TOKEN}"
-        accepted.set_result(socket)
+        if not accepted.done():
+            accepted.set_result(socket)
         await release.wait()
 
     async with serve(handler, "127.0.0.1", 0, compression=None) as server:
@@ -157,14 +158,154 @@ async def offline(realtime: bool) -> None:
                     await receive(socket, "start")
                     bench.link.type("0")
                     await receive(socket, "cancel")
+                    bench.link.type("ac")
+                    await receive(socket, "live")
+                    print(await line(bench.link, "slate.live: requested"))
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "type": "live",
+                                "state": "started",
+                                "call_id": "live-fixture",
+                            }
+                        )
+                    )
+                    print(await line(bench.link, "slate.live: started live-fixture"))
+                    bench.feed(mic_slot_pcm(tone(440, 12000, 0.3, 16000), bench.slot))
+                    captured = 0
+                    async with asyncio.timeout(20):
+                        while captured < 5:
+                            frame = await socket.recv()
+                            assert isinstance(frame, bytes), (
+                                f"unexpected live control: {frame!r}"
+                            )
+                            captured += 1
+                    speaker = struct.pack(
+                        "<480h", *(index - 240 for index in range(480))
+                    )
+                    await socket.send(speaker)
+                    async with asyncio.timeout(10):
+                        assert await bench.link.speaker.get() == speaker
+                    for kind, text in (("heard", "Hello live"), ("said", "Hello back")):
+                        await socket.send(
+                            json.dumps(
+                                {"type": kind, "call_id": "live-fixture", "text": text}
+                            )
+                        )
+                        print(await line(bench.link, f"slate.live.{kind}: {text}"))
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "type": "tool",
+                                "tool": "fixture_tool",
+                                "turn_id": "handoff-fixture",
+                            }
+                        )
+                    )
+                    await line(bench.link, "slate.cloud.tool: fixture_tool")
+                    await socket.send(
+                        json.dumps({"type": "approval", "turn_id": "handoff-fixture"})
+                    )
+                    await line(bench.link, "slate.cloud.approval: requested")
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "turn_id": "handoff-fixture",
+                                "message": "fixture live error",
+                            }
+                        )
+                    )
+                    await line(bench.link, "slate.cloud.error: fixture live error")
+                    bench.link.type("3")
+                    await line(bench.link, "slate.state: 3")
+                    async with asyncio.timeout(10):
+                        for _ in range(3):
+                            assert isinstance(await socket.recv(), bytes)
+                    await bench.sleep(1.1)
+                    assert bench.link.state() == 3
+                    bench.link.type("c")
+                    await receive(socket, "hangup")
+                    print(await line(bench.link, "slate.live: hangup"))
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "type": "live",
+                                "state": "ended",
+                                "call_id": "live-fixture",
+                                "seconds": 1.25,
+                            }
+                        )
+                    )
+                    print(await line(bench.link, "slate.live: ended 1.25s"))
+                    await bench.sleep(0.1)
+                    assert bench.link.state() == 0
+                    bench.link.type("1")
+                    await receive(socket, "start")
+                    bench.link.type("c")
+                    await receive(socket, "cancel")
+                    await receive(socket, "live")
+                    await socket.send(
+                        json.dumps({"type": "cancelled", "turn_id": "previous-turn"})
+                    )
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "type": "live",
+                                "state": "started",
+                                "call_id": "idle-fixture",
+                            }
+                        )
+                    )
+                    await line(bench.link, "slate.live: started idle-fixture")
+                    await bench.sleep(0.1)
+                    assert bench.link.state() == 1
+                    bench.link.type("0")
+                    await receive(socket, "hangup")
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "type": "live",
+                                "state": "ended",
+                                "call_id": "idle-fixture",
+                                "seconds": 0.5,
+                                "error": "fixture ended",
+                            }
+                        )
+                    )
+                    print(
+                        await line(
+                            bench.link, "slate.live: ended 0.50s error=fixture ended"
+                        )
+                    )
+                    await bench.sleep(0.1)
+                    assert bench.link.state() == 0
+                    bench.link.type("x")
                     perf = await bench.link.wait_for("slate.perf:", seconds=5)
                     print(perf)
                     assert not check("cloud", parse(perf), factors())
+                    bench.link.type("c")
+                    await receive(socket, "live")
+                    await socket.send(
+                        json.dumps(
+                            {
+                                "type": "live",
+                                "state": "started",
+                                "call_id": "disconnect-fixture",
+                            }
+                        )
+                    )
+                    await line(bench.link, "slate.live: started disconnect-fixture")
+                    await socket.close()
+                    print(await line(bench.link, "slate.live: ended disconnected"))
+                    await bench.sleep(0.1)
+                    assert bench.link.state() == 0
                     assert not any(TOKEN in entry for entry in bench.link.lines)
                     print(
                         f"slate.cloud.check: realtime={realtime} hello, bearer, "
                         "command receipts, SPI pixels, nonzero mic PCM, start/end, "
-                        "reply audio and cancellation passed"
+                        "reply audio, cancellation, live call, continuous mic "
+                        "and speaker tap passed"
                     )
                 finally:
                     release.set()

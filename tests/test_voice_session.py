@@ -411,7 +411,7 @@ class VoiceStreamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stream_closed.is_set())
         sent = len(self.events(session))
         await session.publish(turn, "reply", text="late answer")
-        await session.play(b"\x01\x00", turn)
+        await session.play(b"\x01\x00", lambda: session.turn is turn)
         self.assertEqual(len(self.events(session)), sent)
         self.assertEqual(session.socket.send_bytes.await_count, 1)
         self.assertEqual(

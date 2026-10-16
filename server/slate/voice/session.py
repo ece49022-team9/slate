@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
-from collections.abc import Coroutine
+import os
+from collections.abc import Callable, Coroutine
 from contextlib import AsyncExitStack, aclosing
+from functools import partial
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -16,6 +18,7 @@ from slate.agent.agent import BACKGROUND_PROMPT
 from slate.device import DeviceCommand, DeviceSDK, agent_context
 from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE
 from slate.voice.client import speak_stream, transcribe_stream
+from slate.voice.live import LiveCall
 from slate.voice.reply import Sentences
 from slate.voice.turn import Turn
 
@@ -24,6 +27,9 @@ SPOKEN_END = "\n---"
 REPLY_FRAME_BYTES = SAMPLE_RATE * SAMPLE_BYTES // 50
 REPLY_LEAD_SECONDS = 0.3
 RECEIPT_SECONDS = 5
+HANGUP_SECONDS = 5
+KEPT_REPORTS = 50
+PROFILE = os.getenv("SLATE_PROFILE") == "1"
 
 
 class Hello(BaseModel):
@@ -50,7 +56,9 @@ class VoiceSession:
 
     def __init__(self, socket: WebSocket, hello: Hello) -> None:
         self.socket = socket
-        self.profile = hello.profile
+        self.profile = hello.profile or PROFILE
+        self.send_timing = hello.profile
+        self.reports: dict[str, dict] = {}
         self.id = uuid4().hex
         self.agent = create_agent()
         self.resampler = (
@@ -67,6 +75,8 @@ class VoiceSession:
         self.turn_task: asyncio.Task | None = None
         self.turn_lock = asyncio.Lock()
         self.watcher: asyncio.Task | None = None
+        self.call: LiveCall | None = None
+        self.call_task: asyncio.Task | None = None
         self.playhead = 0.0
 
     def spawn(self, work: Coroutine[Any, Any, None]) -> asyncio.Task:
@@ -97,11 +107,15 @@ class VoiceSession:
             await self.close()
 
     async def audio(self, pcm: bytes) -> None:
+        call = self.call
         turn = self.turn
-        if turn is None or not turn.receiving or turn.announcement:
+        if call is None and (turn is None or not turn.receiving or turn.announcement):
             return
         if self.resampler is not None:
             if len(pcm) % SAMPLE_BYTES:
+                if call is not None:
+                    logger.warning("Dropped partial samples in live call %s", call.id)
+                    return
                 await self.abort("Audio must contain complete 16-bit samples")
                 return
             pcm = self.resampler.resample_chunk(
@@ -109,6 +123,9 @@ class VoiceSession:
             ).tobytes()
             if not pcm:
                 return
+        if call is not None:
+            call.push(pcm)
+            return
         try:
             turn.push(pcm)
         except ValueError as error:
@@ -123,6 +140,10 @@ class VoiceSession:
             await self.end_turn()
         elif kind == "cancel":
             await self.abort()
+        elif kind == "live":
+            await self.start_call()
+        elif kind == "hangup":
+            await self.end_call()
         elif kind == "receipt":
             waiter = self.receipts.pop(str(message.get("request_id")), None)
             if waiter is None or waiter.done():
@@ -148,6 +169,9 @@ class VoiceSession:
 
     async def start_turn(self) -> None:
         async with self.turn_lock:
+            if self.call is not None:
+                logger.warning("Device %s asked to talk during a live call", self.id)
+                return
             await self._abort()
             turn = Turn()
             self.turn = turn
@@ -228,13 +252,12 @@ class VoiceSession:
             lambda: not self.closed and self.turn is turn,
         )
 
-    async def play(self, pcm: bytes, turn: Turn) -> None:
+    async def play(self, pcm: bytes, playing: Callable[[], bool]) -> None:
         clock = asyncio.get_running_loop().time
         for offset in range(0, len(pcm), REPLY_FRAME_BYTES):
-            if self.closed or self.turn is not turn:
+            if self.closed or not playing():
                 return
             chunk = pcm[offset : offset + REPLY_FRAME_BYTES]
-            turn.timing.mark("reply_first_enqueue")
             self.playhead = max(self.playhead, clock()) + len(chunk) / (
                 SAMPLE_RATE * SAMPLE_BYTES
             )
@@ -305,7 +328,8 @@ class VoiceSession:
                     async with aclosing(speak_stream(piece, timings=timing)) as stream:
                         async for pcm in stream:
                             turn.timing.mark("tts_first_audio")
-                            await self.play(pcm, turn)
+                            turn.timing.mark("reply_first_enqueue")
+                            await self.play(pcm, lambda: self.turn is turn)
             turn.timing.mark("tts_completed")
             await self.wait_for_playout()
             turn.timing.mark("reply_playout_done")
@@ -341,15 +365,19 @@ class VoiceSession:
                 stage = "assistant response"
                 reply = await self.respond(turn, text.strip(), tts_timing)
                 logger.info("Speech played for turn %s", turn.id)
-                fields = {}
-                if self.profile:
-                    fields["timing"] = {
-                        "server": turn.timing.snapshot(),
-                        "agent": self.agent.timings,
-                        "agent_runtime": self.agent.last_run.get("runtime"),
-                        "stt": stt_timing,
-                        "tts": {"segments": tts_timing},
-                    }
+                timing = {
+                    "server": turn.timing.snapshot(),
+                    "agent": self.agent.timings,
+                    "agent_runtime": self.agent.last_run.get("runtime"),
+                    "agent_usage": self.agent.last_run.get("usage"),
+                    "stt": stt_timing,
+                    "tts": {"segments": tts_timing},
+                }
+                self.remember(
+                    turn.id,
+                    {"transcript": text.strip(), "reply": reply, "timing": timing},
+                )
+                fields = {"timing": timing} if self.send_timing else {}
                 await self.publish(turn, "reply", text=reply, final=True, **fields)
                 self.watch_background()
         except asyncio.CancelledError:
@@ -367,6 +395,108 @@ class VoiceSession:
             if self.turn is turn:
                 self.turn = None
 
+    async def start_call(self) -> None:
+        async with self.turn_lock:
+            if self.call is not None:
+                logger.warning("Device %s asked for a live call during one", self.id)
+                return
+            await self._abort()
+            voice: asyncio.Queue[bytes] = asyncio.Queue()
+            call = LiveCall(
+                delegate=self.handoff, speak=voice.put_nowait, send=self.send
+            )
+            self.call = call
+            if self.resampler is not None:
+                self.resampler.clear()
+            self.call_task = self.spawn(self.converse(call, voice))
+        logger.info("Live call %s started for device %s", call.id, self.id)
+
+    async def end_call(self) -> None:
+        call = self.call
+        if call is None:
+            return
+        call.hang_up()
+        self.spawn(self.drop_call(call))
+
+    async def drop_call(self, call: LiveCall) -> None:
+        await asyncio.sleep(HANGUP_SECONDS)
+        if self.call is call and self.call_task is not None:
+            logger.warning(
+                "GPT-Live did not close call %s within %ss; dropping it",
+                call.id,
+                HANGUP_SECONDS,
+            )
+            self.call_task.cancel()
+
+    async def converse(self, call: LiveCall, voice: asyncio.Queue[bytes]) -> None:
+        player = self.spawn(self.speak_call(call, voice))
+        error = None
+        try:
+            await call.run()
+        except asyncio.CancelledError:
+            error = "The live call stopped responding."
+            raise
+        except Exception:
+            logger.exception("Live call %s failed", call.id)
+            error = "The live call failed. Try again."
+        finally:
+            player.cancel()
+            if self.call is call:
+                self.call = None
+                self.call_task = None
+                self.playhead = 0.0
+            ended = {
+                "type": "live",
+                "state": "ended",
+                "call_id": call.id,
+                "seconds": round(call.seconds, 1),
+            }
+            if error:
+                ended["error"] = error
+            report = call.report()
+            self.remember(call.id, report)
+            if self.send_timing:
+                ended["report"] = report
+            await self.send(ended)
+            logger.info("Live call %s ended after %.1fs", call.id, call.seconds)
+
+    async def speak_call(self, call: LiveCall, voice: asyncio.Queue[bytes]) -> None:
+        pending = b""
+        while True:
+            pending += await voice.get()
+            whole = len(pending) - len(pending) % REPLY_FRAME_BYTES
+            if whole:
+                await self.play(pending[:whole], lambda: self.call is call)
+                pending = pending[whole:]
+
+    def remember(self, key: str, report: dict) -> None:
+        self.reports[key] = report
+        while len(self.reports) > KEPT_REPORTS:
+            self.reports.pop(next(iter(self.reports)))
+
+    async def handoff(self, request: str) -> tuple[str, dict]:
+        """Runs one GPT-Live handoff on the agent, with the device scope and
+        approvals of a turn of its own."""
+        turn = Turn()
+        turn.finish()
+        self.turn = turn
+        try:
+            await self.publish(turn, "tool", tool="slate agent")
+            reply = await self.agent.run(
+                request,
+                partial(self.agent_progress, turn),
+                device_context=agent_context(turn.scope),
+            )
+        finally:
+            if self.turn is turn:
+                self.turn = None
+        details = {
+            "usage": self.agent.last_run.get("usage"),
+            "agent": self.agent.timings,
+            "runtime": self.agent.last_run.get("runtime"),
+        }
+        return spoken_part(reply, final=True)[0].strip(), details
+
     def watch_background(self) -> None:
         if self.agent.pending and (self.watcher is None or self.watcher.done()):
             self.watcher = self.spawn(self.report_background())
@@ -375,6 +505,10 @@ class VoiceSession:
         while self.agent.pending:
             finished = await self.agent.background_finished()
             logger.info("Announcing background results %s", sorted(finished))
+            if (call := self.call) is not None:
+                reply = await self.agent.run(BACKGROUND_PROMPT)
+                await call.tell(spoken_part(reply, final=True)[0].strip())
+                continue
             while True:
                 async with self.turn_lock:
                     if self.closed:

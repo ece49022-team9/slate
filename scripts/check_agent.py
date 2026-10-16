@@ -329,10 +329,10 @@ async def run(args: argparse.Namespace) -> None:
             results.append(
                 await check(
                     "modal-browser",
-                    "Use the browser to open this synthetic test page: "
+                    "Use the browser to open this test page: "
                     + browser_state["fixture_url"]
-                    + ". Read the code on the page, enter it into the Code field, "
-                    "click Apply, and report the value shown in the result.",
+                    + ". Read the code on the page, type it into the Code field, "
+                    "click Apply, and tell me the value shown in the result.",
                     browser_state["test_code"],
                     agent,
                     "browser",
@@ -370,8 +370,8 @@ async def run(args: argparse.Namespace) -> None:
         if args.memory:
             wrote_memory = await check(
                 "memory-write",
-                f"Remember in persistent memory: the fictitious Slate "
-                f"test user's favorite beverage is {nonce}. Confirm with that value.",
+                f"Save this in your long-term memory: the made-up Slate test "
+                f"user's favorite drink is {nonce}. Reply with that value.",
                 nonce,
                 agent,
                 "memory",
@@ -382,15 +382,15 @@ async def run(args: argparse.Namespace) -> None:
             results.append(
                 await check(
                     "memory-recall-new-session",
-                    "What is the fictitious Slate test user's favorite beverage?",
+                    "What is the made-up Slate test user's favorite drink?",
                     nonce,
                     agent,
                 )
             )
             if wrote_memory:
                 await agent.run(
-                    "Remove the fictitious Slate test user's favorite beverage "
-                    "from persistent memory. It was only a test."
+                    "Delete the made-up Slate test user's favorite drink from "
+                    "your long-term memory. It was only a test."
                 )
     finally:
         await agent.close()

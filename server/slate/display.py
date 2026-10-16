@@ -1,3 +1,4 @@
+import asyncio
 import struct
 from array import array
 from collections.abc import Iterable
@@ -7,21 +8,33 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from slate.board import check, load
 from slate.breadboard import breadboard, build_image, tone
+from slate.voice.sim import SimCall
 
 
 class Keys(BaseModel):
     text: str
 
 
+class CallRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    live: StrictBool = True
+    echo: float = Field(0.0, ge=0, le=1)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with breadboard(realtime=True) as bench:
         app.state.bench = bench
-        yield
+        app.state.call = None
+        try:
+            yield
+        finally:
+            if app.state.call:
+                await app.state.call.stop()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -134,6 +147,72 @@ async def microphone(socket: WebSocket):
             bench.feed(mic_slot_pcm(array("h", data), bench.slot))
     except WebSocketDisconnect:
         return
+
+
+def active_call(request: Request) -> SimCall:
+    call = request.app.state.call
+    if call is None:
+        raise HTTPException(409, "Start a call first")
+    return call
+
+
+@app.post("/call")
+async def start_call(body: CallRequest, request: Request):
+    if request.app.state.call is not None:
+        raise HTTPException(409, "A call is already running")
+    call = SimCall(request.app.state.bench, live=body.live, echo=body.echo)
+    await call.start()
+    request.app.state.call = call
+    return await call.status()
+
+
+@app.get("/call")
+async def call_status(request: Request):
+    call = request.app.state.call
+    if call is None:
+        return {"active": False}
+    return await call.status()
+
+
+@app.delete("/call")
+async def end_call(request: Request):
+    call = active_call(request)
+    request.app.state.call = None
+    return await call.stop()
+
+
+@app.post("/call/talk")
+async def press(request: Request):
+    try:
+        active_call(request).talk()
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
+    return {"talking": True}
+
+
+@app.delete("/call/talk")
+async def release(request: Request):
+    active_call(request).release()
+    return {"talking": False}
+
+
+@app.websocket("/speaker")
+async def speaker(socket: WebSocket):
+    await socket.accept()
+    call = socket.app.state.call
+    if call is None:
+        await socket.close(1008, "Start a call first")
+        return
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)
+    call.speakers.add(queue)
+    try:
+        while pcm := await queue.get():
+            await socket.send_bytes(pcm)
+        await socket.close()
+    except WebSocketDisconnect:
+        return
+    finally:
+        call.speakers.discard(queue)
 
 
 def main():

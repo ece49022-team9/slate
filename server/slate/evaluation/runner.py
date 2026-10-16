@@ -31,10 +31,11 @@ CACHE = ROOT / ".local/benchmarks"
 RAW = ROOT / ".local/agent-runs"
 HELPERS = Path(__file__).parent
 READER_INSTRUCTIONS = (
-    "You answer questions about the user's past conversations. Use every available "
-    "historical source when needed. Dates in those sources are historical dates; "
-    "the question supplies its reference date. Give a precise, complete answer. "
-    "If the history lacks the requested information, say you cannot determine it."
+    "You answer questions about the user's past conversations. Check every past "
+    "conversation you can reach when you need to. Dates in them are when those "
+    "conversations happened; the question tells you today's date. Give an exact, "
+    "complete answer. If the past conversations don't have the answer, say you "
+    "can't tell."
 )
 
 

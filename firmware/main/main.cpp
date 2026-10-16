@@ -20,20 +20,12 @@ void setup() {
   oled_start();
   Serial.printf("slate.boot: OLED on CLK=%d MOSI=%d CS=%d DC=%d RESET=%d at %u Hz\n",
                 OLED_CLK, OLED_DATA, OLED_CS, OLED_DC, OLED_RESET, OLED_SPI_HZ);
-  Serial.println("slate.boot: Send 0-5 to change state, l/r/m to pick a mic, a/x to stream audio");
+  Serial.println("slate.boot: Send 0-5 to change state, l/r/m to pick a mic, a/x to tap mic and speaker, c to toggle a live call");
   Serial.println("slate.state: 0");
-}
-
-static void send_audio(const int16_t* samples, size_t count) {
-  uint16_t bytes = count * sizeof(int16_t);
-  uint8_t header[] = {0, uint8_t(bytes), uint8_t(bytes >> 8)};
-  Serial.write(header, sizeof(header));
-  Serial.write(reinterpret_cast<const uint8_t*>(samples), bytes);
 }
 
 void loop() {
   static SlateState reported_state = IDLE;
-  static bool streaming = false;
   static uint32_t last_meter = 0;
   static uint32_t meter_samples = 0;
   static uint64_t meter_energy = 0;
@@ -73,8 +65,10 @@ void loop() {
       Serial.printf("slate.mic.channel: %c %s\n", key,
                     mic_configure(channel) ? "selected" : "stop listening first");
     } else if (key == 'a' || key == 'x') {
-      streaming = key == 'a';
-      Serial.printf("slate.audio: %s\n", streaming ? "streaming" : "off");
+      cloud_audio_tap(key == 'a');
+      Serial.printf("slate.audio: %s\n", key == 'a' ? "streaming" : "off");
+    } else if (key == 'c') {
+      cloud_toggle_live();
     }
   }
   SlateState state = slate_get_state();
@@ -82,11 +76,11 @@ void loop() {
     Serial.printf("slate.state: %u\n", static_cast<unsigned>(state));
     reported_state = state;
   }
-  if (state == SLATE_LISTEN || state == SLATE_TRANSCRIBE) {
+  if (cloud_live() || state == SLATE_LISTEN || state == SLATE_TRANSCRIBE) {
     int16_t samples[MIC_FRAME_SAMPLES];
     size_t count;
     while ((count = mic_read(samples, MIC_FRAME_SAMPLES)) > 0) {
-      if (streaming) send_audio(samples, count);
+      cloud_tap(0, reinterpret_cast<const uint8_t*>(samples), count * sizeof(int16_t));
       cloud_audio(samples, count);
       for (size_t i = 0; i < count; ++i) {
         int32_t sample = samples[i];

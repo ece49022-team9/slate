@@ -29,7 +29,7 @@ SlateState slate_get_state() { return current_state.load(); }
 
 static void apply_state(SlateState state) {
   display_set_state(state);
-  mic_set_state(state);
+  mic_set_state(cloud_live() && state != IDLE ? SLATE_LISTEN : state);
   current_state.store(state);
   cloud_state(state);
   ESP_LOGI("slate.state", "%s", names[state]);
