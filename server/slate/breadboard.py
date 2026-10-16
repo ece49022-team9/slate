@@ -54,7 +54,6 @@ class Ssd1351:
     columns: tuple[int, int] = (0, WIDTH - 1)
     rows: tuple[int, int] = (0, HEIGHT - 1)
     offset: int = 0
-    on: bool = False
     ram: bytearray = field(default_factory=lambda: bytearray(WIDTH * HEIGHT * 2))
     frames: deque[Frame] = field(default_factory=lambda: deque(maxlen=300))
     count: int = 0
@@ -65,7 +64,6 @@ class Ssd1351:
     def pin(self, ns: int, gpio: int, level: int) -> None:
         self.levels[gpio] = level
         if gpio == self.pins["reset"] and not level:
-            self.on = False
             self.command = None
 
     def spi(self, ns: int, data: bytes) -> None:
@@ -83,10 +81,6 @@ class Ssd1351:
     def start(self, command: int) -> None:
         self.command = command
         self.args = []
-        if command == 0xAF:
-            self.on = True
-        elif command == 0xAE:
-            self.on = False
 
     def finish(self) -> None:
         if len(self.args) != 2 or self.command not in (0x15, 0x75):
@@ -298,38 +292,45 @@ async def breadboard(realtime: bool = False) -> AsyncIterator[Breadboard]:
 
         server = await asyncio.start_unix_server(connection, path)
         booted = asyncio.create_task(bench.link.wait_for("slate.state: 0", 30))
-        process = await asyncio.create_subprocess_exec(
-            str(QEMU),
-            "-machine",
-            "esp32",
-            "-nographic",
-            "-monitor",
-            "none",
-            "-icount",
-            "shift=2,sleep=off",
-            "-seed",
-            "1",
-            "-drive",
-            f"file={IMAGE},if=mtd,format=raw",
-            "-chardev",
-            f"socket,id=slate,path={path}",
-            "-serial",
-            "null",
-            "-global",
-            f"driver=esp32.i2s,property=sample-rate,value={mic['sample_hz']}",
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=QEMU_LOG.open("w"),
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
+        process = None
         try:
+            with QEMU_LOG.open("w") as qemu_log:
+                process = await asyncio.create_subprocess_exec(
+                    str(QEMU),
+                    "-machine",
+                    "esp32",
+                    "-nographic",
+                    "-monitor",
+                    "none",
+                    "-icount",
+                    "shift=2,sleep=off",
+                    "-seed",
+                    "1",
+                    "-drive",
+                    f"file={IMAGE},if=mtd,format=raw",
+                    "-chardev",
+                    f"socket,id=slate,path={path}",
+                    "-serial",
+                    "null",
+                    "-global",
+                    f"driver=esp32.i2s,property=sample-rate,value={mic['sample_hz']}",
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=qemu_log,
+                    stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=True,
+                )
             async with asyncio.timeout(60):
                 await booted
             yield bench
         finally:
-            if process.returncode is None:
+            if process is not None and process.returncode is None:
                 os.killpg(process.pid, signal.SIGTERM)
                 await process.wait()
+            booted.cancel()
+            await asyncio.gather(booted, return_exceptions=True)
             for task in tasks:
                 task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             server.close()
+            await server.wait_closed()
+            bench.link.close()
