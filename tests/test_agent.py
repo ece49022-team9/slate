@@ -604,6 +604,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 "MODAL_PROFILE": "slate-test",
                 "SLATE_PUBLIC_URL": "https://slate.test",
             },
+            clear=True,
         ):
             agent_runtime.configure_tools(config)
             agent_runtime.configure_tools(config)
