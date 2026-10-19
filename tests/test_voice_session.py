@@ -12,7 +12,7 @@ from slate.agent.agent import BACKGROUND_PROMPT
 from slate.app import app
 from slate.device import OrbRequest
 from slate.voice.audio import MAX_AUDIO_SECONDS, SAMPLE_BYTES, SAMPLE_RATE
-from slate.voice.session import Hello, VoiceSession
+from slate.voice.session import Hello, VoiceSession, VoiceSessions
 from slate.voice.turn import Turn
 from starlette.websockets import WebSocketDisconnect
 
@@ -21,6 +21,16 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 class TurnTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reconnect_replaces_a_device_whose_socket_already_dropped(self):
+        sessions = VoiceSessions()
+        dropped = Mock(close=AsyncMock(side_effect=WebSocketDisconnect(1006)))
+        with patch("slate.voice.session.create_agent", return_value=FakeAgent()):
+            first = await sessions.connect(dropped, Hello(type="hello"))
+            second = await sessions.connect(Mock(), Hello(type="hello"))
+        self.assertTrue(first.closed)
+        self.assertIs(sessions.current, second)
+        await sessions.close()
+
     async def test_keeps_audio_in_order_and_ignores_late_frames(self):
         turn = Turn()
         turn.push(b"\x01\x00")

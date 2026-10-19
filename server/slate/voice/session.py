@@ -22,7 +22,7 @@ from slate.voice.turn import Turn
 logger = logging.getLogger("slate.voice.session")
 SPOKEN_END = "\n---"
 REPLY_FRAME_BYTES = SAMPLE_RATE * SAMPLE_BYTES // 50
-REPLY_LEAD_SECONDS = 0.3
+REPLY_LEAD_SECONDS = 0.2
 RECEIPT_SECONDS = 5
 
 
@@ -478,7 +478,10 @@ class VoiceSessions:
             if previous is not None and not previous.closed:
                 logger.warning("Device %s replaced by a new connection", previous.id)
                 await previous.close()
-                await previous.socket.close(4000, "Replaced by a new connection")
+                try:
+                    await previous.socket.close(4000, "Replaced by a new connection")
+                except (WebSocketDisconnect, RuntimeError):
+                    logger.info("Device %s socket was already gone", previous.id)
             return self.current
 
     async def close(self) -> None:

@@ -16,7 +16,7 @@ static std::atomic<uint32_t> reply_arrived_at{0};
 static std::atomic<bool> stopping{false};
 
 //static constexpr int SPEAKER_SD = 4;
-static constexpr size_t REPLY_BUFFER_BYTES = 16384;
+static constexpr size_t REPLY_BUFFER_BYTES = 8192;
 static constexpr size_t REPLY_BLOCK_SAMPLES = 128;
 static constexpr size_t REPLY_PREBUFFER_BYTES = SPEAKER_RATE * sizeof(int16_t) * 160 / 1000;
 static constexpr uint32_t REPLY_SETTLE_MS = 100;
@@ -98,7 +98,7 @@ void speaker_start() {
   if (!reply_audio) {
     reply_audio = xStreamBufferCreate(REPLY_BUFFER_BYTES, 1);
     configASSERT(reply_audio);
-    configASSERT(xTaskCreate(play_replies, "Speaker", 3072, nullptr, 3, nullptr) == pdPASS);
+    configASSERT(xTaskCreate(play_replies, "Speaker", 2048, nullptr, 3, nullptr) == pdPASS);
   }
 
   //digitalWrite(SPEAKER_SD, HIGH);
