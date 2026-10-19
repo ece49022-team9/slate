@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+import numpy as np
 from fastapi.testclient import TestClient
 from slate.agent.agent import BACKGROUND_PROMPT
 from slate.app import app
@@ -165,6 +166,21 @@ class DeviceSocketTests(unittest.TestCase):
         transcript = [e for e in events if e["type"] == "transcript" and e["final"]]
         self.assertEqual(transcript[0]["text"], "What is seven plus five?")
         self.assertEqual(events[-1], {**events[-1], "text": "Twelve.", "final": True})
+
+    def test_reply_speech_arrives_at_the_device_speaker_rate(self):
+        with cloud(FakeAgent()) as client:
+            with client.websocket_connect("/api/device/socket", headers=AUTH) as socket:
+                socket.send_text(
+                    json.dumps({"type": "hello", "rate": 16000, "speaker_rate": 16000})
+                )
+                socket.send_text(json.dumps({"type": "start"}))
+                socket.receive_text()
+                socket.send_bytes(b"\x10\x00" * 320)
+                socket.send_text(json.dumps({"type": "end"}))
+                _, audio = receive_until_final(socket)
+        samples = np.frombuffer(audio, dtype="<i2")
+        self.assertAlmostEqual(len(samples), 16000 // 50, delta=2)
+        self.assertEqual(int(np.median(samples)), 0x1040)
 
     def test_agent_controls_the_device_through_the_scoped_route(self):
         agent = FakeAgent(control=True)

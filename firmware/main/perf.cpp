@@ -55,7 +55,7 @@ void perf_report() {
   Serial.printf(
       "slate.perf: render_us=%lu/%lu spi_us=%lu/%lu audio_us=%lu/%lu "
       "heap_free=%u heap_min=%u heap_block=%u heap_total=%u "
-      "stack_loop=%lu stack_control=%lu stack_oled=%lu stack_pdm=%lu stack_cloud=%lu stack_eth=%lu stack_tcpip=%lu stack_events=%lu stack_sys_event=%lu stack_wifi=%lu\n",
+      "stack_loop=%lu stack_control=%lu stack_oled=%lu stack_pdm=%lu stack_cloud=%lu stack_speaker=%lu stack_eth=%lu stack_tcpip=%lu stack_events=%lu stack_sys_event=%lu stack_wifi=%lu\n",
       average(render), static_cast<unsigned long>(render.max), average(spi),
       static_cast<unsigned long>(spi.max), average(audio),
       static_cast<unsigned long>(audio.max),
@@ -68,6 +68,7 @@ void perf_report() {
       static_cast<unsigned long>(remaining[size_t(PerfTask::OLED)]),
       static_cast<unsigned long>(remaining[size_t(PerfTask::PDM)]),
       static_cast<unsigned long>(remaining[size_t(PerfTask::CLOUD)]),
+      static_cast<unsigned long>(remaining[size_t(PerfTask::SPEAKER)]),
       named_stack("emac_rx"), named_stack("tiT"), named_stack("arduino_events"),
       named_stack("sys_evt"), named_stack("wifi"));
 }

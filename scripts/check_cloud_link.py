@@ -12,6 +12,7 @@ from slate.link import Link
 from websockets.asyncio.server import serve
 
 TOKEN = "slate-offline-fixture"
+REPLY_TONE = tone(1000, 8000, 0.25, 16000)
 
 
 @contextmanager
@@ -44,6 +45,26 @@ async def receive(socket, kind: str):
                     return document
 
 
+def check_reply_speaker(pcm: bytes) -> None:
+    frames = list(struct.iter_unpack("<hh", pcm))
+    if any(left != right for left, right in frames):
+        raise ValueError("slate.cloud.check: reply speech differs between I2S channels")
+    left = [sample for sample, _ in frames]
+    start = next((i for i, sample in enumerate(left) if sample), None)
+    if start is None:
+        raise ValueError("slate.cloud.check: no reply speech reached the speaker")
+    expected = REPLY_TONE[1:]
+    played = left[start : start + len(expected)]
+    if played != expected:
+        pairs = zip(played, expected, strict=False)
+        at = next((i for i, (a, b) in enumerate(pairs) if a != b), len(played))
+        raise ValueError(
+            f"slate.cloud.check: reply speech differs from sample {at} of "
+            f"{len(expected)}: got {played[at : at + 6]}, "
+            f"expected {expected[at : at + 6]}"
+        )
+
+
 async def offline(realtime: bool) -> None:
     accepted = asyncio.get_running_loop().create_future()
     release = asyncio.Event()
@@ -65,6 +86,7 @@ async def offline(realtime: bool) -> None:
                         "type": "hello",
                         "mcu": "esp32-wroom-32",
                         "rate": 16000,
+                        "speaker_rate": 16000,
                     }
                     print(await line(bench.link, "slate.net: up"))
                     print(await line(bench.link, "slate.cloud: connected"))
@@ -137,7 +159,9 @@ async def offline(realtime: bool) -> None:
                         )
                     )
                     await line(bench.link, "slate.state: 4")
-                    await socket.send(bytes(960))
+                    reply = struct.pack(f"<{len(REPLY_TONE)}h", *REPLY_TONE)
+                    for offset in range(0, len(reply), 640):
+                        await socket.send(reply[offset : offset + 640])
                     await socket.send(
                         json.dumps(
                             {
@@ -149,10 +173,14 @@ async def offline(realtime: bool) -> None:
                         )
                     )
                     print(await line(bench.link, "slate.reply: Hello Slate"))
-                    print(await line(bench.link, "slate.reply.audio: 960 bytes"))
+                    print(
+                        await line(bench.link, f"slate.reply.audio: {len(reply)} bytes")
+                    )
                     assert bench.link.state() in (0, 4)
                     await bench.sleep(0.1)
                     assert bench.link.state() == 0
+                    if not realtime:
+                        check_reply_speaker(bytes(bench.speaker_pcm))
                     bench.link.type("1")
                     await receive(socket, "start")
                     bench.link.type("0")
@@ -164,7 +192,7 @@ async def offline(realtime: bool) -> None:
                     print(
                         f"slate.cloud.check: realtime={realtime} hello, bearer, "
                         "command receipts, SPI pixels, nonzero mic PCM, start/end, "
-                        "reply audio and cancellation passed"
+                        "reply speech on the I2S speaker and cancellation passed"
                     )
                 finally:
                     release.set()

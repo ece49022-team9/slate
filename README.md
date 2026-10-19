@@ -199,6 +199,8 @@ make sim-voice
 
 Pass `INPUT=path/to/speech.wav` to use a different recording. The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` on the underlying Python command picks left (default), right, or mix. The command boots QEMU, waits for the firmware to connect to the cloud, plays the WAV into its mic model while holding listen, and prints the transcript, the reply, and how much speech the firmware received. Haptics are not started until their pins are confirmed.
 
+The firmware plays reply speech on the MAX98357A. It tells the cloud its speaker rate in `hello`, the cloud resamples CSM's 24 kHz speech to it, and the firmware buffers 160 ms before writing both I2S slots so network jitter does not cut the audio. `make sim-voice` saves what the simulated speaker pins carried to `.local/reply.wav`. In `make sim`, click **Enable speaker audio**, then **Use my microphone**, to talk to the full agent and hear it answer through the simulated amplifier.
+
 ### Bench
 
 `make bench` flashes the board and runs the hardware version of the simulator checks over USB serial. It steps through all six states, reads the frame rate the board reports, records a second of background sound, then plays a 440 Hz tone through the Mac's speaker. The mic's streamed audio must be at least three times louder than the background, and 440 Hz must be at least ten times stronger than 300 Hz, 600 Hz, 1 kHz, and 2 kHz. Put the board near the speaker and turn the volume up. The script cannot see the panel, so check by eye that the orb changes color with each state. Serial output goes to `.local/bench-serial.log`.

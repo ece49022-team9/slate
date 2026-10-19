@@ -1,13 +1,56 @@
 #include "speaker.h"
 #include "board.h"
 #include "Arduino.h"
+#include "perf.h"
 #include "driver/i2s_std.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/stream_buffer.h"
+#include <atomic>
 #include <math.h>
 
 static i2s_chan_handle_t speaker_tx;
+static StreamBufferHandle_t reply_audio;
+static std::atomic<bool> reply_flush{false};
+static std::atomic<bool> reply_writing{false};
+static std::atomic<uint32_t> reply_arrived_at{0};
+static std::atomic<bool> stopping{false};
 
 //static constexpr int SPEAKER_SD = 4;
-static constexpr int SPEAKER_RATE = 16000;
+static constexpr size_t REPLY_BUFFER_BYTES = 16384;
+static constexpr size_t REPLY_BLOCK_SAMPLES = 128;
+static constexpr size_t REPLY_PREBUFFER_BYTES = SPEAKER_RATE * sizeof(int16_t) * 160 / 1000;
+static constexpr uint32_t REPLY_SETTLE_MS = 100;
+
+// Cloud replies arrive as mono PCM at SPEAKER_RATE. Playback starts once
+// 160 ms is buffered, or the stream goes quiet, so network jitter does not
+// leave gaps; each sample goes to both I2S slots.
+static void play_replies(void*) {
+  int16_t mono[REPLY_BLOCK_SAMPLES];
+  int16_t stereo[REPLY_BLOCK_SAMPLES * 2];
+  bool playing = false;
+  for (;;) {
+    if (reply_flush.exchange(false)) {
+      while (xStreamBufferReceive(reply_audio, mono, sizeof(mono), 0)) {}
+      playing = false;
+    }
+    size_t buffered = xStreamBufferBytesAvailable(reply_audio);
+    bool settled = buffered && millis() - reply_arrived_at.load() >= REPLY_SETTLE_MS;
+    playing = playing || buffered >= REPLY_PREBUFFER_BYTES || settled;
+    size_t bytes = playing ? xStreamBufferReceive(reply_audio, mono, sizeof(mono), 0) : 0;
+    if (!bytes) {
+      playing = false;
+      perf_stack(PerfTask::SPEAKER);
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    size_t count = bytes / sizeof(int16_t);
+    for (size_t i = 0; i < count; ++i) stereo[2 * i] = stereo[2 * i + 1] = mono[i];
+    reply_writing.store(true);
+    if (count && !stopping.load()) speaker_write(reinterpret_cast<const uint8_t*>(stereo), count * 4);
+    reply_writing.store(false);
+    perf_stack(PerfTask::SPEAKER);
+  }
+}
 
 void speaker_start() {
 
@@ -52,6 +95,11 @@ void speaker_start() {
 
   ESP_ERROR_CHECK(i2s_channel_enable(speaker_tx));
 
+  if (!reply_audio) {
+    reply_audio = xStreamBufferCreate(REPLY_BUFFER_BYTES, 1);
+    configASSERT(reply_audio);
+    configASSERT(xTaskCreate(play_replies, "Speaker", 3072, nullptr, 3, nullptr) == pdPASS);
+  }
 
   //digitalWrite(SPEAKER_SD, HIGH);
 
@@ -77,8 +125,28 @@ size_t speaker_write(const uint8_t* data, size_t bytes) {
   return written;
 }
 
+void speaker_play(const uint8_t* pcm, size_t bytes) {
+  if (!reply_audio || stopping.load() || bytes % sizeof(int16_t)) return;
+  reply_arrived_at.store(millis());
+  if (xStreamBufferSend(reply_audio, pcm, bytes, 0) < bytes) {
+    static uint32_t last_overflow;
+    if (millis() - last_overflow >= 1000) {
+      Serial.println("slate.speaker: reply buffer full, dropping audio");
+      last_overflow = millis();
+    }
+  }
+}
+
+void speaker_flush() {
+  reply_flush.store(true);
+}
+
 bool speaker_stop() {
   if (!speaker_tx) return true;
+  stopping.store(true);
+  speaker_flush();
+  for (int waited = 0; reply_writing.load() && waited < 100; ++waited) delay(1);
+  if (reply_writing.load()) return false;
   if (i2s_channel_disable(speaker_tx) != ESP_OK) return false;
   if (i2s_del_channel(speaker_tx) != ESP_OK) return false;
   speaker_tx = nullptr;

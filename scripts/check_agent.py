@@ -285,8 +285,12 @@ async def voice() -> bool:
         if not prompt.exists():
             prompt.write_bytes(await speak("What is seven plus five?"))
         result = await simulate_firmware(prompt, "left")
-        if not result.transcript or not result.reply_audio_bytes:
-            raise AssertionError("Voice turn did not return a transcript and speech")
+        if not (
+            result.transcript and result.reply_audio_bytes and result.speaker_seconds
+        ):
+            raise AssertionError(
+                "Voice turn did not return a transcript and play speech on the speaker"
+            )
         if not any(answer in result.reply.casefold() for answer in ("12", "twelve")):
             raise AssertionError("Voice reply did not contain twelve")
         record(
@@ -296,6 +300,7 @@ async def voice() -> bool:
             transcript=result.transcript,
             reply=result.reply,
             reply_audio_bytes=result.reply_audio_bytes,
+            speaker_seconds=result.speaker_seconds,
             input_sha256=hashlib.sha256(prompt.read_bytes()).hexdigest(),
         )
         return True

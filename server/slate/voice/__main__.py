@@ -29,6 +29,11 @@ def show_firmware_turn(result: FirmwareTurn) -> None:
     print(f"slate.stt: {result.transcript}")
     print(f"slate.agent: {result.reply}")
     print(f"slate.voice: firmware received {result.reply_audio_bytes} bytes of speech")
+    if result.speaker_seconds is not None:
+        print(
+            f"slate.voice: speaker played {result.speaker_seconds:.1f}s of speech; "
+            "saved .local/reply.wav"
+        )
 
 
 async def run(args: argparse.Namespace) -> None:

@@ -13,7 +13,7 @@ from slate.link import Link, open_board
 CALIBRATION = ROOT / "firmware/sim_calibration.toml"
 SERIAL_LOG = ROOT / ".local/resources-serial.log"
 TIMERS = ("render", "spi", "audio")
-STACKS = ("loop", "control", "oled", "pdm", "cloud")
+STACKS = ("loop", "control", "oled", "pdm", "cloud", "speaker")
 FRAME_US = 30_000
 HEAP_MIN = 32_768
 HEAP_BLOCK = 16_384

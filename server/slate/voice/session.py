@@ -30,6 +30,7 @@ class Hello(BaseModel):
     model_config = ConfigDict(extra="ignore")
     type: Literal["hello"]
     rate: int = Field(default=16_000, ge=8_000, le=48_000)
+    speaker_rate: int = Field(default=SAMPLE_RATE, ge=8_000, le=48_000)
     profile: StrictBool = False
 
 
@@ -57,6 +58,11 @@ class VoiceSession:
             None
             if hello.rate == SAMPLE_RATE
             else soxr.ResampleStream(hello.rate, SAMPLE_RATE, 1, dtype="int16")
+        )
+        self.speaker = (
+            None
+            if hello.speaker_rate == SAMPLE_RATE
+            else soxr.ResampleStream(SAMPLE_RATE, hello.speaker_rate, 1, dtype="int16")
         )
         self.closed = False
         self.close_done = asyncio.Event()
@@ -141,10 +147,18 @@ class VoiceSession:
             await self.socket.send_text(json.dumps(event))
 
     async def send_audio(self, pcm: bytes) -> None:
-        if self.closed:
+        if self.closed or not pcm:
             return
         async with self.send_lock:
             await self.socket.send_bytes(pcm)
+
+    def for_speaker(self, pcm: bytes, last: bool = False) -> bytes:
+        if self.speaker is None:
+            return pcm
+        out = self.speaker.resample_chunk(np.frombuffer(pcm, dtype="<i2"), last=last)
+        if last:
+            self.speaker.clear()
+        return out.tobytes()
 
     async def start_turn(self) -> None:
         async with self.turn_lock:
@@ -153,6 +167,8 @@ class VoiceSession:
             self.turn = turn
             if self.resampler is not None:
                 self.resampler.clear()
+            if self.speaker is not None:
+                self.speaker.clear()
             self.turn_task = self.spawn(self.transcribe(turn))
         await self.send({"type": "turn", "turn_id": turn.id})
 
@@ -238,7 +254,7 @@ class VoiceSession:
             self.playhead = max(self.playhead, clock()) + len(chunk) / (
                 SAMPLE_RATE * SAMPLE_BYTES
             )
-            await self.send_audio(chunk)
+            await self.send_audio(self.for_speaker(chunk))
             await asyncio.sleep(max(0, self.playhead - clock() - REPLY_LEAD_SECONDS))
 
     async def wait_for_playout(self) -> None:
@@ -306,6 +322,8 @@ class VoiceSession:
                         async for pcm in stream:
                             turn.timing.mark("tts_first_audio")
                             await self.play(pcm, turn)
+            if self.turn is turn:
+                await self.send_audio(self.for_speaker(b"", last=True))
             turn.timing.mark("tts_completed")
             await self.wait_for_playout()
             turn.timing.mark("reply_playout_done")

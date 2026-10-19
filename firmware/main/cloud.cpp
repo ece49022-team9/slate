@@ -17,6 +17,7 @@
 #include "device_command.h"
 #include "mic.h"
 #include "perf.h"
+#include "speaker.h"
 
 struct CloudEvent {
   SlateState state;
@@ -138,6 +139,7 @@ static void receive_text(uint8_t* payload, size_t length) {
     active_turn = false;
     finish_at = 0;
     reply_bytes = 0;
+    speaker_flush();
     slate_request_state(IDLE);
   }
 }
@@ -153,6 +155,7 @@ static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
     hello["type"] = "hello";
     hello["mcu"] = "esp32-wroom-32";
     hello["rate"] = MIC_SAMPLE_HZ;
+    hello["speaker_rate"] = SPEAKER_RATE;
     send_json(hello);
     if (slate_get_state() == SLATE_LISTEN) {
       active_turn = recording = true;
@@ -165,6 +168,7 @@ static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
     turn_id = "";
     finish_at = 0;
     reply_bytes = 0;
+    speaker_flush();
     Serial.printf("slate.cloud: disconnected %.*s\n", int(length), payload ? reinterpret_cast<char*>(payload) : "");
     socket.setReconnectInterval(retry_ms);
     retry_ms = min(retry_ms * 2, 30000UL);
@@ -174,6 +178,7 @@ static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
   } else if (type == WStype_BIN) {
     if (active_turn || slate_get_state() == SLATE_RESPOND) {
       reply_bytes += length;
+      speaker_play(payload, length);
       if (finish_at) finish_at = millis() + 1000;
     }
   } else if (type == WStype_ERROR) {
@@ -422,6 +427,7 @@ static void cloud_task(void* starter) {
       } else if (event.state == SLATE_LISTEN) {
         finish_at = error_at = 0;
         reply_bytes = 0;
+        speaker_flush();
         turn_id = "";
         active_turn = recording = true;
         send_type("start");
