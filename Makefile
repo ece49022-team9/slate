@@ -1,4 +1,4 @@
-.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision monitor ports sim-setup sim sim-check sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile
+.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision monitor ports sim-setup sim sim-check sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile duplex-profile cost-profile
 
 FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
@@ -120,6 +120,12 @@ agent-status:
 
 voice-profile:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_voice.py --repeats $(or $(REPEATS),3)
+
+duplex-profile:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m scripts.profile_live $(if $(API_URL),--api-url $(API_URL)) --repeats $(or $(REPEATS),3) --interruptions $(or $(INTERRUPTIONS),2) --echo $(or $(ECHO),0)
+
+cost-profile:
+	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -u -m scripts.profile_cost $(if $(API_URL),--api-url $(API_URL))
 
 agent-e2e:
 	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --browser --memory --voice
