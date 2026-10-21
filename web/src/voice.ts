@@ -55,22 +55,7 @@ export class VoiceConnection {
       this.session = body as Session
       if (this.closed) throw new Error('Connection closed')
       this.room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-        if (topic !== 'slate.transcript' || participant?.identity !== this.session?.worker_identity) return
-        try {
-          const event = JSON.parse(new TextDecoder().decode(payload)) as Transcript
-          if (event.turn_id !== this.turn || this.closed) return
-          if (event.error) this.onError(event.error)
-          if (typeof event.text === 'string') this.onTranscript(event.text, event.final === true)
-          if (event.final || event.error) {
-            this.turn = undefined
-            this.recording = false
-            clearTimeout(this.timer)
-            void this.microphone?.mute().catch((error) => this.fail(error))
-            this.onState('ready')
-          }
-        } catch (error) {
-          console.error('[slate.voice] Invalid transcript event', error)
-        }
+        this.receiveTranscript(payload, participant?.identity, topic)
       })
       this.room.on(RoomEvent.Disconnected, () => {
         if (!this.closed) void this.fail(new Error('Session ended. Connect again to continue.'))
@@ -83,6 +68,25 @@ export class VoiceConnection {
     } catch (error) {
       if (!this.closed) this.onError(error instanceof Error ? error.message : 'Could not connect your microphone')
       await this.disconnect()
+    }
+  }
+
+  private receiveTranscript(payload: Uint8Array, identity?: string, topic?: string): void {
+    if (topic !== 'slate.transcript' || identity !== this.session?.worker_identity) return
+    try {
+      const event = JSON.parse(new TextDecoder().decode(payload)) as Transcript
+      if (event.turn_id !== this.turn || this.closed) return
+      if (event.error) this.onError(event.error)
+      if (typeof event.text === 'string') this.onTranscript(event.text, event.final === true)
+      if (event.final || event.error) {
+        this.turn = undefined
+        this.recording = false
+        clearTimeout(this.timer)
+        void this.microphone?.mute().catch((error) => this.fail(error))
+        this.onState('ready')
+      }
+    } catch (error) {
+      console.error('[slate.voice] Invalid transcript event', error)
     }
   }
 
