@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ from pathlib import Path
 import modal
 
 from slate.agent import runtime
+from slate.agent.agent import Agent
 from slate.board import ROOT
 
 logger = logging.getLogger("slate.cloud")
@@ -76,13 +78,26 @@ image = (
 )
 
 
+def skip_skill_images(directory: str, names: list[str]) -> list[str]:
+    return [name for name in names if Path(name).suffix.lower() == ".png"]
+
+
 def restore() -> None:
     for name in (*KEPT_FILES, *KEPT_DATABASES):
         if (SAVED / name).exists():
             shutil.copyfile(SAVED / name, runtime.PROFILE / name)
     for name in KEPT_DIRS:
         if (SAVED / name).exists():
-            shutil.copytree(SAVED / name, runtime.PROFILE / name, dirs_exist_ok=True)
+            shutil.copytree(
+                SAVED / name,
+                runtime.PROFILE / name,
+                dirs_exist_ok=True,
+                ignore=skip_skill_images if name == "skills" else None,
+            )
+    for path in (runtime.PROFILE / "skills").rglob("*"):
+        if path.is_file() and path.suffix.lower() == ".png":
+            path.unlink()
+            logger.info("slate.cloud: removed PNG from Hermes skill sync: %s", path)
     logger.info("slate.cloud: restored Hermes state from the volume")
 
 
@@ -93,7 +108,12 @@ def save() -> None:
             shutil.copyfile(runtime.PROFILE / name, SAVED / name)
     for name in KEPT_DIRS:
         if (runtime.PROFILE / name).exists():
-            shutil.copytree(runtime.PROFILE / name, SAVED / name, dirs_exist_ok=True)
+            shutil.copytree(
+                runtime.PROFILE / name,
+                SAVED / name,
+                dirs_exist_ok=True,
+                ignore=skip_skill_images if name == "skills" else None,
+            )
     with tempfile.TemporaryDirectory() as scratch:
         for name in KEPT_DATABASES:
             if not (runtime.PROFILE / name).exists():
@@ -130,6 +150,25 @@ def wait_for_port(port: int, process: subprocess.Popen, seconds: float) -> None:
     raise RuntimeError(f"slate.cloud: nothing answered on port {port}")
 
 
+async def warm_up() -> None:
+    started = time.monotonic()
+    try:
+        agent = Agent(
+            instructions="Reply with OK. Do not use tools or save memories.",
+        )
+        try:
+            async with asyncio.timeout(120):
+                await agent.run("Reply with OK.")
+        finally:
+            await agent.close()
+    except Exception:
+        logger.exception("slate.cloud: Hermes warm-up failed; continuing startup")
+    else:
+        logger.info(
+            "slate.cloud: Hermes warm-up took %.1f s", time.monotonic() - started
+        )
+
+
 @app.cls(
     image=image,
     volumes={DATA: state},
@@ -164,6 +203,7 @@ class Slate:
         ]
         wait_for_port(8642, self.processes[0], 120)
         logger.info("slate.cloud: Hermes gateway ready")
+        asyncio.run(warm_up())
         self.stopping = threading.Event()
         self.saver = threading.Thread(target=keep_saving, args=(self.stopping,))
         self.saver.start()
