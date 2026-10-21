@@ -1,7 +1,8 @@
-.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision monitor ports sim-setup sim sim-check sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile
+.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision monitor ports sim-setup sim sim-check sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile duplex-profile cost-profile
 
 FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
+MODAL := env -u MODAL_TOKEN_ID -u MODAL_TOKEN_SECRET MODAL_PROFILE=$(MODAL_PROFILE)
 INPUT ?= .local/voice-check.wav
 ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
 PORT ?= $(if $(filter 1,$(words $(ESP32_PORTS))),$(firstword $(ESP32_PORTS)))
@@ -11,13 +12,13 @@ setup:
 	npm --prefix web ci
 
 cloud-setup:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.cloud setup
+	doppler run --only-secrets OPENAI_API_KEY -- $(MODAL) uv run python -m slate.cloud setup
 
 cloud-deploy:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.cloud deploy
+	$(MODAL) uv run python -m slate.cloud deploy
 
 cloud-logs:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run modal app logs slate
+	$(MODAL) uv run modal app logs slate
 
 web:
 	npm --prefix web run dev
@@ -82,20 +83,20 @@ device-check:
 	uv run python scripts/check_device.py
 
 device-code-check:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_device_code.py
+	$(MODAL) uv run python scripts/check_device_code.py
 
 device-code-profile:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_device_code.py --layer $(or $(LAYER),exec)
+	$(MODAL) uv run python scripts/profile_device_code.py --layer $(or $(LAYER),exec)
 
 sim-voice:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.voice firmware "$(INPUT)"
+	$(MODAL) uv run python -m slate.voice firmware "$(INPUT)"
 
 voice-deploy:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run modal deploy -m slate.voice.stt
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run modal deploy -m slate.voice.tts
+	$(MODAL) uv run modal deploy -m slate.voice.stt
+	$(MODAL) uv run modal deploy -m slate.voice.tts
 
 voice-check:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.voice check
+	$(MODAL) uv run python -m slate.voice check
 
 agent-setup:
 	uv run python -m slate.agent.runtime setup
@@ -104,25 +105,31 @@ agent-login:
 	uv run python -m slate.agent.runtime login
 
 agent:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.agent.runtime start
+	$(MODAL) uv run python -m slate.agent.runtime start
 
 browser:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal run
+	$(MODAL) uv run python -m slate.browser.modal run
 
 browser-stop:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python -m slate.browser.modal stop
+	$(MODAL) uv run python -m slate.browser.modal stop
 
 agent-check:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py
+	$(MODAL) uv run python scripts/check_agent.py
 
 agent-status:
 	uv run python scripts/check_agent.py --status
 
 voice-profile:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/profile_voice.py --repeats $(or $(REPEATS),3)
+	$(MODAL) uv run python scripts/profile_voice.py --repeats $(or $(REPEATS),3)
+
+duplex-profile:
+	$(MODAL) uv run python -m scripts.profile_live $(if $(API_URL),--api-url $(API_URL)) --repeats $(or $(REPEATS),3) --interruptions $(or $(INTERRUPTIONS),2) --echo $(or $(ECHO),0)
+
+cost-profile:
+	$(MODAL) uv run python -u -m scripts.profile_cost $(if $(API_URL),--api-url $(API_URL))
 
 agent-e2e:
-	MODAL_PROFILE=$(MODAL_PROFILE) uv run python scripts/check_agent.py --browser --memory --voice
+	$(MODAL) uv run python scripts/check_agent.py --browser --memory --voice
 
 agent-managed:
 	doppler run -- uv run python scripts/check_managed.py --browser

@@ -108,10 +108,16 @@ A device opens one WebSocket to `wss://<service>/api/device/socket` with `Author
 | --- | --- |
 | Device → Slate | `{"type":"hello","rate":16000,"speaker_rate":16000}` first; the server resamples the mic to 24 kHz and reply speech to `speaker_rate` |
 | Device → Slate | `{"type":"start"}`, binary mic frames, then `{"type":"end"}`; `{"type":"cancel"}` discards the turn |
+| Device → Slate | `{"type":"live"}` starts a live call and `{"type":"hangup"}` ends it; mic frames stream the whole call |
 | Device → Slate | `{"type":"receipt", ...}` for each command, with the firmware's state or an `error` |
 | Slate → device | `turn`, `transcript` and `reply` (`text`, `final`), `tool`, `approval`, `error`, `cancelled`, each with `turn_id` |
 | Slate → device | `{"type":"command","request_id","operation","arguments"}` for `set_orb`, `show_text`, `get_status` |
 | Slate → device | binary reply speech at `speaker_rate`, sent about 0.2 s ahead of playback |
+| Slate → device | `live` with `state` `started` or `ended` (`seconds`, maybe `error`), and `heard` and `said` word deltas, each with `call_id` |
+
+A live call runs GPT-Live in the service. GPT-Live listens the whole time, decides when the user has finished and when to stop talking, and hands questions and tasks to Hermes. Each handoff gets the words said since the previous one, plus the device scope and approvals of a turn of its own; GPT-Live speaks the part of Hermes's answer before `---`. If GPT-Live's connection drops, the call starts a new session seeded with the conversation so far. Background results arriving during a call are given to GPT-Live to say. Its voice prompt is [live.md](server/slate/voice/live.md), and it needs `OPENAI_API_KEY`, which `make cloud-setup` copies from Doppler into the Modal secret.
+
+`GET /api/voice/reports`, with the device token, returns timing, usage, and words for the connected device's recent turns and live calls, including a call in progress. `SLATE_PROFILE=1` on the service adds speech-model timings to turn reports.
 
 One device is connected at a time; a new connection replaces the old one. Recordings are limited to two minutes. To send a recording as a device, without QEMU:
 
@@ -156,7 +162,7 @@ make sim-check  # run the simulator checks
 make bench      # flash the board and run the hardware checks
 ```
 
-`make flash` and `make monitor` pick the board automatically when exactly one USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>`. Over serial, send `0` through `5` for idle, listen, mute, transcribe, respond, or error; `l`, `r`, or `m` (while idle) to pick the left mic, right mic, or their mix; `a` or `x` to turn audio streaming on or off; and `t` to play a one-second 440 Hz speaker test without blocking the mic or display. In listen, the firmware prints the mic's sample count, RMS, and peak every half second. With streaming on, it also sends the filtered mic audio as binary frames: a zero byte, a two-byte little-endian length, then 16-bit samples. Text never contains a zero byte, so the host can tell them apart. The ROM's boot messages use 115200 baud and look garbled at 921600.
+`make flash` and `make monitor` pick the board automatically when exactly one USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>`. Over serial, send `0` through `5` for idle, listen, mute, transcribe, respond, or error; `l`, `r`, or `m` (while idle) to pick the left mic, right mic, or their mix; `a` or `x` to turn audio streaming on or off; `t` to play a one-second 440 Hz speaker test without blocking the mic or display; and `c` to start or end a live call. In listen, the firmware prints the mic's sample count, RMS, and peak every half second. With streaming on, it also sends the filtered mic audio as binary frames: a zero byte, a two-byte little-endian length, then 16-bit samples. Text never contains a zero byte, so the host can tell them apart. The ROM's boot messages use 115200 baud and look garbled at 921600.
 
 The firmware reaches the cloud on its own. Provisioning is stored in flash and sent over serial: `!net wifi <ssid> <password>` on the board or `!net eth` in QEMU, then `!cloud <wss URL> <device token>`. `make provision SSID=<name> PASSWORD=<password>` sends both to a connected board using `.local/cloud.json`; names and passwords with spaces are not supported yet. Above the network driver the code is the same on both: TLS pinned to the ISRG roots, the WebSocket client, and the protocol above, in its own FreeRTOS task. Entering listen sends `start` and streams the selected mic; leaving it for transcribe sends `end`. The firmware logs `slate.transcript:`, `slate.reply:`, and `slate.reply.audio:`, and plays the reply speech on the speaker.
 
@@ -186,7 +192,7 @@ QEMU boots the exact image `make flash` writes. Python plays the parts on the br
 
 QEMU runs the same 520 KB SRAM map, the WROOM-32's 4 MB flash, and no PSRAM, so heap and stack limits are the real ones. Its CPU is not cycle-accurate: every instruction costs 4 ns, with no flash cache misses or wait states. `make calibrate-sim` runs the same workload on the board and in QEMU and writes the hardware/QEMU timing ratios to `firmware/sim_calibration.toml`; the simulator check scales its timings by those ratios. Until then it reports timing as uncalibrated. `make bench` applies the same budgets to the board's own report.
 
-`make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Click **Enable speaker audio** to hear firmware output through your computer, or **Test speaker output** to capture and play the full test tone. Speaker mute and volume are independent of mic input. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
+`make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Click **Enable speaker audio** to hear firmware output through your computer, or **Test speaker output** to capture and play the full test tone. Speaker mute and volume are independent of mic input. Type `c` in the serial box to start or end a live call; the firmware streams the mic for the whole call and plays the call's speech on the speaker. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
 
 Speaker playback uses 16 kHz, 16-bit stereo PCM, resampled to your output device’s rate with bounded buffers. The test captures the complete tone before playback so slow emulation does not break it into beeps. `node tests/test_speaker_worklet.cjs` checks browser playback without audio hardware. QEMU checks DMA output; physical wiring, amplifier power, and I2S pin timing still need a hardware check. Rebuild with `make sim-setup` if your QEMU predates speaker support.
 
@@ -195,6 +201,8 @@ To send audio through the simulated firmware, the cloud agent, and the real spee
 ```sh
 make sim-voice
 ```
+
+`make duplex-profile` compares live calls with push to talk on the simulated firmware: the time from the end of the spoken question to Slate's first sound and to its answer, and, with "Wait, stop." spoken over a longer answer, how long Slate keeps talking. `ECHO=0.6` adds the speaker echo. `make cost-profile` runs the same 15-turn conversation through both and prices it; run the service with `SLATE_PROFILE=1` for the speech-model timings. Both use the deployed service, or `API_URL=http://127.0.0.1:8000` for one on the Mac, which the firmware reaches at 10.0.2.2. Results go to `experiments/progress.jsonl`.
 
 Pass `INPUT=path/to/speech.wav` to use a different recording. The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` on the underlying Python command picks left (default), right, or mix. The command boots QEMU, waits for the firmware to connect to the cloud, plays the WAV into its mic model while holding listen, and prints the transcript, the reply, and how much speech the firmware received. Haptics are not started until their pins are confirmed.
 

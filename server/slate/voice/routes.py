@@ -2,7 +2,7 @@ import hmac
 import logging
 import os
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
 from slate.voice.session import Hello
@@ -25,11 +25,29 @@ def credential(socket: WebSocket) -> tuple[str, str | None]:
     return "", None
 
 
+def device_token(token: str) -> bool:
+    expected = os.environ.get("SLATE_DEVICE_TOKEN", "")
+    return bool(expected) and hmac.compare_digest(token.encode(), expected.encode())
+
+
+@router.get("/voice/reports")
+async def reports(request: Request) -> dict[str, dict]:
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not device_token(token):
+        raise HTTPException(401, "Send the device token as a bearer token")
+    session = request.app.state.voice.current
+    if session is None:
+        return {}
+    found = dict(session.reports)
+    if session.call is not None:
+        found[session.call.id] = session.call.report()
+    return found
+
+
 @router.websocket("/device/socket")
 async def device_socket(socket: WebSocket) -> None:
-    expected = os.environ.get("SLATE_DEVICE_TOKEN", "")
     token, protocol = credential(socket)
-    if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
+    if not device_token(token):
         logger.warning("Rejected device socket: missing or wrong device token")
         await socket.close(4401, "Unauthorized device")
         return
