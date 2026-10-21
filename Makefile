@@ -1,4 +1,4 @@
-.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision monitor ports sim-setup sim sim-check sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile duplex-profile cost-profile
+.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision pair monitor ports sim-setup sim sim-check sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile duplex-profile cost-profile
 
 FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
@@ -50,6 +50,10 @@ provision:
 	@test -n "$(SSID)" || (printf 'Pass SSID=<wifi name> PASSWORD=<wifi password>\n' >&2; exit 1)
 	uv run python scripts/provision.py "$(PORT)" --ssid "$(SSID)" --password "$(PASSWORD)"
 
+pair:
+	@test -n "$(SSID)" || (printf 'Pass SSID=<wifi name> PASSWORD=<wifi password>\n' >&2; exit 1)
+	uv run python scripts/ble_setup.py --ssid "$(SSID)" --password "$(PASSWORD)"
+
 monitor:
 	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make monitor PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
 	uv tool run --from platformio==6.2.0 pio device monitor -d firmware -p "$(PORT)" -b 921600
@@ -75,6 +79,7 @@ sim-check:
 	uv run python scripts/check_device.py
 	uv run python scripts/check_resources.py
 	uv run python scripts/check_cloud_link.py
+	uv run python scripts/check_ble_setup.py
 
 sim-speaker-check:
 	uv run python scripts/check_speaker.py
