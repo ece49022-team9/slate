@@ -82,7 +82,7 @@ void setup() {
   oled_start();
   Serial.printf("slate.boot: OLED on CLK=%d MOSI=%d CS=%d DC=%d RESET=%d at %u Hz\n",
                 OLED_CLK, OLED_DATA, OLED_CS, OLED_DC, OLED_RESET, OLED_SPI_HZ);
-  Serial.println("slate.boot: Send 0-5 to change state, l/r/m to pick a mic, a/x to stream audio, t to test speaker");
+  Serial.println("slate.boot: Send 0-5 to change state, l/r/m to pick a mic, a/x to stream audio, t to test speaker, c to toggle a live call");
   Serial.println("slate.state: 0");
 }
 
@@ -150,6 +150,8 @@ void loop() {
         speaker_test_running.store(false);
         Serial.println("slate.speaker: could not start test");
       }
+    } else if (key == 'c') {
+      cloud_toggle_live();
     }
   }
   SlateState state = slate_get_state();
@@ -157,7 +159,7 @@ void loop() {
     Serial.printf("slate.state: %u\n", static_cast<unsigned>(state));
     reported_state = state;
   }
-  if (state == SLATE_LISTEN || state == SLATE_TRANSCRIBE) {
+  if (cloud_live() || state == SLATE_LISTEN || state == SLATE_TRANSCRIBE) {
     int16_t samples[MIC_FRAME_SAMPLES];
     size_t count;
     while ((count = mic_read(samples, MIC_FRAME_SAMPLES)) > 0) {
