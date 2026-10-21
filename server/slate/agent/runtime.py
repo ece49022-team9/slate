@@ -109,7 +109,7 @@ def write_profile(key: str, host: str = "127.0.0.1") -> None:
     cfg = settings()
     config.update(
         model={"default": cfg["model"], "provider": cfg["provider"]},
-        agent={"max_turns": "unlimited"},
+        agent={"max_turns": "unlimited", "execution_guidance": False},
         auth={"adopt_external_logins": False},
     )
     config.setdefault("browser", {})["backend"] = "off"

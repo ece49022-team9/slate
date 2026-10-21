@@ -13,6 +13,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from slate.agent.code_mode import (
     DeviceClient,
     MontyExecutor,
+    PythonExecutor,
     Runner,
     SandboxExecutor,
 )
@@ -257,9 +258,43 @@ class CodeModeTests(DeviceFixture):
             ):
                 server = build_server(mode=mode)
                 tools = await server.list_tools()
-                self.assertEqual({tool.name for tool in tools}, names)
+                self.assertEqual({tool.name for tool in tools}, names | {"run_python"})
                 for tool in tools:
-                    self.assertIn("scope", tool.input_schema["properties"])
+                    if tool.name != "run_python":
+                        self.assertIn("scope", tool.input_schema["properties"])
+
+
+class PythonExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_print_and_result(self):
+        result = await PythonExecutor().execute("print(7 + 5)\n[3, 1, 2]")
+        self.assertEqual(
+            result, {"status": "completed", "result": [3, 1, 2], "output": "12\n"}
+        )
+
+    async def test_host_capabilities_are_unavailable(self):
+        for code in (
+            "open('/etc/passwd').read()",
+            "import socket\nsocket.socket()",
+            "import os\nos.environ",
+            "device.get_status()",
+        ):
+            with self.subTest(code=code):
+                result = await PythonExecutor().execute(code)
+                self.assertEqual(result["status"], "error")
+
+    async def test_timeout_and_output_limits(self):
+        executor = PythonExecutor(max_duration=0.01, max_output=32)
+        for code in ("while True:\n    pass", "print('x' * 100)", "'x' * 100"):
+            with self.subTest(code=code):
+                async with asyncio.timeout(4):
+                    result = await executor.execute(code)
+                self.assertEqual(result["status"], "error")
+        self.assertEqual((await executor.execute("7 + 5"))["result"], 12)
+
+    async def test_calls_do_not_share_state(self):
+        executor = PythonExecutor()
+        await executor.execute("saved = 12")
+        self.assertEqual((await executor.execute("saved"))["status"], "error")
 
 
 class LocalDeviceHTTPTests(unittest.IsolatedAsyncioTestCase):

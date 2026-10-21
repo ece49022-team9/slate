@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic_ns
 from uuid import uuid4
@@ -16,8 +17,13 @@ logger = logging.getLogger("slate.agent")
 Progress = Callable[[dict], Awaitable[None]]
 INSTRUCTIONS = (
     "You are Slate, a personal voice assistant. Use tools when needed, and report "
-    "their actual results. Begin your final answer with one or two sentences to "
-    "speak aloud. If the full answer needs more, put it after a line containing only "
+    "their actual results. Before claiming a message was sent or an action finished, "
+    "read back the target or check its receipt. Carry multi-step tasks through to "
+    "their result. Answer simple facts and math you know directly. Use run_python "
+    "for calculations or data shaping you are unsure about; use the Modal terminal "
+    "for packages, files, or internet access. Begin your final answer with one or "
+    "two sentences to speak aloud. If the full answer needs more, put it after a "
+    "line containing only "
     "---; Slate shows that part on screen without speaking it. Do not speak progress "
     "messages or private reasoning. For work that will take more than about a "
     "minute, such as research, multi-step browsing, or coding, start it with "
@@ -88,13 +94,14 @@ class Agent:
                 )
                 self.session_id = created["session"]["id"]
             self._timings["session_ready"] = monotonic_ns()
+            context = "Current date and time: " + datetime.now(UTC).isoformat()
             payload = {
                 "input": message,
                 "session_id": self.session_id,
                 "instructions": (
-                    self.instructions + "\n\n" + device_context
+                    self.instructions + "\n\n" + context + "\n\n" + device_context
                     if device_context
-                    else self.instructions
+                    else self.instructions + "\n\n" + context
                 ),
                 "provider": self.provider,
                 "model": self.model,

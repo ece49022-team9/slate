@@ -172,6 +172,54 @@ def failed(kind: str, message: str, output: str, calls: list, limit: int) -> dic
     }
 
 
+class PythonExecutor:
+    def __init__(
+        self,
+        *,
+        max_duration: float = 1,
+        max_memory: int = 32 * 1024 * 1024,
+        max_output: int = 16_384,
+        timeout: float = 15,
+    ) -> None:
+        self.max_output = max_output
+        self.timeout = timeout
+        self.limits = {
+            "max_feed_duration_secs": max_duration,
+            "max_turn_duration_secs": max_duration,
+            "max_memory": max_memory,
+            "max_recursion_depth": 100,
+            "max_suspensions": 256,
+            "max_total_sleep_secs": 0,
+        }
+
+    async def execute(self, code: str) -> dict:
+        output = CollectStreams(max_bytes=self.max_output)
+        try:
+            async with asyncio.timeout(self.timeout):
+                validate_code(code)
+                async with AsyncMonty(max_processes=1, request_timeout=3) as pool:
+                    async with pool.checkout(limits=self.limits) as session:
+                        value = await session.feed_run(code, print_callback=output)
+                text = "".join(text for _, text in output.output)
+                if len(json.dumps(value, allow_nan=False).encode()) > self.max_output:
+                    raise ValueError("Code result exceeds the output limit")
+                if len(text.encode()) > self.max_output:
+                    raise ValueError("Printed output exceeds the output limit")
+                return {"status": "completed", "result": value, "output": text}
+        except Exception as error:
+            logger.warning("slate.agent: Python tool failed: %s", type(error).__name__)
+            return {
+                "status": "error",
+                "error": {
+                    "type": type(error).__name__,
+                    "message": str(error)
+                    .encode()[: self.max_output]
+                    .decode(errors="ignore"),
+                },
+                "output": "".join(text for _, text in output.output),
+            }
+
+
 class MontyExecutor:
     def __init__(
         self,

@@ -1,8 +1,10 @@
 import asyncio
 import json
 import sys
+import tempfile
 import unittest
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from time import monotonic_ns
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -112,7 +114,9 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(admitted[0]["input"], "Adjust it")
         self.assertTrue(admitted[0]["instructions"].endswith("scope=current"))
         await agent.run("Another turn")
-        self.assertEqual(admitted[1]["instructions"], agent.instructions)
+        self.assertTrue(admitted[1]["instructions"].startswith(agent.instructions))
+        self.assertIn("Current date and time: ", admitted[1]["instructions"])
+        self.assertNotIn("scope=current", admitted[1]["instructions"])
         self.assertNotIn("scope=current", repr(agent.timings))
 
     async def test_failed_run_with_deltas_cannot_emit_a_complete_answer(self):
@@ -587,6 +591,17 @@ class AgentContractTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentRuntimeTests(unittest.TestCase):
+    def test_profile_disables_execution_guidance(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(agent_runtime, "PROFILE", Path(directory)),
+            patch.object(agent_runtime, "install_guard"),
+        ):
+            agent_runtime.write_profile("test-key")
+            config = json.loads((Path(directory) / "config.yaml").read_text())
+        self.assertIs(config["agent"]["execution_guidance"], False)
+        self.assertIn("mcp-slate-device", config["platform_toolsets"]["api_server"])
+
     def test_device_mcp_config_preserves_credentials_and_other_servers(self):
         config = {
             "gateway": {"api_server": {"key": "existing-credential"}},
