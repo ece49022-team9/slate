@@ -10,6 +10,7 @@ from slate.agent.code_mode import (
     DeviceClient,
     ModalSandbox,
     MontyExecutor,
+    PythonExecutor,
     SandboxExecutor,
 )
 from slate.device import DeviceStatus
@@ -41,6 +42,21 @@ def build_server(*, mode: str | None = None) -> MCPServer:
             yield
 
     server = MCPServer("Slate device", lifespan=lifespan)
+    python = PythonExecutor()
+
+    @server.tool(
+        name="run_python",
+        description=(
+            "Run a short Python calculation or data transformation in Monty. "
+            "No device, files, network, packages, or secrets. Each call starts fresh. "
+            "Print output or return a final expression. Limited to 1 second of Python, "
+            "32 MiB of memory, and 16384 bytes each of code, output, and result."
+        ),
+        structured_output=True,
+    )
+    async def run_python(code: str) -> dict[str, Any]:
+        return await python.execute(code)
+
     if selected == "tools":
 
         @server.tool(
