@@ -141,29 +141,21 @@ async def run_exec(args, fixture) -> list[dict]:
             )
             return structured(await tools.call_tool("device_get_status", arguments))
 
-        def mcp_code(mode):
-            async def run(work):
-                result = await sessions[mode].call_tool(
-                    "execute_device_code",
-                    {"scope": fixture.turn.scope, "code": program(work)},
-                )
-                return code_status(structured(result))
+        async def mcp_monty(work):
+            result = await sessions["monty"].call_tool(
+                "execute_device_code",
+                {"scope": fixture.turn.scope, "code": program(work)},
+            )
+            return code_status(structured(result))
 
-            return run
-
-        async def in_process(executor):
-            async def run(work):
-                return code_status(
-                    await executor.execute(fixture.turn.scope, program(work))
-                )
-
-            return run
+        async def in_process(work):
+            return code_status(await monty.execute(fixture.turn.scope, program(work)))
 
         arms = {
             "exec/tools": direct,
-            "exec/monty": await in_process(monty),
+            "exec/monty": in_process,
             "mcp/tools": mcp_tools,
-            "mcp/monty": mcp_code("monty"),
+            "mcp/monty": mcp_monty,
         }
         names = list(arms)
         rows = []
@@ -414,12 +406,10 @@ def summarize(rows: list[dict]) -> dict:
     return summary
 
 
-async def run_modal(args, fixture) -> list[dict]:
-    rows = []
+async def run_modal(args) -> list[dict]:
     async with device_code_bench.app.run():
         profile = device_code_bench.remote_profile.remote.aio
-        rows += await profile(args.rounds, args.warmup, args.cold)
-    return rows
+        return await profile(args.rounds, args.warmup, args.cold)
 
 
 async def run(args) -> None:
@@ -431,7 +421,7 @@ async def run(args) -> None:
         if args.layer in ("exec", "all"):
             rows += await run_exec(args, fixture)
         if args.layer in ("modal", "all"):
-            rows += await run_modal(args, fixture)
+            rows += await run_modal(args)
         if args.layer in ("agent", "all"):
             rows += await run_agent(args, fixture, directory)
     summary = summarize(rows)

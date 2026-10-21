@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Coroutine
-from contextlib import AsyncExitStack, aclosing
+from contextlib import aclosing
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -46,9 +46,6 @@ def spoken_part(text: str, final: bool) -> tuple[str, bool]:
 
 
 class VoiceSession:
-    """One connected device. Its WebSocket carries microphone audio and control
-    messages in, and transcripts, replies, speech and device commands out."""
-
     def __init__(self, socket: WebSocket, hello: Hello) -> None:
         self.socket = socket
         self.profile = hello.profile
@@ -460,9 +457,10 @@ class VoiceSession:
         for task in tasks:
             task.cancel()
         try:
-            async with AsyncExitStack() as cleanup:
-                cleanup.push_async_callback(self.agent.close)
+            try:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                await self.agent.close()
         finally:
             self.close_done.set()
 

@@ -64,7 +64,6 @@ async def describe(sandbox: modal.Sandbox) -> dict:
 
 
 async def live() -> dict:
-    """Connection details for the running browser, wherever its supervisor runs."""
     app = await modal.App.lookup.aio("slate-browser")
     async for sandbox in modal.Sandbox.list.aio(app_id=app.app_id, tags=TAGS):
         if await sandbox.poll.aio() is None:
@@ -141,7 +140,10 @@ async def run() -> None:
     try:
         while not stopping.is_set():
             try:
-                await ensure() if STATE.exists() else await start()
+                if STATE.exists():
+                    await ensure()
+                else:
+                    await start()
             except Exception:
                 logger.exception("slate.browser: could not start Modal Chromium")
             with suppress(TimeoutError):

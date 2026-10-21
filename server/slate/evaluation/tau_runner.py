@@ -288,7 +288,6 @@ async def trial(args, arm, directory, profile_config, hermes_environment, wait_r
             try:
                 if agent is not None:
                     await agent.close()
-                    await gateway_client.aclose()
                 if managed is not None:
                     try:
                         if session is not None:

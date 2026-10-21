@@ -56,8 +56,6 @@ def stereo_pcm(path: Path, slot: int = 0) -> bytes:
 
 
 def save_speaker(pcm: bytes) -> float:
-    """Save what the firmware drove onto the I2S speaker pins, trimmed to the
-    audible part, and return how many seconds of it were audible."""
     frames = np.frombuffer(pcm[: len(pcm) // 4 * 4], dtype="<i2").reshape(-1, 2)
     loud = np.flatnonzero(np.abs(frames).max(axis=1) > SPEAKER_FLOOR)
     if not loud.size:
@@ -71,8 +69,6 @@ def save_speaker(pcm: bytes) -> float:
 
 
 async def speak_turn(link: Link, channel: str, sound: Awaitable[None]) -> FirmwareTurn:
-    """Talk to the firmware the way a person would: hold Listen while speaking,
-    then release. The firmware streams to the cloud on its own."""
     link.type(KEYS[channel])
     await link.wait_for("slate.mic.channel:")
     transcript = asyncio.ensure_future(link.wait_for("slate.transcript:", 180))

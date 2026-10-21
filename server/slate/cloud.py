@@ -87,9 +87,6 @@ def restore() -> None:
 
 
 def save() -> None:
-    """Hermes keeps SQLite databases and lock files, which need a local disk, so
-    its home lives in the container and only its lasting state is copied to the
-    volume."""
     SAVED.mkdir(parents=True, exist_ok=True)
     for name in KEPT_FILES:
         if (runtime.PROFILE / name).exists():
@@ -147,8 +144,6 @@ def wait_for_port(port: int, process: subprocess.Popen, seconds: float) -> None:
 class Slate:
     @modal.enter()
     def start(self) -> None:
-        """Hermes runs as an ordinary Modal client with its own venv, so it gets
-        neither this container's Python path nor its container identity."""
         logging.basicConfig(level=logging.INFO)
         runtime.PROFILE.mkdir(parents=True, exist_ok=True)
         restore()

@@ -125,17 +125,13 @@ def append(entry: dict) -> None:
 def aggregate(rows: list[dict]) -> dict:
     if not rows:
         return {"trials": 0, "median_ms": {}}
-    return {
-        "trials": len(rows),
-        "median_ms": {
-            key: statistics.median(
-                row["metrics"][key] for row in rows if row["metrics"][key] is not None
-            )
-            if any(row["metrics"][key] is not None for row in rows)
-            else None
-            for key in rows[0]["metrics"]
-        },
-    }
+    medians = {}
+    for key in rows[0]["metrics"]:
+        values = [
+            row["metrics"][key] for row in rows if row["metrics"][key] is not None
+        ]
+        medians[key] = statistics.median(values) if values else None
+    return {"trials": len(rows), "median_ms": medians}
 
 
 async def run(args: argparse.Namespace) -> None:

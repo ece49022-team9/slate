@@ -43,21 +43,34 @@ def build_server(*, mode: str | None = None) -> MCPServer:
     server = MCPServer("Slate device", lifespan=lifespan)
     if selected == "tools":
 
-        @server.tool(name="device_set_orb", structured_output=True)
+        @server.tool(
+            name="device_set_orb",
+            description=(
+                "Set #RRGGBB orb, radius 10..45; return firmware acknowledgment."
+            ),
+            structured_output=True,
+        )
         async def set_orb(scope: str, color: str, radius: float = 24) -> DeviceStatus:
-            """Set #RRGGBB orb, radius 10..45; return firmware acknowledgment."""
             return DeviceStatus.model_validate(
                 await device.set_orb(scope, color, radius)
             )
 
-        @server.tool(name="device_show_text", structured_output=True)
+        @server.tool(
+            name="device_show_text",
+            description=(
+                "Show up to 64 printable ASCII characters; return firmware receipt."
+            ),
+            structured_output=True,
+        )
         async def show_text(scope: str, text: str) -> DeviceStatus:
-            """Show up to 64 printable ASCII characters; return firmware receipt."""
             return DeviceStatus.model_validate(await device.show_text(scope, text))
 
-        @server.tool(name="device_get_status", structured_output=True)
+        @server.tool(
+            name="device_get_status",
+            description="Read acknowledged firmware state for this active turn.",
+            structured_output=True,
+        )
         async def get_status(scope: str) -> DeviceStatus:
-            """Read acknowledged firmware state for this active turn."""
             return DeviceStatus.model_validate(await device.get_status(scope))
     else:
         description = (

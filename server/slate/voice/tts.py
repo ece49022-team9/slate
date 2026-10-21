@@ -90,7 +90,7 @@ class IncrementalMimiDecoder:
             if not module.causal or module.padding_left:
                 raise ValueError("slate.tts: streaming requires right-trimmed conv")
             stride = module.conv.stride[0]
-            width = (module.conv.kernel_size[0] - stride + stride - 1) // stride
+            width = (module.conv.kernel_size[0] - 1) // stride
             history = self.history.get(module)
             joined = hidden if history is None else torch.cat((history, hidden), dim=-1)
             self.history[module] = joined[..., -width:].clone() if width else None

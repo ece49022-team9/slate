@@ -380,10 +380,6 @@ class ModalSandbox:
 
 
 class SandboxExecutor:
-    """Runs agent code in a Modal sandbox. The sandbox calls the public device
-    routes itself, authorized by the turn scope, so device calls never pass back
-    through this process."""
-
     def __init__(
         self,
         device: DeviceClient,

@@ -59,9 +59,6 @@ class TurnTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FakeAgent:
-    """Stands in for Hermes at its HTTP boundary: it streams a reply and, when
-    asked, controls the device through the public scoped device route."""
-
     def __init__(self, reply="Twelve.", control=False) -> None:
         self.reply = reply
         self.control = control

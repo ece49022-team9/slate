@@ -59,8 +59,6 @@ def trim_transport_silence(pcm: bytes) -> bytes:
 
 
 class Display:
-    """The device's display state, standing in for firmware receipts."""
-
     def __init__(self) -> None:
         self.revision = 0
         self.color = "#4cc9f0"

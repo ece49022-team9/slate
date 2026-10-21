@@ -75,7 +75,6 @@ def stub_transport() -> httpx.MockTransport:
 
 @app.function(image=image, cpu=1.0, memory=1024, timeout=900)
 async def remote_profile(rounds: int, warmup: int, cold: int) -> list[dict]:
-    target = "stub"
     scope = "stub"
     client = httpx.AsyncClient(base_url="http://stub.local", transport=stub_transport())
     rows = []
@@ -98,7 +97,7 @@ async def remote_profile(rounds: int, warmup: int, cold: int) -> list[dict]:
             finally:
                 await executor.close()
 
-        arms = {f"modal-{target}/tools": direct, f"modal-{target}/monty": warm}
+        arms = {"modal-stub/tools": direct, "modal-stub/monty": warm}
         index = 50_000
         try:
             for round_index in range(warmup + rounds):
@@ -121,7 +120,7 @@ async def remote_profile(rounds: int, warmup: int, cold: int) -> list[dict]:
                 elapsed, status = await timed(fresh(work))
                 rows.append(
                     {
-                        "arm": f"modal-{target}/monty-new-process",
+                        "arm": "modal-stub/monty-new-process",
                         "round": trial,
                         "warmup": False,
                         "ms": elapsed,

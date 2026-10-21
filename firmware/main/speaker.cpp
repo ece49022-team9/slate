@@ -18,12 +18,11 @@ static std::atomic<bool> stopping{false};
 //static constexpr int SPEAKER_SD = 4;
 static constexpr size_t REPLY_BUFFER_BYTES = 8192;
 static constexpr size_t REPLY_BLOCK_SAMPLES = 128;
-static constexpr size_t REPLY_PREBUFFER_BYTES = SPEAKER_RATE * sizeof(int16_t) * 160 / 1000;
+static constexpr uint32_t REPLY_PREBUFFER_MS = 160;
+static constexpr size_t REPLY_PREBUFFER_BYTES =
+    SPEAKER_RATE * sizeof(int16_t) * REPLY_PREBUFFER_MS / 1000;
 static constexpr uint32_t REPLY_SETTLE_MS = 100;
 
-// Cloud replies arrive as mono PCM at SPEAKER_RATE. Playback starts once
-// 160 ms is buffered, or the stream goes quiet, so network jitter does not
-// leave gaps; each sample goes to both I2S slots.
 static void play_replies(void*) {
   int16_t mono[REPLY_BLOCK_SAMPLES];
   int16_t stereo[REPLY_BLOCK_SAMPLES * 2];

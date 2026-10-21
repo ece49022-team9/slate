@@ -399,16 +399,16 @@ static void cloud_task(void* starter) {
   xTaskNotifyGive(static_cast<TaskHandle_t>(starter));
   Provision command;
   CloudEvent event;
-  bool timed = false;
+  bool clock_started = false;
   for (;;) {
     while (xQueueReceive(provisions, &command, 0) == pdTRUE) {
       provision(command.line);
       memset(&command, 0, sizeof(command));
     }
     if (network_up.load()) {
-      if (!timed) {
+      if (!clock_started) {
         configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
-        timed = true;
+        clock_started = true;
       }
       if (url.length() && token.length() && !configured) {
         configured = configure_socket();

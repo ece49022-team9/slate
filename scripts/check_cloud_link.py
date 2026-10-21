@@ -129,7 +129,8 @@ async def offline(realtime: bool) -> None:
                     frames = []
                     async with asyncio.timeout(20):
                         while not any(
-                            any(struct.unpack(f"<{len(f) // 2}h", f)) for f in frames
+                            any(struct.unpack(f"<{len(frame) // 2}h", frame))
+                            for frame in frames
                         ):
                             frame = await socket.recv()
                             if isinstance(frame, bytes):
