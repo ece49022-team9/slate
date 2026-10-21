@@ -1,48 +1,48 @@
+import hmac
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+
+from slate.voice.session import Hello
 
 logger = logging.getLogger("slate.voice.api")
-router = APIRouter(prefix="/voice", tags=["voice"])
+router = APIRouter(tags=["voice"])
+BROWSER_PROTOCOL = "slate"
 
 
-class SessionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+def credential(socket: WebSocket) -> tuple[str, str | None]:
+    scheme, _, token = socket.headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "bearer" and token:
+        return token, None
+    offered = [
+        part.strip()
+        for part in socket.headers.get("sec-websocket-protocol", "").split(",")
+    ]
+    if len(offered) == 2 and offered[0] == BROWSER_PROTOCOL:
+        return offered[1], BROWSER_PROTOCOL
+    return "", None
 
 
-class SessionResponse(BaseModel):
-    session_id: str
-    server_url: str
-    participant_token: str
-    worker_identity: str
-
-
-def require_local(request: Request) -> None:
-    if request.client is None or request.client.host not in ("127.0.0.1", "::1"):
-        raise HTTPException(
-            403, "Microphone sessions are local-only during development"
-        )
-    origin = request.headers.get("origin")
-    if origin and origin not in ("http://127.0.0.1:5173", "http://localhost:5173"):
-        raise HTTPException(403, "Unknown browser origin")
-
-
-@router.post("/sessions", response_model=SessionResponse)
-async def create_session(body: SessionRequest, request: Request, response: Response):
-    require_local(request)
-    response.headers["Cache-Control"] = "no-store"
+@router.websocket("/device/socket")
+async def device_socket(socket: WebSocket) -> None:
+    expected = os.environ.get("SLATE_DEVICE_TOKEN", "")
+    token, protocol = credential(socket)
+    if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
+        logger.warning("Rejected device socket: missing or wrong device token")
+        await socket.close(4401, "Unauthorized device")
+        return
+    await socket.accept(subprotocol=protocol)
     try:
-        return await request.app.state.voice.create()
-    except ValueError as error:
-        raise HTTPException(409, str(error)) from error
-    except Exception as error:
-        logger.exception("Could not start microphone session")
-        raise HTTPException(503, "LiveKit is unavailable. Run make livekit.") from error
-
-
-@router.delete("/sessions/{session_id}", status_code=204)
-async def close_session(session_id: str, request: Request) -> Response:
-    require_local(request)
-    await request.app.state.voice.close(session_id)
-    return Response(status_code=204)
+        hello = Hello.model_validate_json(await socket.receive_text())
+    except WebSocketDisconnect:
+        logger.info("Device socket closed before hello")
+        return
+    except (ValidationError, ValueError) as error:
+        logger.warning("Rejected device socket: invalid hello: %s", error)
+        await socket.close(4400, "Send hello first")
+        return
+    session = await socket.app.state.voice.connect(socket, hello)
+    logger.info("Device %s connected at %s Hz", session.id, hello.rate)
+    await session.serve()

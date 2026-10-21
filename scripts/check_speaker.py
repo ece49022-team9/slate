@@ -52,7 +52,7 @@ async def check(combined: bool = False) -> None:
     from slate.breadboard import breadboard
 
     boot = "slate.state: 0" if combined else "slate.speaker: ready"
-    async with breadboard(boot_message=boot) as bench:
+    async with breadboard(boot_message=boot, connect_cloud=False) as bench:
         if combined:
             bench.link.type("t")
         # Bound capture in emulated time; no firmware debug prints are needed.

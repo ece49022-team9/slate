@@ -60,7 +60,7 @@ def main() -> None:
     board, _ = load()
     rate = board["device"]["mic"]["sample_hz"]
     with asyncio.Runner() as runner:
-        context = breadboard()
+        context = breadboard(connect_cloud=False)
         bench = runner.run(context.__aenter__())
         try:
 
