@@ -50,7 +50,6 @@ def transcript(words: list[Words]) -> str:
 
 
 def history(words: list[Words]) -> list[dict]:
-    """The conversation so far, to seed a session that replaces a dropped one."""
     return [
         {"role": "user", "content": [{"type": "input_text", "text": text}]}
         if role == "User"
@@ -60,10 +59,6 @@ def history(words: list[Words]) -> list[dict]:
 
 
 class LiveCall:
-    """One always-listening conversation. Device microphone PCM goes to GPT-Live,
-    Slate's voice comes back through `speak`, and each handoff runs through
-    `delegate`, which returns the reply and details to keep in the report."""
-
     def __init__(
         self,
         *,
@@ -259,9 +254,6 @@ class LiveCall:
             )
 
     def unsent(self, offset_ms: int) -> list[Words]:
-        """Words since the previous handoff and before this one. The user's last
-        word can start just after the handoff, since GPT-Live often hands off as
-        it hears it; Slate's acknowledgment of the handoff waits for the next."""
         fresh = self.words[self.sent :]
         kept = [
             part
@@ -274,8 +266,6 @@ class LiveCall:
         return kept
 
     async def tell(self, text: str) -> None:
-        """Gives GPT-Live a result nobody asked for in this call, such as a
-        background task that just finished."""
         await self.connection.session.commentary.append(content=text)
 
     def report(self) -> dict:

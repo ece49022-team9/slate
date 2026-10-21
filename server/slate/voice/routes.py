@@ -32,8 +32,6 @@ def device_token(token: str) -> bool:
 
 @router.get("/voice/reports")
 async def reports(request: Request) -> dict[str, dict]:
-    """Timing, usage and words for the connected device's recent turns and live
-    calls, oldest first and including a call in progress, for profiling."""
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not device_token(token):
         raise HTTPException(401, "Send the device token as a bearer token")

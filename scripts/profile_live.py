@@ -64,7 +64,6 @@ def spoken(path: Path, text: str) -> Path:
 
 
 def guest_url(url: str) -> str:
-    """The firmware in QEMU reaches the Mac at 10.0.2.2."""
     parts = urlsplit(url)
     if parts.hostname not in ("127.0.0.1", "localhost"):
         return url
@@ -134,7 +133,6 @@ class Device:
         ]
 
     def stopped(self, after: int) -> int | None:
-        """Last audible reply frame before the first half second of silence."""
         last = None
         for ns, level, _ in self.reply:
             if ns < after:
@@ -146,8 +144,6 @@ class Device:
         return last
 
     async def speaking(self, after: int) -> None:
-        """Waits until Slate has spoken steadily for SENTENCE_NS, which skips
-        short acknowledgments such as "Checking."."""
         async with asyncio.timeout(120):
             while True:
                 await asyncio.sleep(0.05)
@@ -193,8 +189,6 @@ async def end_call(bench: Breadboard) -> None:
 
 
 async def settle(device: Device, service: Service, call_id: str, after: int) -> dict:
-    """Waits until every handoff since `after` has been answered out loud and
-    Slate has been quiet for QUIET_NS."""
     async with asyncio.timeout(180):
         while True:
             await asyncio.sleep(0.5)
@@ -292,7 +286,6 @@ def analyze(
 
 
 def speech_offset_ns(clip: Path, slot: int) -> int:
-    """When speech starts inside the padded clip the breadboard plays."""
     stereo = array("h", stereo_pcm(clip, slot))
     loud = next(i for i, sample in enumerate(stereo) if abs(sample) > SPEECH_PEAK)
     return (loud // 2) * 1_000_000_000 // 16_000
@@ -423,8 +416,9 @@ async def run(args: argparse.Namespace) -> None:
             "Times start at the last firmware mic frame with peak above "
             f"{SPEECH_PEAK}, copied to serial by the audio tap, and end at the first "
             f"frame the firmware played on the I2S speaker pins with peak above "
-            f"{AUDIBLE_PEAK}, both stamped on one host's monotonic clock. Answer audio is the "
-            "first audible frame after the Hermes result reached GPT-Live; first "
+            f"{AUDIBLE_PEAK}, both stamped on one host's monotonic clock. "
+            "Answer audio is the first audible frame after the Hermes result "
+            "reached GPT-Live; first "
             "audio includes any acknowledgment. Interruption stop is the last "
             "audible reply frame before half a second of silence; an interruption "
             f"trial is correct when Slate was speaking and stopped within {STOPPED_MS} "

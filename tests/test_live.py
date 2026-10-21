@@ -36,10 +36,6 @@ def handoff(delegation_id: str, offset_ms: int) -> SimpleNamespace:
 
 
 class FakeLive:
-    """Stands in for GPT-Live's WebSocket. Once it has heard `ask_after` bytes of
-    microphone audio it says a filler, transcribes the question and hands it to
-    the client; commentary it receives is spoken back as Slate's words."""
-
     def __init__(self, script: list | None = None, ask_after: int = 0) -> None:
         self.events: asyncio.Queue = asyncio.Queue()
         for item in script or []:

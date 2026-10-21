@@ -87,8 +87,6 @@ def seconds(start: int, end: int) -> float:
 
 
 def growth(points: list[tuple[int, int]]) -> float:
-    """Median slope across every pair of turns, so one tool turn with an extra
-    model call does not decide the trend."""
     slopes = [
         (later - earlier) / (end - start)
         for (start, earlier), (end, later) in itertools.combinations(points, 2)
@@ -98,8 +96,6 @@ def growth(points: list[tuple[int, int]]) -> float:
 
 
 async def talk(bench: Breadboard, clip: Path) -> tuple[str, str]:
-    """One push-to-talk turn on the firmware: hold Listen, play the clip,
-    release, and wait for the reply audio to finish."""
     heard = asyncio.ensure_future(bench.link.wait_for("slate.transcript:", 180))
     said = asyncio.ensure_future(bench.link.wait_for("slate.reply:", 300))
     played = asyncio.ensure_future(bench.link.wait_for("slate.reply.audio:", 360))
@@ -255,9 +251,6 @@ def runs(turn: dict) -> list[dict]:
 
 
 def project(result: dict, arm: str, rates: dict, model: str) -> dict:
-    """Hermes resends its prompt and history every run, so input tokens grow by a
-    fixed amount per turn. Price that growth at the observed blended input price,
-    which already includes cache hits, misses, and tool calls."""
     turns = result["turns"]
     per_turn_s = result["conversation_seconds"] / len(turns)
     usage = [(turn["turn"], item) for turn in turns for item in runs(turn)]
@@ -306,8 +299,6 @@ def project(result: dict, arm: str, rates: dict, model: str) -> dict:
 
 
 async def modal_bill(since: datetime, environment: str) -> dict:
-    """Everything billed to the speech models' Modal environment since the hour
-    started."""
     hour = since.replace(minute=0, second=0, microsecond=0)
     items = await modal.Workspace.from_context().billing.report.aio(
         start=hour, resolution="h"

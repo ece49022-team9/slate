@@ -214,7 +214,9 @@ async def offline(realtime: bool) -> None:
                     await socket.send(struct.pack("<480h", *live_reply))
                     if not realtime:
                         await bench.sleep(0.3)
-                        check_speaker(bytes(bench.speaker_pcm[played_before:]), live_reply)
+                        check_speaker(
+                            bytes(bench.speaker_pcm[played_before:]), live_reply
+                        )
                     for kind, text in (("heard", "Hello live"), ("said", "Hello back")):
                         await socket.send(
                             json.dumps(

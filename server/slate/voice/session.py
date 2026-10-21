@@ -490,8 +490,6 @@ class VoiceSession:
             self.reports.pop(next(iter(self.reports)))
 
     async def handoff(self, request: str) -> tuple[str, dict]:
-        """Runs one GPT-Live handoff on the agent, with the device scope and
-        approvals of a turn of its own."""
         turn = Turn()
         turn.finish()
         self.turn = turn
