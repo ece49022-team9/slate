@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Slate voice companion backend"
 requires-python = ">=3.12"
 dependencies = [
+    "cryptography>=50.0.1",
     "fastapi>=0.141.1,<0.142",
     "httpx>=0.28,<0.29",
     "mcp==2.2.0",
