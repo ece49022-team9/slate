@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "cloud.h"
+#include "ble_setup.h"
 #include "cloud_ca.h"
 #include "device_command.h"
 #include "mic.h"
@@ -62,6 +63,7 @@ static esp_netif_t* ethernet_netif;
 static bool ethernet_started = false;
 static String mode, ssid, password, url, token;
 static bool configured, connected, active_turn, recording;
+static bool net_saved, cloud_saved;
 static String turn_id;
 static std::atomic<bool> live{false};
 static unsigned long retry_ms = 1000;
@@ -223,9 +225,13 @@ static void ethernet_event(void*, esp_event_base_t base, int32_t event, void* da
     auto* address = static_cast<ip_event_got_ip_t*>(data);
     network_up.store(true);
     Serial.printf("slate.net: up " IPSTR "\n", IP2STR(&address->ip_info.ip));
+    char status[40];
+    snprintf(status, sizeof(status), "net up " IPSTR, IP2STR(&address->ip_info.ip));
+    ble_setup_status(status);
   } else if (base == ETH_EVENT && (event == ETHERNET_EVENT_DISCONNECTED || event == ETHERNET_EVENT_STOP)) {
     network_up.store(false);
     Serial.println("slate.net: down");
+    ble_setup_status("net down");
   }
 }
 
@@ -316,18 +322,29 @@ static bool save_preference(const char* key, const String& value) {
   if (!preferences_open) preferences_open = preferences.begin("slate-cloud", false);
   if (!preferences_open) {
     Serial.println("slate.net: provisioning storage unavailable");
+    ble_setup_status("error storage");
     return false;
   }
   if (preferences.putString(key, value) == value.length()) return true;
   Serial.printf("slate.net: provisioning save failed %s\n", key);
+  ble_setup_status("error storage");
   return false;
 }
 
 static void provision(char* line) {
+  if (!strcmp(line, "setup")) {
+    if (!ble_setup_active()) net_saved = cloud_saved = false;
+    socket.disconnect();
+    ready.store(false);
+    ble_setup_start();
+    return;
+  }
   if (!strcmp(line, "net eth")) {
-    if (mode == "eth" && ethernet_started) return;
+    net_saved = false;
     mode = "eth";
     if (!save_preference("mode", mode)) return;
+    net_saved = true;
+    ble_setup_status("saved net");
     connect_network();
   } else if (!strncmp(line, "net wifi ", 9)) {
     char* cursor = line + 9;
@@ -336,26 +353,33 @@ static void provision(char* line) {
     while (*cursor == ' ') ++cursor;
     if (!network || !*network || !secret || *cursor || strlen(network) > 32 || strlen(secret) > 64) {
       Serial.println("slate.net: invalid wifi provisioning");
+      ble_setup_status("error wifi");
       return;
     }
+    net_saved = false;
     ssid = network;
     password = secret;
     mode = "wifi";
     if (!save_preference("mode", mode)) return;
     if (!save_preference("ssid", ssid)) return;
     if (!save_preference("password", password)) return;
+    net_saved = true;
+    ble_setup_status("saved net");
     connect_network();
   } else if (!strncmp(line, "cloud ", 6)) {
     char* secret = strchr(line + 6, ' ');
     if (!secret || !(String(line + 6).startsWith("ws://") || String(line + 6).startsWith("wss://"))) {
       Serial.println("slate.cloud: invalid provisioning");
+      ble_setup_status("error cloud");
       return;
     }
     *secret++ = 0;
+    cloud_saved = false;
     url = line + 6;
     token = secret;
     if (!url.length() || !token.length() || token.indexOf('\r') >= 0 || token.indexOf('\n') >= 0) {
       Serial.println("slate.cloud: invalid provisioning");
+      ble_setup_status("error cloud");
       return;
     }
     if (!save_preference("url", url)) return;
@@ -365,8 +389,15 @@ static void provision(char* line) {
     configured = false;
     retry_ms = 1000;
     Serial.println("slate.cloud: provisioned");
+    cloud_saved = true;
+    ble_setup_status("saved cloud");
   } else {
     Serial.println("slate.net: invalid provisioning command");
+    ble_setup_status("error command");
+    return;
+  }
+  if (net_saved && cloud_saved) {
+    ble_setup_finish();
   }
 }
 
@@ -415,14 +446,18 @@ static void cloud_task(void* starter) {
   } else if (result != ESP_ERR_NVS_NOT_FOUND) {
     Serial.printf("slate.net: provisioning load failed %s\n", esp_err_to_name(result));
   }
+  ble_setup_boot(!url.length() || !token.length());
   WiFi.onEvent([](arduino_event_id_t event) {
     if (use_ethernet.load()) return;
     if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
       network_up.store(true);
       Serial.printf("slate.net: up %s\n", WiFi.localIP().toString().c_str());
+      String status = "net up " + WiFi.localIP().toString();
+      ble_setup_status(status.c_str());
     } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
       network_up.store(false);
       Serial.println("slate.net: down");
+      ble_setup_status("net down");
     }
   });
   socket.onEvent(socket_event);
@@ -436,7 +471,7 @@ static void cloud_task(void* starter) {
       provision(command.line);
       memset(&command, 0, sizeof(command));
     }
-    if (network_up.load()) {
+    if (network_up.load() && !ble_setup_active()) {
       if (!clock_started) {
         configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
         clock_started = true;
@@ -519,10 +554,15 @@ void cloud_provision(const char* line) {
   Provision command = {};
   if (strlen(line) >= sizeof(command.line)) {
     Serial.println("slate.net: provisioning command too long");
+    ble_setup_status("error length");
     return;
   }
   strcpy(command.line, line);
-  if (xQueueSend(provisions, &command, 0) != pdTRUE) Serial.println("slate.net: provisioning queue full");
+  if (xQueueSend(provisions, &command, 0) != pdTRUE) {
+    Serial.println("slate.net: provisioning queue full");
+    ble_setup_status("error busy");
+  }
+  memset(&command, 0, sizeof(command));
 }
 
 void cloud_state(SlateState state) {
