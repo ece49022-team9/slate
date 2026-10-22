@@ -442,7 +442,7 @@ new file mode 100644
 index 0000000..5b07acb
 --- /dev/null
 +++ b/hw/misc/slate_board.c
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,204 @@
 +/*
 + * Slate breadboard bridge. QEMU and the Slate part models run in lockstep over
 + * one character device, so a run replays exactly given the same inputs.
@@ -553,6 +553,9 @@ index 0000000..5b07acb
 +
 +static void slate_board_deliver_uart(Chardev *uart, Fifo8 *input)
 +{
++    if (!uart) {
++        return;
++    }
 +    uint32_t room = MIN(qemu_chr_be_can_write(uart), fifo8_num_used(input));
 +    if (room) {
 +        uint8_t bytes[SLATE_BOARD_UART_IN];
