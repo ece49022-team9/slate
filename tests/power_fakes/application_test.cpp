@@ -5,6 +5,7 @@
 #include "power.h"
 #include "slate_state.h"
 #include "mic.h"
+#include "perf.h"
 
 uint32_t fake_now = 0;
 std::array<int, 64> fake_levels;
@@ -31,6 +32,13 @@ void slate_start() { check_startup_hold(); }
 void pdm_start() { check_startup_hold(); }
 void oled_start() { check_startup_hold(); }
 void speaker_start() { check_startup_hold(); }
+void cloud_start() { check_startup_hold(); }
+void cloud_provision(const char*) {}
+void cloud_audio(const int16_t*, size_t) {}
+void cloud_toggle_live() {}
+bool cloud_live() { return false; }
+void device_serial_command(char*) {}
+void perf_stack(PerfTask) {}
 bool pdm_stop() { ++capture_stops; return capture_done; }
 bool oled_stop() { ++display_stops; return display_done; }
 bool speaker_stop() {

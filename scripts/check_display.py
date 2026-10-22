@@ -58,7 +58,7 @@ def save_png(frame: Frame) -> None:
 def main() -> None:
     build_image()
     with asyncio.Runner() as runner:
-        context = breadboard()
+        context = breadboard(connect_cloud=False)
         bench = runner.run(context.__aenter__())
         try:
             for state in range(6):

@@ -1,0 +1,57 @@
+[hermes]
+repository = "NousResearch/hermes-agent"
+revision = "4e3fcd5cd7e40c37cb6f9a21a76fc57a7361957a"
+source_sha256 = "16bdaa96c94e73c7a6c6bec198fe3d200c86a7ddb738e7ae398ca086a39be554"
+uv_version = "0.12.22"
+python = "3.14"
+model = "gpt-6.1-sol"
+provider = "openai-codex"
+
+[benchmarks.tau]
+repository = "sierra-research/tau2-bench"
+revision = "5bfa7e37b36656b37dc6d022156be6563c1007f3"
+source_sha256 = "7e5d498a032d279eb81000ff479ea6647bffa303edf112df3460f482e64deb65"
+python = "3.12"
+text_import_overlay = "websockets==15.0.1 (upstream text import eagerly loads audio-native module)"
+initial_domain = "airline"
+initial_split = "base"
+initial_seed = 20261002
+pilot_task_id = "18"
+pilot_task_selection = "first seeded sample from task-id-sorted airline base tasks"
+pilot_user_model = "openai/gpt-6.1-sol"
+pilot_max_steps = 100
+pilot_trials_per_arm = 1
+hermes_optional_extras = ["messaging", "mcp"]
+native_transport = "Hermes MCP 2.0.0 stdio and managed Agents SDK function tool_handlers to official AgentGymEnv"
+retail_caveat = "upstream issue 499 reports incorrect reference tasks/tools/action results; audit gold before aggregate comparisons"
+protocol = "current tau3 text, base split, airline and retail"
+ground_truth = "upstream task policy and state/action evaluator"
+metrics = ["success_rate", "pass^4", "policy_violations", "tool_errors"]
+comparison = "same tasks, user simulator, trials, seed and step limit; vary only model or harness"
+
+[benchmarks.longmemeval]
+repository = "xiaowu0162/LongMemEval"
+revision = "9e0b455f4ef0e2ab8f2e582289761153549043fc"
+source_sha256 = "466228f1df97704bafce005f0a5291973b2cb1f420e2dc600013346b9b82ce63"
+dataset = "xiaowu0162/longmemeval-cleaned"
+dataset_revision = "98d7416c24c778c2fee6e6f3006e7a073259d48f"
+file = "longmemeval_s_cleaned.json"
+file_sha256 = "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
+protocol = "full timestamped histories; fresh memory store per question; never expose gold answers or has_answer"
+ground_truth = "upstream expected answers and evaluate_qa.py rubric"
+metrics = ["accuracy_by_question_type", "abstention_accuracy", "query_latency"]
+comparison = "freeze reader and judge when comparing memory; freeze harness when comparing models"
+pilot_seed = 20261002
+pilot_selection = "seeded sample of question-id-sorted full cleaned S dataset"
+reader_model = "gpt-6.1-sol"
+reader_provider = "openai-codex"
+judge_model = "gpt-6.1-sol"
+rubric_sha256 = "ecce9c4c79dc89d99534ac17b383a5cbb5b9f0c69ee98adaf0684742e3d95251"
+judge_protocol = "pinned upstream evaluate_qa.py rubric through Responses; custom judge, not official leaderboard protocol"
+pilot_arms = ["session-search", "full-context", "no-memory"]
+selection_reason = "tests personal preferences, knowledge updates and abstention; V2 targets remembered web/enterprise workflows instead"
+
+[tracking]
+log = "experiments/progress.jsonl"
+raw_runs = ".local/agent-runs"
+rule = "record completed, failed, blocked and unscored runs; smoke cases are not benchmark scores"
