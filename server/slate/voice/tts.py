@@ -244,7 +244,7 @@ def generate(model, inputs, max_seconds: int, observer, *, output_audio: bool):
     volumes={"/models": cache},
     secrets=[modal.Secret.from_name("slate-huggingface", required_keys=["HF_TOKEN"])],
     max_containers=1,
-    scaledown_window=60,
+    scaledown_window=600,
     timeout=300,
     startup_timeout=600,
 )
