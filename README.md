@@ -129,7 +129,9 @@ It reads a mono 24 kHz, 16-bit WAV, streams it at 16 kHz in real time, prints th
 
 ## Speech
 
-[Kyutai STT](https://modal.com/docs/examples/streaming_kyutai_stt) and [Sesame CSM 1B](https://huggingface.co/docs/transformers/model_doc/csm) run in separate Modal apps, `slate-stt` and `slate-tts`. Both cache their weights and scale to zero when idle.
+[Kyutai STT](https://modal.com/docs/examples/streaming_kyutai_stt) and [Sesame CSM 1B](https://huggingface.co/docs/transformers/model_doc/csm) run in separate Modal apps, `slate-stt` and `slate-tts`. Both cache their weights and shut down after 60 seconds idle, so the first turn after a pause waits about 15–20 seconds for a GPU to start.
+
+For a demo, `make voice-deploy DEMO=1` keeps both apps warm for 10 minutes after the last turn. Run `make voice-deploy` afterward to go back to 60 seconds.
 
 Use the `sudarshan-1` Modal profile. CSM needs a Modal secret named `slate-huggingface` containing `HF_TOKEN`, with access to `sesame/csm-1b`.
 
