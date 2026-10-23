@@ -7,10 +7,42 @@ import modal
 
 from slate.voice.audio import read_wav
 
+QUEUE_BATCH = 256
+
+
+async def drain(queue: modal.Queue) -> AsyncIterator:
+    while True:
+        for value in await queue.get_many.aio(QUEUE_BATCH):
+            if value is None:
+                return
+            yield value
+
 
 async def send_audio(queue: modal.Queue, audio: AsyncIterable[bytes]) -> None:
-    async for chunk in audio:
-        await queue.put.aio(chunk)
+    pending: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+    async def read() -> None:
+        try:
+            async for chunk in audio:
+                pending.put_nowait(chunk)
+        finally:
+            pending.put_nowait(None)
+
+    reader = asyncio.create_task(read())
+    try:
+        finished = False
+        while not finished:
+            chunks = [await pending.get()]
+            while not pending.empty():
+                chunks.append(pending.get_nowait())
+            finished = chunks[-1] is None
+            pcm = b"".join(chunk for chunk in chunks if chunk is not None)
+            if pcm:
+                await queue.put.aio(pcm)
+        await reader
+    finally:
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions=True)
     await queue.put.aio(None)
 
 
@@ -54,7 +86,7 @@ async def transcribe_stream(
 
         transfer = asyncio.create_task(exchange())
         try:
-            while (piece := await outgoing.get.aio()) is not None:
+            async for piece in drain(outgoing):
                 if marks is not None:
                     marks.setdefault("first_text", time.monotonic_ns())
                 yield piece
@@ -110,7 +142,7 @@ async def speak_stream(
 
         transfer = asyncio.create_task(wait_for_result())
         try:
-            while (pcm := await outgoing.get.aio()) is not None:
+            async for pcm in drain(outgoing):
                 if not isinstance(pcm, bytes) or not pcm or len(pcm) % 2:
                     raise RuntimeError("slate.tts: invalid streamed PCM chunk")
                 if marks is not None:

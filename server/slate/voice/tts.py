@@ -1,11 +1,10 @@
 import logging
-import queue
-import threading
 import time
 
 import modal
 
 from slate.voice.audio import write_wav
+from slate.voice.queues import QueueSender
 
 app = modal.App("slate-tts")
 cache = modal.Volume.from_name("slate-tts-models", create_if_missing=True)
@@ -180,40 +179,6 @@ class DepthLoop:
             token = token.clone()
             tokens.append(token[:, None])
         return torch.cat(tokens, dim=1)
-
-
-class QueueSender:
-    def __init__(self, outgoing) -> None:
-        self.outgoing = outgoing
-        self.pending = queue.SimpleQueue()
-        self.error = None
-        self.thread = threading.Thread(target=self.run, daemon=True)
-        self.thread.start()
-
-    def put(self, pcm: bytes) -> None:
-        self.pending.put(pcm)
-
-    def run(self) -> None:
-        finished = False
-        while not finished:
-            chunks = [self.pending.get()]
-            while not self.pending.empty():
-                chunks.append(self.pending.get())
-            finished = chunks[-1] is None
-            pcm = b"".join(chunk for chunk in chunks if chunk is not None)
-            if not pcm or self.error is not None:
-                continue
-            try:
-                self.outgoing.put(pcm)
-            except Exception as error:
-                logger.exception("slate.tts: sending streamed audio failed")
-                self.error = error
-
-    def close(self) -> None:
-        self.pending.put(None)
-        self.thread.join()
-        if self.error is not None:
-            raise RuntimeError("slate.tts: streamed audio was lost") from self.error
 
 
 class AcousticPcmStreamer(AcousticFrameTiming):
