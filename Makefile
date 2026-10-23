@@ -92,8 +92,8 @@ sim-voice:
 	$(MODAL) uv run python -m slate.voice firmware "$(INPUT)"
 
 voice-deploy:
-	$(MODAL) uv run modal deploy -m slate.voice.stt
-	$(MODAL) uv run modal deploy -m slate.voice.tts
+	$(MODAL) SLATE_DEMO=$(DEMO) uv run modal deploy -m slate.voice.stt
+	$(MODAL) SLATE_DEMO=$(DEMO) uv run modal deploy -m slate.voice.tts
 
 voice-check:
 	$(MODAL) uv run python -m slate.voice check

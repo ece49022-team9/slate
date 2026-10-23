@@ -6,7 +6,12 @@ from pathlib import Path
 
 import modal
 
-from slate.voice.audio import MAX_AUDIO_SECONDS, SAMPLE_BYTES, SAMPLE_RATE
+from slate.voice.audio import (
+    IDLE_SECONDS,
+    MAX_AUDIO_SECONDS,
+    SAMPLE_BYTES,
+    SAMPLE_RATE,
+)
 from slate.voice.queues import QueueSender
 
 app = modal.App("slate-stt")
@@ -34,7 +39,7 @@ AUDIO_BATCH = 256
     gpu=["L4", "A10", "L40S"],
     volumes={"/models": cache},
     max_containers=1,
-    scaledown_window=600,
+    scaledown_window=IDLE_SECONDS,
     timeout=300,
     startup_timeout=600,
 )

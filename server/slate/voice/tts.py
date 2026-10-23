@@ -3,7 +3,7 @@ import time
 
 import modal
 
-from slate.voice.audio import write_wav
+from slate.voice.audio import IDLE_SECONDS, write_wav
 from slate.voice.queues import QueueSender
 
 app = modal.App("slate-tts")
@@ -244,7 +244,7 @@ def generate(model, inputs, max_seconds: int, observer, *, output_audio: bool):
     volumes={"/models": cache},
     secrets=[modal.Secret.from_name("slate-huggingface", required_keys=["HF_TOKEN"])],
     max_containers=1,
-    scaledown_window=600,
+    scaledown_window=IDLE_SECONDS,
     timeout=300,
     startup_timeout=600,
 )
