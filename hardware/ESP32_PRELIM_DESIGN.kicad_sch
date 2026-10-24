@@ -7715,12 +7715,6 @@
 		(uuid "70f58e04-d1ed-4dfb-a2d0-3f1f20af61df")
 	)
 	(junction
-		(at 529.59 198.12)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "753aa270-8ae1-476f-93d9-d71f0431d546")
-	)
-	(junction
 		(at 515.62 110.49)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -9956,16 +9950,6 @@
 	)
 	(wire
 		(pts
-			(xy 523.24 198.12) (xy 529.59 198.12)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "d7da12b6-1d48-45fc-a390-9dc84f93fa6d")
-	)
-	(wire
-		(pts
 			(xy 113.03 36.83) (xy 113.03 39.37)
 		)
 		(stroke
@@ -10013,6 +9997,22 @@
 			(type default)
 		)
 		(uuid "dcc201b1-38e4-44d1-843f-3c2cfe347d60")
+	)
+	(wire
+		(pts
+			(xy 467.36 110.49) (xy 467.36 113.03)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4e2b7c91-6d3a-4f05-b8e1-9a7c2d5f0b36")
+	)
+	(junction
+		(at 467.36 113.03)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "c7a1e3f8-2b94-4d6e-8f05-3d9b6a1c4e72")
 	)
 	(wire
 		(pts
@@ -11125,7 +11125,7 @@
 		(uuid "f8d6592d-2473-4754-a56f-669bf3db459c")
 	)
 	(label "VSYS"
-		(at 541.02 198.12 0)
+		(at 523.24 198.12 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -11163,6 +11163,84 @@
 			(justify left bottom)
 		)
 		(uuid "fe646338-de6a-4048-91be-02e897e7adb3")
+	)
+	(symbol
+		(lib_id "power:+3.3V")
+		(at 541.02 198.12 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "6dd817a9-abf0-4faa-a3ad-1be341bcb46d")
+		(property "Reference" "#PWR069"
+			(at 541.02 201.93 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+3.3V"
+			(at 541.02 194.31 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 541.02 198.12 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 541.02 198.12 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
+			(at 541.02 198.12 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "a303326e-172e-41f2-8004-42467626fc48")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR069")
+					(unit 1)
+				)
+			)
+		)
 	)
 	(symbol
 		(lib_id "Device:LED")
@@ -15522,7 +15600,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1.18k"
+		(property "Value" "3.3k"
 			(at 472.186 223.52 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -20708,6 +20786,82 @@
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
 					(reference "#PWR033")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:MountingHole")
+		(at 21.59 271.78 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "ac9f805d-6f5b-439b-9fb8-228e54359228")
+		(property "Reference" "H3"
+			(at 24.13 270.5099 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "MountingHole"
+			(at 24.13 273.0499 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "MountingHole:MountingHole_2.2mm_M2"
+			(at 21.59 271.78 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 21.59 271.78 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Mounting Hole without connection"
+			(at 21.59 271.78 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "H3")
 					(unit 1)
 				)
 			)
