@@ -2861,6 +2861,172 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Device:D_Schottky"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 1.016)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(in_pos_files yes)
+			(duplicate_pin_numbers_are_jumpers no)
+			(property "Reference" "D"
+				(at 0 2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "D_Schottky"
+				(at 0 -2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Description" "Schottky diode"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_keywords" "diode Schottky"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_fp_filters" "TO-???* *_Diode_* *SingleDiode* D_*"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(symbol "D_Schottky_0_1"
+				(polyline
+					(pts
+						(xy -1.905 0.635) (xy -1.905 1.27) (xy -1.27 1.27) (xy -1.27 -1.27) (xy -0.635 -1.27) (xy -0.635 -0.635)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 1.27) (xy 1.27 -1.27) (xy -1.27 0) (xy 1.27 1.27)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 0) (xy -1.27 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "D_Schottky_1_1"
+				(pin passive line
+					(at -3.81 0 0)
+					(length 2.54)
+					(name "K"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 3.81 0 180)
+					(length 2.54)
+					(name "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Device:L"
 			(pin_numbers
 				(hide yes)
@@ -7978,16 +8144,6 @@
 	)
 	(wire
 		(pts
-			(xy 463.55 129.54) (xy 463.55 144.78)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "02ae9c5f-8ab5-46e6-ac5c-4635bd16dfde")
-	)
-	(wire
-		(pts
 			(xy 501.65 185.42) (xy 501.65 190.5)
 		)
 		(stroke
@@ -8717,16 +8873,6 @@
 			(type default)
 		)
 		(uuid "55578d21-610f-401c-acb9-70f2d4f782b7")
-	)
-	(wire
-		(pts
-			(xy 449.58 144.78) (xy 463.55 144.78)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "5569aac2-f64f-4ab4-af09-ead8dc76dad9")
 	)
 	(wire
 		(pts
@@ -11163,6 +11309,323 @@
 			(justify left bottom)
 		)
 		(uuid "fe646338-de6a-4048-91be-02e897e7adb3")
+	)
+	(label "U6_EN"
+		(at 463.55 132.08 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d5a356f5-a989-4857-bab3-8c7b7d15ebdf")
+	)
+	(symbol
+		(lib_id "Device:D_Schottky")
+		(at 459.74 135.89 180)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "71bcfaba-e22a-42f5-b45b-28638ab0f6e7")
+		(property "Reference" "D6"
+			(at 459.74 132.08 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "BAT54WS"
+			(at 459.74 139.7 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Diode_SMD:D_SOD-323_HandSoldering"
+			(at 459.74 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 459.74 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Schottky diode: VBUS keeps U6 enabled while USB is connected"
+			(at 459.74 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "73bceebb-ab7a-4372-be14-c652e29bd717")
+		)
+		(pin "2"
+			(uuid "1b2cde15-54e8-494a-92d7-f99b0a5d3891")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "D6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:C")
+		(at 457.2 148.59 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "3543a09f-d531-4e7c-a826-ccdcbc410198")
+		(property "Reference" "C21"
+			(at 459.74 147.32 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "10uF"
+			(at 459.74 149.86 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder"
+			(at 457.2 148.59 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 457.2 148.59 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "U6 EN hold-up: rides through ESP resets on battery"
+			(at 457.2 148.59 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "731e494b-4b76-4886-a495-19e8b8445e70")
+		)
+		(pin "2"
+			(uuid "d0c83f31-e8e4-4667-9deb-540d32702c1c")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "C21")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 457.2 152.4 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "372f8662-064c-4065-a17d-0c911193e79c")
+		(property "Reference" "#PWR070"
+			(at 457.2 158.75 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 457.2 156.21 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 457.2 152.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 457.2 152.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 457.2 152.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "e9139004-e6b0-4468-bbe0-ebade176abf8")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR070")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 463.55 129.54) (xy 463.55 135.89)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "dbbeb7e1-51d5-4c4e-a5fe-94095eb2c2a2")
+	)
+	(wire
+		(pts
+			(xy 463.55 135.89) (xy 463.55 144.78)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "88a0ebef-09f4-46c4-aeb0-2f3843fdea4f")
+	)
+	(wire
+		(pts
+			(xy 449.58 144.78) (xy 457.2 144.78)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5faf6074-91f2-4392-8ef2-b2ae4db024d4")
+	)
+	(wire
+		(pts
+			(xy 457.2 144.78) (xy 463.55 144.78)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d8d363b1-0f02-4015-9dbf-d0ee6a96615e")
+	)
+	(junction
+		(at 463.55 135.89)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "43b411e2-7554-4950-9346-9b03f59518fd")
+	)
+	(junction
+		(at 457.2 144.78)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "12837c1a-62a8-43ef-b3cf-f66053c41568")
+	)
+	(wire
+		(pts
+			(xy 455.93 135.89) (xy 453.39 135.89)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5b96cbad-f421-4a01-ad73-33fbc18fdcbc")
+	)
+	(label "VBUS"
+		(at 453.39 135.89 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "7928d71d-ca0d-48ce-97cd-09675db3f2ea")
 	)
 	(symbol
 		(lib_id "power:+3.3V")
