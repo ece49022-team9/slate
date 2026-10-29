@@ -7,7 +7,7 @@ from unittest import mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from slate.api import events as events_module
 from slate.api.events import EventBus, send_events
@@ -32,6 +32,14 @@ class CursorTests(unittest.TestCase):
         rest = [bus.publish("agent.step", {"n": n}) for n in range(1, 4)]
         # first has left the buffer, but the client already has it.
         self.assertEqual(bus.since(first["id"]), rest)
+
+    def test_replay_skips_nothing_when_numbers_have_holes(self):
+        bus = EventBus(size=10)
+        bus.publish("agent.step", {"n": 0})
+        hole = bus.envelope("system.resync", {})  # takes a number, not buffered
+        after = [bus.publish("agent.step", {"n": n}) for n in (1, 2, 3)]
+        self.assertEqual(bus.since(hole["id"]), after)
+        self.assertEqual(bus.since(after[0]["id"]), after[1:])
 
     def test_bad_cursors_force_resync(self):
         bus = EventBus()
@@ -107,6 +115,22 @@ operations = st.lists(
 class DeliveryPropertyTests(unittest.TestCase):
     @settings(max_examples=400, deadline=None)
     @given(operations, st.integers(2, 20), st.integers(1, 10))
+    # Found by this test: a resync takes a sequence number that never enters
+    # the buffer, so counting positions in the buffer skipped an event.
+    @example(
+        ops=[
+            ("publish", 1),
+            ("drop", 0),
+            ("publish", 5),
+            ("read", 7),
+            ("publish", 1),
+            ("read", 1),
+            ("publish", 1),
+            ("publish", 1),
+        ],
+        size=4,
+        queue_size=1,
+    )
     def test_never_a_silent_gap(self, ops, size, queue_size):
         """Under any mix of publishing, slow reading, dropped connections and
         server restarts, the client's view is in order with no repeats, and

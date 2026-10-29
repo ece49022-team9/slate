@@ -14,14 +14,18 @@ Three mechanisms keep this rule:
 2. **Bounded per-client queue (100 events).** If a web app falls 100 events behind, its backlog is dropped and the server closes the socket with code 1013 ("try again later"). The app reconnects with its cursor and replays from the buffer. One slow app can never make the server hold unbounded memory or slow down the others.
 3. **Send deadline (5 s).** If one send blocks for 5 s (the app stopped reading and the TCP buffers are full), the server gives up on that connection.
 
-## Two bugs found and fixed
+## Four bugs found and fixed
 
 **Restart bug (silent loss).** Event ids used to be `evt_0000000001` and restarted from 1 when the server restarted. A web app reconnecting after a restart with `after=evt_0000000300` would match an id in the *new* buffer and be told nothing was missing. Reproduced: after a restart with 400 new events, the app got 100 and silently lost 300.
 Fix: ids are now `evt_<boot>_<seq>`, where `boot` is random per server start. A cursor from another boot is always stale, so the app gets `system.resync`.
 
-**Off-by-one (needless resync).** If the app's cursor was the event just before the oldest one in the buffer, the server forced a resync even though nothing was missing. Fix: the valid range is now `first - 1 <= cursor <= last`. This makes the buffer sizing rule below exact.
+**Off-by-one (needless resync).** If the app's cursor was the event just before the oldest one in the buffer, the server forced a resync even though nothing was missing. Fix: a resync happens only when an event after the cursor has actually left the buffer. This makes the buffer sizing rule below exact.
 
-Both bugs were caught by tests that fail on the old code and pass on the new code. The randomized test (400 random mixes of publishing, slow reading, dropped connections and restarts, buffer sizes 2 to 20, queue sizes 1 to 10) found the restart bug by itself.
+**Skipped event after a resync (my own regression).** My first fix for the off-by-one found events by counting positions in the buffer. But `system.resync` takes a sequence number and is never buffered, so the numbers in the buffer can have holes, and counting positions then skipped one event with no resync. The randomized test found it on a later run. Fix: `since()` now compares sequence numbers, and the server remembers the newest number pushed out of the buffer, so "is anything missing?" is exact (`cursor < newest dropped`) whether or not the numbers have holes. The failing case is pinned as a fixed example in the test, and the test then passed 20,000 random cases.
+
+**Cancellation leak (flaky disconnect).** The handler ran its sender and listener as bare asyncio tasks. Starlette cancels a handler through anyio, and when that cancel arrived at the wrong moment it escaped as a `CancelledError` instead of a clean close. It failed 13 of 50 runs on Python 3.12.15 and 22 of 50 on 3.12.2 (the Mac's version). Fix: the two sides run in an anyio task group, and the send deadline uses `anyio.fail_after`, so all cancellation goes through one system. After the fix: 0 of 200 runs failed on both versions.
+
+The first two bugs were caught by tests that fail on the old code and pass on the new code. The randomized test (400 random mixes of publishing, slow reading, dropped connections and restarts, buffer sizes 2 to 20, queue sizes 1 to 10) found the restart bug by itself.
 
 ## Buffer sizing
 
@@ -115,9 +119,10 @@ For now, the realistic slow case is a phone on weak Wi-Fi. The stream stays corr
 
 ## Verification
 
-`tests/test_event_delivery.py`, 10 tests:
+`tests/test_event_delivery.py`, 11 tests:
 - restart with overlapping ids forces resync (fails on the old code)
 - cursor just before the buffer loses nothing (fails on the old code)
+- replay is correct when sequence numbers have holes
 - malformed and foreign cursors force resync
 - reset and queue depth counters
 - randomized protocol test: never a silent gap or repeat (fails on the old code)

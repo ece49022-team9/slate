@@ -5,6 +5,7 @@ from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from starlette.requests import HTTPConnection
 
@@ -44,6 +45,8 @@ class EventBus:
         self.ids = itertools.count(1)
         self.boot = secrets.token_hex(3)
         self.prefix = f"evt_{self.boot}_"
+        self.last_seq = 0  # newest sequence number handed out
+        self.dropped = 0  # newest sequence number pushed out of the buffer
         self.stats = {"published": 0, "resets": 0, "stalled": 0, "max_depth": 0}
 
     def envelope(
@@ -54,9 +57,10 @@ class EventBus:
         device_id: str | None = None,
         session_id: str | None = None,
     ) -> Event:
+        self.last_seq = next(self.ids)
         return {
             "v": 1,
-            "id": f"{self.prefix}{next(self.ids):010d}",
+            "id": f"{self.prefix}{self.last_seq:010d}",
             "type": event_type,
             "ts": now(),
             "device_id": device_id,
@@ -75,6 +79,8 @@ class EventBus:
         event = self.envelope(
             event_type, data, device_id=device_id, session_id=session_id
         )
+        if len(self.buffer) == self.buffer.maxlen:
+            self.dropped = self.seq(self.buffer[0]["id"])
         self.buffer.append(event)
         self.stats["published"] += 1
         for queue in self.queues:
@@ -105,16 +111,16 @@ class EventBus:
         if cursor is None:
             return list(self.buffer)
         seen = self.seq(cursor)
-        if seen is None or not self.buffer:
-            # Another boot, a malformed id, or nothing kept since the restart.
+        if seen is None or seen > self.last_seq:
+            # Another boot, a malformed id, or an id we never handed out.
             return None
-        first = self.seq(self.buffer[0]["id"])
-        last = self.seq(self.buffer[-1]["id"])
-        # seen == first - 1 is fine: the web app already has the event just
-        # before the oldest one we kept, so nothing is missing.
-        if not first - 1 <= seen <= last:
+        if seen < self.dropped:
+            # Something after the cursor was pushed out of the buffer.
             return None
-        return list(itertools.islice(self.buffer, seen - first + 1, None))
+        # Compare numbers instead of counting positions: sequence numbers in
+        # the buffer can skip (system.resync takes a number but is not
+        # buffered), so position arithmetic would skip events.
+        return [event for event in self.buffer if self.seq(event["id"]) > seen]
 
     def subscribe(self) -> asyncio.Queue[Event | None]:
         queue: asyncio.Queue[Event | None] = asyncio.Queue(self.queue_size)
@@ -164,15 +170,25 @@ async def stream_events(websocket: WebSocket, after: str | None = None) -> None:
         backlog = [bus.envelope("system.resync", {}), *bus.buffer]
     # Send and listen at the same time, so a closed tab or a server reload
     # ends this connection right away instead of leaving it waiting forever.
-    sender = asyncio.create_task(send_events(websocket, backlog, queue, bus))
-    listener = asyncio.create_task(wait_for_close(websocket))
+    # Whichever side finishes first cancels the other. This uses an anyio task
+    # group, not bare asyncio tasks, because Starlette cancels handlers through
+    # anyio; bare tasks made that cancellation leak out as an error now and
+    # then (13 of 50 runs in the tests).
     try:
-        await asyncio.wait({sender, listener}, return_when=asyncio.FIRST_COMPLETED)
+        async with anyio.create_task_group() as group:
+
+            async def send() -> None:
+                await send_events(websocket, backlog, queue, bus)
+                group.cancel_scope.cancel()
+
+            async def listen() -> None:
+                await wait_for_close(websocket)
+                group.cancel_scope.cancel()
+
+            group.start_soon(send)
+            group.start_soon(listen)
     finally:
         bus.unsubscribe(queue)
-        for task in (sender, listener):
-            task.cancel()
-        await asyncio.gather(sender, listener, return_exceptions=True)
 
 
 async def send_events(
@@ -183,9 +199,11 @@ async def send_events(
 ) -> None:
     try:
         for event in backlog:
-            await asyncio.wait_for(websocket.send_json(event), SEND_TIMEOUT)
+            with anyio.fail_after(SEND_TIMEOUT):
+                await websocket.send_json(event)
         while (event := await queue.get()) is not None:
-            await asyncio.wait_for(websocket.send_json(event), SEND_TIMEOUT)
+            with anyio.fail_after(SEND_TIMEOUT):
+                await websocket.send_json(event)
         # 1013 "try again later": the web app fell behind and should reconnect
         # with its cursor right away.
         await websocket.close(code=1013)
