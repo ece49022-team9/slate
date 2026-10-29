@@ -29,11 +29,12 @@ class EventBusTests(unittest.TestCase):
     def test_asks_for_resync_when_cursor_is_gone(self):
         bus = EventBus(size=2)
         old = bus.publish("agent.step", {})
-        bus.publish("agent.step", {})
-        bus.publish("agent.step", {})
+        for _ in range(3):
+            bus.publish("agent.step", {})
+        # The event right after old has left the buffer, so a gap is unavoidable.
         self.assertIsNone(bus.since(old["id"]))
-        # After a server restart the buffer is empty, so any cursor is stale.
-        self.assertIsNone(EventBus().since("evt_0000000005"))
+        # After a server restart every old cursor is stale.
+        self.assertIsNone(EventBus().since(old["id"]))
 
     def test_slow_listener_is_told_to_reconnect(self):
         bus = EventBus(queue_size=2)

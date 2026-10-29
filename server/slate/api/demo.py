@@ -2,6 +2,7 @@ import asyncio
 from typing import Any
 
 from slate.api.events import EventBus
+from slate.tasks.manager import TaskManager
 
 DEVICE_ID = "dev_01"
 STATUS: dict[str, Any] = {
@@ -70,3 +71,20 @@ async def run_demo(bus: EventBus, interval: float = 1.5) -> None:
                 session_id=session if event_type == "agent.step" else None,
             )
         loop += 1
+
+
+async def run_task_demo(manager: TaskManager, approval_timeout: float = 30.0) -> None:
+    """A real task that stops for approval. Answer it from the web app or with
+    POST /api/approvals/{id}; if nobody answers it times out."""
+    while True:
+        task = manager.create("Pay the electric bill", kind="payment")
+        manager.start(task.id)
+        await asyncio.sleep(2)
+        approval = manager.request_approval(
+            task.id, "Pay $84.12 to Duke Energy?", timeout=approval_timeout
+        )
+        result = await manager.wait_for_decision(approval.id)
+        if result.status == "approved":
+            await asyncio.sleep(2)
+            manager.succeed(task.id, "Paid $84.12, confirmation 55120")
+        await asyncio.sleep(10)
