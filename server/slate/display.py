@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from slate.board import check, load
+from slate.board import BOARD, check, load
 from slate.breadboard import breadboard, build_image, tone
 
 
@@ -36,7 +36,7 @@ async def index():
 
 @app.get("/board")
 async def board():
-    board, parts = load()
+    board, parts = load(BOARD.with_name("board-prototype.toml"))
     mcu = parts["mcu"][board["mcu"]]
     return {
         "mcu": {"id": board["mcu"], "name": mcu["name"]},
@@ -112,7 +112,7 @@ async def serial(keys: Keys, request: Request):
 
 @app.post("/tone")
 async def play_tone(request: Request):
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     rate = board["device"]["mic"]["sample_hz"]
     bench = request.app.state.bench
     bench.feed(mic_slot_pcm(tone(440, 8000, 1.5, rate), bench.slot))

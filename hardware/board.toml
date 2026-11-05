@@ -1,27 +1,34 @@
-mcu = "esp32-wroom-32"
+mcu = "esp32-s3-wroom-1-n16r8"
 supply_v = 3.3
 
 [device.oled]
 part = "ssd1351"
-pins = { clk = 18, data = 23, cs = 5, dc = 16, reset = 17 }
+pins = { clk = 12, data = 11, cs = 10, dc = 14, reset = 21 }
 spi_hz = 16_000_000
+bus = "spi2"
 
 [device.mic]
 part = "mp34dt01"
-pins = { clk = 26, data = 36 }
+pins = { clk = 4, data = 5 }
 slot = "left"
 sample_hz = 16_000
 
 [device.speaker]
-part = "max98357a"
-pins = { bclk = 14, lrclk = 25, din = 27 }
+part = "max98357a-sd"
+pins = { bclk = 6, lrclk = 17, din = 15, sd = 16 }
 
-# Power hardware is opt-in; GPIO15 is a strapping pin.
 [device.power]
 part = "slate-power"
 enabled = false
-pins = { hold = 13, sense = 15, fg_alrt = 35, chg_stat = 34, pgood = 39 }
+pins = { hold = 1, sense = 2, fg_alrt = 18, chg_stat = 40, pgood = 41 }
+i2c = { sda = 8, scl = 9 }
+bus = "i2c0"
 
-[device.power.i2c]
-sda = 21
-scl = 22
+[device.future]
+part = "slate-reserved"
+enabled = false
+pins = { haptics_en = 7, miso_sd = 13, sdcs = 47, sdcd = 42 }
+
+[device.console]
+part = "slate-console"
+pins = { usb_dm = 19, usb_dp = 20, uart_tx = 43, uart_rx = 44, boot = 0 }
