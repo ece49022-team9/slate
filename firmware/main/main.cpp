@@ -1,3 +1,4 @@
+#ifndef SLATE_BRINGUP
 #include <Arduino.h>
 #include <atomic>
 #include <math.h>
@@ -191,4 +192,6 @@ void loop() {
   perf_stack(PerfTask::LOOP);
   delay(20);
 }
+#endif
+
 #endif
