@@ -74,9 +74,9 @@ async def check(combined: bool = False) -> None:
 def main() -> None:
     from slate.breadboard import build_image
 
-    for environment in ("speaker-test", "esp32dev"):
+    for environment in ("speaker-test", "sim"):
         build_image(environment)
-        asyncio.run(check(combined=environment == "esp32dev"))
+        asyncio.run(check(combined=environment == "sim"))
 
 
 if __name__ == "__main__":

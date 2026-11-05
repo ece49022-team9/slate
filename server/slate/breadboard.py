@@ -24,7 +24,7 @@ QEMU = Path(
         "SLATE_QEMU", Path.home() / "esp/qemu-slate/build/qemu-system-xtensa"
     )
 )
-BUILD = ROOT / "firmware/.pio/build/esp32dev"
+BUILD = ROOT / "firmware/.pio/build/sim"
 BOOT_APP = (
     Path.home()
     / ".platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
@@ -291,7 +291,7 @@ def tone(hz: float, amplitude: int, seconds: float, rate: int) -> list[int]:
     ]
 
 
-def build_image(environment: str = "esp32dev") -> Path:
+def build_image(environment: str = "sim") -> Path:
     build = BUILD.parent / environment
     subprocess.run(
         ["make", "firmware", f"FIRMWARE_ENV={environment}"], cwd=ROOT, check=True
@@ -329,6 +329,7 @@ async def breadboard(
     realtime: bool = False,
     boot_message: str = "slate.state: 0",
     connect_cloud: bool = True,
+    provision_cloud: bool = True,
 ) -> AsyncIterator[Breadboard]:
     if not QEMU.exists():
         raise RuntimeError(f"slate.breadboard: {QEMU} is missing; run make sim-setup")
@@ -399,7 +400,7 @@ async def breadboard(
                 or os.environ.get("SLATE_DEVICE_TOKEN")
                 or CLOUD.exists()
             )
-            if connect_cloud and has_cloud:
+            if connect_cloud and provision_cloud and has_cloud:
                 cloud_url, device_token = cloud()
                 network = asyncio.create_task(bench.link.wait_for("slate.net: up", 30))
                 bench.link.type("!net eth\n")
