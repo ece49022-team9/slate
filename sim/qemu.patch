@@ -439,10 +439,10 @@ index 4c2b5b3..9406866 100644
  system_ss.add(when: 'CONFIG_RISCV_ESP32C3', if_true: files(
 diff --git a/hw/misc/slate_board.c b/hw/misc/slate_board.c
 new file mode 100644
-index 0000000..e7c4f5f
+index 0000000..5b07acb
 --- /dev/null
 +++ b/hw/misc/slate_board.c
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,204 @@
 +/*
 + * Slate breadboard bridge. QEMU and the Slate part models run in lockstep over
 + * one character device, so a run replays exactly given the same inputs.
@@ -521,6 +521,8 @@ index 0000000..e7c4f5f
 +{
 +    if (slate_board && chr == slate_board->uart) {
 +        slate_board_append(slate_board, 'O', byte);
++    } else if (slate_board && chr == slate_board->hci) {
++        slate_board_append(slate_board, 'H', byte);
 +    }
 +}
 +
@@ -549,13 +551,16 @@ index 0000000..e7c4f5f
 +    }
 +}
 +
-+static void slate_board_deliver_uart(SlateBoardState *s)
++static void slate_board_deliver_uart(Chardev *uart, Fifo8 *input)
 +{
-+    uint32_t room = MIN(qemu_chr_be_can_write(s->uart), fifo8_num_used(&s->uart_in));
++    if (!uart) {
++        return;
++    }
++    uint32_t room = MIN(qemu_chr_be_can_write(uart), fifo8_num_used(input));
 +    if (room) {
 +        uint8_t bytes[SLATE_BOARD_UART_IN];
-+        uint32_t len = fifo8_pop_buf(&s->uart_in, bytes, room);
-+        qemu_chr_be_write(s->uart, bytes, len);
++        uint32_t len = fifo8_pop_buf(input, bytes, room);
++        qemu_chr_be_write(uart, bytes, len);
 +    }
 +}
 +
@@ -579,6 +584,12 @@ index 0000000..e7c4f5f
 +                exit(1);
 +            }
 +            fifo8_push_all(&s->uart_in, payload, len);
++        } else if (header[0] == 'h') {
++            if (len > fifo8_num_free(&s->hci_in)) {
++                error_report("slate.board: UART1 input overflow");
++                exit(1);
++            }
++            fifo8_push_all(&s->hci_in, payload, len);
 +        } else if (header[0] == 'A') {
 +            esp32_i2s_push(s->i2s, payload, len);
 +        } else {
@@ -586,7 +597,8 @@ index 0000000..e7c4f5f
 +            exit(1);
 +        }
 +    }
-+    slate_board_deliver_uart(s);
++    slate_board_deliver_uart(s->uart, &s->uart_in);
++    slate_board_deliver_uart(s->hci, &s->hci_in);
 +    timer_mod(&s->tick, now + s->tick_ns);
 +}
 +
@@ -599,6 +611,7 @@ index 0000000..e7c4f5f
 +    }
 +    qdev_init_gpio_in_named(DEVICE(dev), slate_board_pin, "pin", SLATE_BOARD_PINS);
 +    fifo8_create(&s->uart_in, SLATE_BOARD_UART_IN);
++    fifo8_create(&s->hci_in, SLATE_BOARD_UART_IN);
 +    timer_init_ns(&s->tick, QEMU_CLOCK_VIRTUAL, slate_board_tick, s);
 +    timer_mod(&s->tick, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->tick_ns);
 +    slate_board = s;
@@ -801,7 +814,7 @@ index e000470..9b1a9fb 100644
  
      object_initialize_child(obj, "dport", &s->dport, TYPE_ESP32_DPORT);
  
-@@ -754,6 +761,24 @@ static void esp32_machine_init_i2c(Esp32SocState *s)
+@@ -754,6 +761,25 @@ static void esp32_machine_init_i2c(Esp32SocState *s)
      object_property_set_int(OBJECT(tmp105), "temperature", 25 * 1000, &error_fatal);
  }
  
@@ -815,6 +828,7 @@ index e000470..9b1a9fb 100644
 +    DeviceState *board = qdev_new(TYPE_SLATE_BOARD);
 +    qdev_prop_set_chr(board, "chardev", chr);
 +    SLATE_BOARD(board)->uart = serial_hd(0);
++    SLATE_BOARD(board)->hci = serial_hd(1);
 +    SLATE_BOARD(board)->i2s = &ss->i2s0;
 +    qdev_realize_and_unref(board, vspi, &error_fatal);
 +    for (int pin = 0; pin < ESP32_GPIO_PINS; ++pin) {
@@ -826,7 +840,7 @@ index e000470..9b1a9fb 100644
  static void esp32_machine_init_openeth(Esp32SocState *ss)
  {
      SysBusDevice *sbd;
-@@ -827,6 +852,7 @@ static void esp32_machine_init(MachineState *machine)
+@@ -827,6 +853,7 @@ static void esp32_machine_init(MachineState *machine)
      }
  
      esp32_machine_init_i2c(ss);
@@ -923,10 +937,10 @@ index 0000000..ffc7c84
 +void esp32_i2s_push(Esp32I2sState *s, const uint8_t *data, uint32_t len);
 diff --git a/include/hw/misc/slate_board.h b/include/hw/misc/slate_board.h
 new file mode 100644
-index 0000000..2b4efc2
+index 0000000..f6bbb12
 --- /dev/null
 +++ b/include/hw/misc/slate_board.h
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,32 @@
 +#pragma once
 +
 +#include "hw/ssi/ssi.h"
@@ -950,8 +964,10 @@ index 0000000..2b4efc2
 +    uint32_t tick_ns;
 +    QEMUTimer tick;
 +    Chardev *uart;
++    Chardev *hci;
 +    Esp32I2sState *i2s;
 +    Fifo8 uart_in;
++    Fifo8 hci_in;
 +    uint8_t pending_kind;
 +    uint8_t pending[SLATE_BOARD_BUFFER];
 +    uint16_t pending_len;

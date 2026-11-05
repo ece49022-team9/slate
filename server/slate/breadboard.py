@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from slate.bluetooth import Bluetooth
 from slate.board import ROOT, load
 from slate.link import BAUD, Link
 from slate.voice.device import CLOUD, cloud, socket_url
@@ -120,6 +121,7 @@ class Breadboard:
         self.realtime = realtime
         self.now = 0
         self.uart = bytearray()
+        self.bluetooth = Bluetooth(self.timeout)
         self.output = bytearray()
         self.audio = bytearray()
         self.echo = bytearray()
@@ -155,6 +157,8 @@ class Breadboard:
                 self.oled.spi(ns, payload)
             elif kind == b"P":
                 self.capture_speaker(ns, payload)
+            elif kind == b"H":
+                self.bluetooth.feed(payload)
             elif kind == b"O":
                 self.output += payload
             elif kind == b"T":
@@ -195,6 +199,10 @@ class Breadboard:
             size = min(len(self.uart), BAUD * TICK_NS // 10_000_000_000)
             message += struct.pack("<cH", b"U", size) + self.uart[:size]
             del self.uart[:size]
+        if self.bluetooth.output:
+            size = min(len(self.bluetooth.output), BAUD * TICK_NS // 10_000_000_000)
+            message += struct.pack("<cH", b"h", size) + self.bluetooth.output[:size]
+            del self.bluetooth.output[:size]
         if self.audio or self.echo:
             drained = self.rate * self.now // 1_000_000_000
             self.buffered = max(0, self.buffered - (drained - self.frames_drained) * 4)
@@ -367,6 +375,8 @@ async def breadboard(
                     f"file={IMAGE},if=mtd,format=raw",
                     "-chardev",
                     f"socket,id=slate,path={path}",
+                    "-serial",
+                    "null",
                     "-serial",
                     "null",
                     "-global",
