@@ -282,6 +282,7 @@ class VoiceSession:
 
     async def respond(self, turn: Turn, text: str, tts_timing: list) -> str:
         queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
+        audio: asyncio.Queue[bytes | None] = asyncio.Queue()
         sentences = Sentences()
         streamed = ""
         spoken = ""
@@ -341,17 +342,23 @@ class VoiceSession:
                     async with aclosing(speak_stream(piece, timings=timing)) as stream:
                         async for pcm in stream:
                             turn.timing.mark("tts_first_audio")
+                            await audio.put(pcm)
                             turn.timing.mark("reply_first_enqueue")
-                            await self.play(pcm, lambda: self.turn is turn)
+            turn.timing.mark("tts_completed")
+            await audio.put(None)
+
+        async def playback() -> None:
+            while (pcm := await audio.get()) is not None:
+                await self.play(pcm, lambda: self.turn is turn)
             if self.turn is turn:
                 await self.send_audio(self.for_speaker(b"", last=True))
-            turn.timing.mark("tts_completed")
             await self.wait_for_playout()
             turn.timing.mark("reply_playout_done")
 
         async with asyncio.TaskGroup() as tasks:
             answer = tasks.create_task(generate())
             tasks.create_task(synthesize())
+            tasks.create_task(playback())
         return answer.result()
 
     async def transcribe(self, turn: Turn) -> None:

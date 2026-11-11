@@ -22,6 +22,7 @@ static constexpr uint32_t REPLY_PREBUFFER_MS = 160;
 static constexpr size_t REPLY_PREBUFFER_BYTES =
     SPEAKER_RATE * sizeof(int16_t) * REPLY_PREBUFFER_MS / 1000;
 static constexpr uint32_t REPLY_SETTLE_MS = 100;
+static constexpr uint32_t REPLY_WAIT_MS = 100;
 
 static void play_replies(void*) {
   int16_t mono[REPLY_BLOCK_SAMPLES];
@@ -127,10 +128,12 @@ size_t speaker_write(const uint8_t* data, size_t bytes) {
 void speaker_play(const uint8_t* pcm, size_t bytes) {
   if (!reply_audio || stopping.load() || bytes % sizeof(int16_t)) return;
   reply_arrived_at.store(millis());
-  if (xStreamBufferSend(reply_audio, pcm, bytes, 0) < bytes) {
+  size_t sent = xStreamBufferSend(reply_audio, pcm, bytes, pdMS_TO_TICKS(REPLY_WAIT_MS));
+  if (sent < bytes) {
     static uint32_t last_overflow;
     if (millis() - last_overflow >= 1000) {
-      Serial.println("slate.speaker: reply buffer full, dropping audio");
+      Serial.printf("slate.speaker: reply buffer stayed full for %u ms, dropped %u bytes\n",
+                    unsigned(REPLY_WAIT_MS), unsigned(bytes - sent));
       last_overflow = millis();
     }
   }
