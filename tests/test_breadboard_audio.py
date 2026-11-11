@@ -1,6 +1,7 @@
 import unittest
 from array import array
 
+from slate.bluetooth import Bluetooth
 from slate.breadboard import Breadboard, mix
 
 
@@ -8,6 +9,7 @@ def bench() -> Breadboard:
     board = object.__new__(Breadboard)
     board.realtime = True
     board.uart = bytearray()
+    board.bluetooth = Bluetooth()
     board.audio = bytearray()
     board.echo = bytearray()
     board.echo_gain = 0.0
@@ -47,3 +49,14 @@ class BreadboardAudioTests(unittest.TestCase):
         board.echo_gain = 0.5
         board.capture_speaker(0, array("h", [1000, -1000, 32767, -32768]).tobytes())
         self.assertEqual(array("h", board.echo).tolist(), [500, -500, 16384, -16384])
+
+    def test_hci_input_is_paced_independently_from_serial(self):
+        board = bench()
+        board.uart.extend(b"u" * 100)
+        board.bluetooth.output.extend(b"h" * 100)
+        reply = board.reply()
+        self.assertEqual(
+            reply, b"U\x5c\x00" + b"u" * 92 + b"h\x5c\x00" + b"h" * 92 + b"R\x00\x00"
+        )
+        self.assertEqual(board.uart, b"u" * 8)
+        self.assertEqual(board.bluetooth.output, b"h" * 8)

@@ -25,7 +25,8 @@ from slate.voice.turn import Turn
 logger = logging.getLogger("slate.voice.session")
 SPOKEN_END = "\n---"
 REPLY_FRAME_BYTES = SAMPLE_RATE * SAMPLE_BYTES // 50
-REPLY_LEAD_SECONDS = 0.2
+REPLY_LEAD_SECONDS = 1.0
+CALL_LEAD_SECONDS = 0.2
 RECEIPT_SECONDS = 5
 HANGUP_SECONDS = 5
 KEPT_REPORTS = 50
@@ -265,7 +266,9 @@ class VoiceSession:
             lambda: not self.closed and self.turn is turn,
         )
 
-    async def play(self, pcm: bytes, playing: Callable[[], bool]) -> None:
+    async def play(
+        self, pcm: bytes, playing: Callable[[], bool], lead: float = REPLY_LEAD_SECONDS
+    ) -> None:
         clock = asyncio.get_running_loop().time
         for offset in range(0, len(pcm), REPLY_FRAME_BYTES):
             if self.closed or not playing():
@@ -275,13 +278,14 @@ class VoiceSession:
                 SAMPLE_RATE * SAMPLE_BYTES
             )
             await self.send_audio(self.for_speaker(chunk))
-            await asyncio.sleep(max(0, self.playhead - clock() - REPLY_LEAD_SECONDS))
+            await asyncio.sleep(max(0, self.playhead - clock() - lead))
 
     async def wait_for_playout(self) -> None:
         await asyncio.sleep(max(0, self.playhead - asyncio.get_running_loop().time()))
 
     async def respond(self, turn: Turn, text: str, tts_timing: list) -> str:
         queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
+        audio: asyncio.Queue[bytes | None] = asyncio.Queue()
         sentences = Sentences()
         streamed = ""
         spoken = ""
@@ -341,17 +345,23 @@ class VoiceSession:
                     async with aclosing(speak_stream(piece, timings=timing)) as stream:
                         async for pcm in stream:
                             turn.timing.mark("tts_first_audio")
+                            await audio.put(pcm)
                             turn.timing.mark("reply_first_enqueue")
-                            await self.play(pcm, lambda: self.turn is turn)
+            turn.timing.mark("tts_completed")
+            await audio.put(None)
+
+        async def playback() -> None:
+            while (pcm := await audio.get()) is not None:
+                await self.play(pcm, lambda: self.turn is turn)
             if self.turn is turn:
                 await self.send_audio(self.for_speaker(b"", last=True))
-            turn.timing.mark("tts_completed")
             await self.wait_for_playout()
             turn.timing.mark("reply_playout_done")
 
         async with asyncio.TaskGroup() as tasks:
             answer = tasks.create_task(generate())
             tasks.create_task(synthesize())
+            tasks.create_task(playback())
         return answer.result()
 
     async def transcribe(self, turn: Turn) -> None:
@@ -481,7 +491,9 @@ class VoiceSession:
             pending += await voice.get()
             whole = len(pending) - len(pending) % REPLY_FRAME_BYTES
             if whole:
-                await self.play(pending[:whole], lambda: self.call is call)
+                await self.play(
+                    pending[:whole], lambda: self.call is call, CALL_LEAD_SECONDS
+                )
                 pending = pending[whole:]
 
     def remember(self, key: str, report: dict) -> None:

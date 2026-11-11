@@ -52,9 +52,17 @@ class SpeechStreamTests(unittest.IsolatedAsyncioTestCase):
             get=SimpleNamespace(aio=AsyncMock(side_effect=get_result)),
             cancel=SimpleNamespace(aio=AsyncMock(side_effect=cancel)),
         )
+
+        async def get_many(n_values):
+            values = [await self.queue.get()]
+            while len(values) < n_values and not self.queue.empty():
+                values.append(self.queue.get_nowait())
+            return values
+
         self.remote_queue = SimpleNamespace(
             put=SimpleNamespace(aio=self.queue.put),
             get=SimpleNamespace(aio=self.queue.get),
+            get_many=SimpleNamespace(aio=get_many),
         )
         self.spawn = AsyncMock(return_value=self.call)
         self.model = SimpleNamespace(

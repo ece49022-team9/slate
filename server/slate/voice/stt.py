@@ -6,7 +6,13 @@ from pathlib import Path
 
 import modal
 
-from slate.voice.audio import MAX_AUDIO_SECONDS, SAMPLE_BYTES, SAMPLE_RATE
+from slate.voice.audio import (
+    IDLE_SECONDS,
+    MAX_AUDIO_SECONDS,
+    SAMPLE_BYTES,
+    SAMPLE_RATE,
+)
+from slate.voice.queues import QueueSender
 
 app = modal.App("slate-stt")
 cache = modal.Volume.from_name("slate-stt-models", create_if_missing=True)
@@ -25,6 +31,7 @@ with image.imports():
 logger = logging.getLogger("slate.stt")
 MODEL = "kyutai/stt-1b-en_fr"
 REVISION = "1c34c6b4f7e9299bb61985f145052ff131005dde"
+AUDIO_BATCH = 256
 
 
 @app.cls(
@@ -32,7 +39,7 @@ REVISION = "1c34c6b4f7e9299bb61985f145052ff131005dde"
     gpu=["L4", "A10", "L40S"],
     volumes={"/models": cache},
     max_containers=1,
-    scaledown_window=60,
+    scaledown_window=IDLE_SECONDS,
     timeout=300,
     startup_timeout=600,
 )
@@ -138,20 +145,24 @@ class SpeechToText:
             if profile
             else None
         )
-        for piece in self.decode(audio, timing):
-            if timing is not None:
-                timing.setdefault(
-                    "first_text_ms", (time.monotonic_ns() - started) / 1_000_000
-                )
-                put_started = time.monotonic_ns()
-            text.put(piece)
-            if timing is not None:
-                timing["queue_put_ms"] += (
-                    time.monotonic_ns() - put_started
-                ) / 1_000_000
-                if not timing["first_text_emitted"]:
-                    timing["first_text_emitted"] = True
-                    timing["tail_decode_after_first_text_ms"] = 0.0
+        sender = QueueSender(text)
+        try:
+            for piece in self.decode(audio, timing):
+                if timing is not None:
+                    timing.setdefault(
+                        "first_text_ms", (time.monotonic_ns() - started) / 1_000_000
+                    )
+                    put_started = time.monotonic_ns()
+                sender.put(piece)
+                if timing is not None:
+                    timing["queue_put_ms"] += (
+                        time.monotonic_ns() - put_started
+                    ) / 1_000_000
+                    if not timing["first_text_emitted"]:
+                        timing["first_text_emitted"] = True
+                        timing["tail_decode_after_first_text_ms"] = 0.0
+        finally:
+            sender.close()
         if timing is None:
             return {}
         sync_started = time.monotonic_ns()
@@ -179,28 +190,31 @@ class SpeechToText:
         frame_bytes = self.frame_samples * SAMPLE_BYTES
         received = 0
         first = True
+        finished = False
         try:
             with (
                 torch.inference_mode(),
                 self.encoder.streaming(1),
                 self.decoder.streaming(1),
             ):
-                while True:
+                while not finished:
                     if timing is not None:
                         get_started = time.monotonic_ns()
-                    chunk = audio.get(timeout=30)
+                    chunks = audio.get_many(AUDIO_BATCH, timeout=30)
                     if timing is not None:
                         timing["queue_get_ms"] += (
                             time.monotonic_ns() - get_started
                         ) / 1_000_000
-                    if chunk is None:
-                        if received == 0 or received % SAMPLE_BYTES:
-                            raise ValueError(
-                                "Audio must contain complete 16-bit samples"
-                            )
-                        pending.extend(bytes(self.tail_samples * SAMPLE_BYTES))
-                        pending.extend(bytes(-len(pending) % frame_bytes))
-                    else:
+                    for chunk in chunks:
+                        if chunk is None:
+                            if received == 0 or received % SAMPLE_BYTES:
+                                raise ValueError(
+                                    "Audio must contain complete 16-bit samples"
+                                )
+                            pending.extend(bytes(self.tail_samples * SAMPLE_BYTES))
+                            pending.extend(bytes(-len(pending) % frame_bytes))
+                            finished = True
+                            break
                         if not isinstance(chunk, bytes):
                             raise ValueError("Audio chunks must be PCM bytes")
                         received += len(chunk)
@@ -211,11 +225,9 @@ class SpeechToText:
                         frame = bytes(pending[:frame_bytes])
                         del pending[:frame_bytes]
                         yield from self.decode_frame(
-                            frame, first, timing, tail=chunk is None
+                            frame, first, timing, tail=finished
                         )
                         first = False
-                    if chunk is None:
-                        break
             logger.info(
                 "Transcribed %.2f seconds", received / SAMPLE_BYTES / SAMPLE_RATE
             )
