@@ -150,17 +150,27 @@ STT accepts mono 24 kHz, 16-bit PCM WAV files up to 120 seconds. TTS returns the
 
 ## Firmware
 
-The target is the original ESP32, on an ESP32-WROOM-32 dev board. One PlatformIO build runs both on the board and in QEMU:
+The target is the original ESP32, on an ESP32-WROOM-32 dev board. The `esp32dev` image uses its Bluetooth radio. The `sim` image runs the same application with the NimBLE host connected over UART1 to the simulator:
 
 ```sh
-make firmware   # build
+make firmware   # build for the board
+make firmware FIRMWARE_ENV=sim # build for QEMU
 make flash      # write it to the board
 make monitor    # serial console at 921600 baud
+make pair SSID=<name> PASSWORD=<password> # set up a nearby board over Bluetooth
 make sim-setup  # build the patched QEMU, once
-make sim        # run the same image in QEMU with a browser preview
+make sim        # run the simulator image in QEMU with a browser preview
 make sim-check  # run the simulator checks
 make bench      # flash the board and run the hardware checks
 ```
+
+An unconfigured device advertises as `Slate-XXXX`, where `XXXX` is the last two bytes of its Bluetooth address. Pair using the six-digit code on the OLED. Setup uses LE Secure Connections with an authenticated, encrypted link and does not retain a bond. Serial prints the code as `slate.ble: passkey NNNNNN`. `make pair` finds the board from the Mac, sends the Wi-Fi settings and the cloud address from `.local/cloud.json`, and waits for `done`; macOS asks for the code.
+
+QEMU has no Bluetooth radio, so the simulator never appears to the Mac as a Bluetooth device. Instead, the simulator carries UART1 to `server/slate/bluetooth.py`, which acts as the controller and as a phone. `make sim-check` uses it to check advertising, the rejected unpaired write, a wrong code, pairing, saving both settings, shutdown, and the first message to a local cloud.
+
+The setup service is `5a7e0001-6a1b-4c3e-9f5d-8b2c1e0d4a10`. Write one UTF-8 line of up to 240 bytes to characteristic `5a7e0002-6a1b-4c3e-9f5d-8b2c1e0d4a10`: `net wifi <ssid> <password>`, `net eth`, or `cloud <url> <token>`. Quote Wi-Fi fields containing spaces, as with serial provisioning. Read or subscribe to `5a7e0003-6a1b-4c3e-9f5d-8b2c1e0d4a10` for `ready`, `saved net`, `saved cloud`, `net up <ip>`, `net down`, `error <reason>`, and `done`. Both characteristics require pairing. The preferred ATT MTU is 256.
+
+Send `!setup` over serial to reopen setup. The board reboots into setup if its controller memory has already been released; ESP-IDF cannot restore that memory during the same boot. The simulator reopens setup directly. Once network and cloud settings are saved, setup sends `done`, stops NimBLE, and returns the board's controller memory to the heap. Cloud operation then continues without a reboot. A configured board also releases controller memory at boot.
 
 `make flash` and `make monitor` pick the board automatically when exactly one USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>`. Over serial, send `0` through `5` for idle, listen, mute, transcribe, respond, or error; `l`, `r`, or `m` (while idle) to pick the left mic, right mic, or their mix; `a` or `x` to turn audio streaming on or off; `t` to play a one-second 440 Hz speaker test without blocking the mic or display; and `c` to start or end a live call. In listen, the firmware prints the mic's sample count, RMS, and peak every half second. With streaming on, it also sends the filtered mic audio as binary frames: a zero byte, a two-byte little-endian length, then 16-bit samples. Text never contains a zero byte, so the host can tell them apart. The ROM's boot messages use 115200 baud and look garbled at 921600.
 
