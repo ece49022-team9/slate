@@ -1,4 +1,6 @@
 import logging
+import queue
+import threading
 import time
 
 import modal
@@ -9,6 +11,7 @@ app = modal.App("slate-tts")
 cache = modal.Volume.from_name("slate-tts-models", create_if_missing=True)
 image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("build-essential")
     .uv_pip_install(
         "transformers==4.57.6",
         "torch==2.7.1",
@@ -16,14 +19,20 @@ image = (
         "librosa==0.11.0",
         "soundfile==0.13.1",
     )
-    .env({"HF_HOME": "/models"})
+    .env(
+        {
+            "HF_HOME": "/models",
+            "TORCHINDUCTOR_CACHE_DIR": "/models/inductor",
+            "TRITON_CACHE_DIR": "/models/triton",
+        }
+    )
     .add_local_python_source("slate")
 )
 
 with image.imports():
     import numpy as np
     import torch
-    from transformers import AutoProcessor, CsmForConditionalGeneration
+    from transformers import AutoProcessor, CsmForConditionalGeneration, StaticCache
     from transformers.models.mimi.modeling_mimi import (
         MimiConv1d,
         MimiConvTranspose1d,
@@ -33,6 +42,7 @@ with image.imports():
 logger = logging.getLogger("slate.tts")
 MODEL = "sesame/csm-1b"
 REVISION = "c92a71e1c419772e25be7dc14d952c2521a740ab"
+WARMUP_TEXT = "Warming up the voice so the first reply sounds smooth."
 
 
 class AcousticFrameTiming:
@@ -126,6 +136,86 @@ def encode_pcm(samples) -> bytes:
     return (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
 
 
+class DepthLoop:
+    def __init__(self, model) -> None:
+        self.decoder = model.depth_decoder
+        config = self.decoder.generation_config
+        if not config.do_sample or config.top_p not in (None, 1.0):
+            raise ValueError("slate.tts: depth loop expects top-k sampling")
+        self.temperature = config.temperature
+        self.top_k = config.top_k
+        self.codebooks = model.config.num_codebooks
+        self.cache = StaticCache(
+            config=self.decoder.config, max_cache_len=self.codebooks + 1
+        )
+        self.positions = torch.arange(self.codebooks + 1, device=model.device)
+        self.step = torch.compile(self.next, mode="reduce-overhead", fullgraph=True)
+
+    def logits(self, ids, positions, hidden=None):
+        return self.decoder(
+            input_ids=ids,
+            backbone_last_hidden_state=hidden,
+            past_key_values=self.cache,
+            cache_position=positions,
+            use_cache=True,
+            logits_to_keep=1,
+        ).logits[:, -1]
+
+    def pick(self, logits):
+        logits = logits.float() / self.temperature
+        floor = torch.topk(logits, self.top_k).values[:, -1:]
+        logits = logits.masked_fill(logits < floor, -float("inf"))
+        noise = torch.rand_like(logits).clamp_(min=1e-10).log_().neg_().log_().neg_()
+        return (logits + noise).argmax(-1)
+
+    def next(self, token, position):
+        return self.pick(self.logits(token, position))
+
+    def generate(self, input_ids, backbone_last_hidden_state, **_):
+        first = self.logits(input_ids, self.positions[:2], backbone_last_hidden_state)
+        token = self.pick(first)
+        tokens = [input_ids, token[:, None]]
+        for position in range(2, self.codebooks):
+            token = self.step(token[:, None], self.positions[position : position + 1])
+            token = token.clone()
+            tokens.append(token[:, None])
+        return torch.cat(tokens, dim=1)
+
+
+class QueueSender:
+    def __init__(self, outgoing) -> None:
+        self.outgoing = outgoing
+        self.pending = queue.SimpleQueue()
+        self.error = None
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def put(self, pcm: bytes) -> None:
+        self.pending.put(pcm)
+
+    def run(self) -> None:
+        finished = False
+        while not finished:
+            chunks = [self.pending.get()]
+            while not self.pending.empty():
+                chunks.append(self.pending.get())
+            finished = chunks[-1] is None
+            pcm = b"".join(chunk for chunk in chunks if chunk is not None)
+            if not pcm or self.error is not None:
+                continue
+            try:
+                self.outgoing.put(pcm)
+            except Exception as error:
+                logger.exception("slate.tts: sending streamed audio failed")
+                self.error = error
+
+    def close(self) -> None:
+        self.pending.put(None)
+        self.thread.join()
+        if self.error is not None:
+            raise RuntimeError("slate.tts: streamed audio was lost") from self.error
+
+
 class AcousticPcmStreamer(AcousticFrameTiming):
     def __init__(self, model, emit, profile: bool = False) -> None:
         super().__init__(profile)
@@ -185,7 +275,7 @@ def generate(model, inputs, max_seconds: int, observer, *, output_audio: bool):
 
 @app.cls(
     image=image,
-    gpu=["L4", "A10", "L40S"],
+    gpu="L40S",
     volumes={"/models": cache},
     secrets=[modal.Secret.from_name("slate-huggingface", required_keys=["HF_TOKEN"])],
     max_containers=1,
@@ -208,6 +298,19 @@ class TextToSpeech:
             .eval()
         )
         self.model.codec_model.float()
+        self.model.depth_decoder.generate = DepthLoop(self.model).generate
+        inputs = self.processor(f"[0]{WARMUP_TEXT}", add_special_tokens=True).to("cuda")
+        for attempt in range(2):
+            observer = AcousticPcmStreamer(self.model, lambda pcm: None)
+            with torch.inference_mode():
+                self.model.generate(
+                    **inputs, output_audio=False, max_new_tokens=40, streamer=observer
+                )
+            logger.info(
+                "Warmup %d done after %.1f s",
+                attempt + 1,
+                (time.monotonic_ns() - started) / 1e9,
+            )
         cache.commit()
         self.model_loaded_ns = time.monotonic_ns()
         self.model_load_ms = (self.model_loaded_ns - started) / 1_000_000
@@ -319,13 +422,19 @@ class TextToSpeech:
             inputs = self.processor(f"[0]{text.strip()}", add_special_tokens=True).to(
                 "cuda"
             )
-            observer = AcousticPcmStreamer(self.model, outgoing.put, profile)
+            sender = QueueSender(outgoing)
+            observer = AcousticPcmStreamer(self.model, sender.put, profile)
             if profile:
                 torch.cuda.synchronize()
                 generate_started = time.monotonic_ns()
                 observer.gpu_start.record()
-            with torch.inference_mode():
-                generate(self.model, inputs, max_seconds, observer, output_audio=False)
+            try:
+                with torch.inference_mode():
+                    generate(
+                        self.model, inputs, max_seconds, observer, output_audio=False
+                    )
+            finally:
+                sender.close()
             if not observer.samples:
                 raise RuntimeError("slate.tts: model returned no streamed audio")
             if not profile:
