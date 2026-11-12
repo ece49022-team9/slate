@@ -11,6 +11,8 @@ A portable voice assistant for everyday tasks. The ESP32 only records the microp
 | `server/slate/agent/` | Model calls and task execution |
 | `server/slate/browser/` | Browser sessions, tools and result checks |
 | `server/slate/access/` | Accounts, pairing, permissions and credentials |
+| `server/slate/tasks/` | Task states, approvals and their deadlines |
+| `server/slate/events.py` | Live events for the web dashboard |
 | `web/` | Setup, approvals and user control |
 | `hardware/` | KiCad project and board sources |
 
@@ -32,7 +34,7 @@ make cloud-deploy  # build and deploy the Slate service
 
 The Mac runs only the simulator: `make sim` boots the firmware in QEMU, gives it a network through QEMU's Ethernet model, and provisions it with the URL and token from `.local/cloud.json`.
 
-For the browser client, run `make web` with `VITE_SLATE_URL=wss://<service host>` and `VITE_SLATE_DEVICE_TOKEN` set, then open [localhost:5173](http://127.0.0.1:5173), connect your microphone, and hold Talk.
+For the browser client, run `make web` with `VITE_SLATE_URL=wss://<service host>` and `VITE_SLATE_DEVICE_TOKEN` set, then open [localhost:5173](http://127.0.0.1:5173). The Dashboard tab shows the device, tasks waiting for approval, agent steps and paired devices; the Mic test tab connects your microphone, and you hold Talk. `?mock` shows the dashboard with sample events and no service.
 
 `make check` runs lint, formatting, tests and the web build.
 
@@ -126,6 +128,22 @@ uv run python -m slate.voice simulate .local/voice-check.wav
 ```
 
 It reads a mono 24 kHz, 16-bit WAV, streams it at 16 kHz in real time, prints the transcript and answer, and saves the returned speech to `.local/reply.wav`.
+
+## Tasks and approvals
+
+Every spoken request, live-call handoff and background subagent is a task: `queued`, `running`, `awaiting_approval`, then `succeeded`, `failed`, `cancelled` or `timed_out`. Only the transitions in [machine.py](server/slate/tasks/machine.py) are allowed, and each one is a row in SQLite with who caused it. Each change bumps the task's version, so a decision made on an old screen is refused with 409 instead of applied to something the user did not see.
+
+When `slate-guard` asks for approval, the session opens a task approval with a two-minute deadline and sends the device and the browser the usual `approval` message plus its `approval_id`. The first answer wins, from the dashboard (`POST /api/approvals/{id}`) or from the device's `approve` message; a second answer gets an error. Approve sends `once` to Hermes. Deny, the deadline, cancelling the task, or a new turn all send `deny`. A server restart fails tasks that were running and expires approvals whose deadline passed while it was down. `POST /api/tasks/{id}/cancel` on the current turn's task also cancels the turn.
+
+Approvals can name stored credentials. A task can read a credential only while it is running and only after the user approved an approval that named it; every attempt is logged with the approval that allowed it.
+
+The web dashboard follows `wss://<service>/api/events/socket` with the owner token as a subprotocol. Events have an `id`; a reconnect sends the last one as `?after=` and receives only what it missed, or `system.resync` when the server's 500-event buffer has moved past it. A web app that stops reading is disconnected rather than slowing the others. `uv run python scripts/bench_events.py` measures delivery and appends a summary to the experiment log; `uv run python scripts/bench_tasks.py` checks write latency, approval races and deadlines.
+
+## Access
+
+`SLATE_DEVICE_TOKEN` is the owner token: the browser, the Mac scripts and every `/api/tasks`, `/api/devices` and `/api/credentials` route use it. `make pair` registers the board with `POST /api/devices` and sends it a token of its own over Bluetooth instead of the owner token. A device token opens only `/api/device/socket`; the server keeps a SHA-256 hash of it. `DELETE /api/devices/{id}` revokes it and closes that device's socket with 4401.
+
+Credentials are encrypted with AES-256-GCM under `SLATE_MASTER_KEY`, bound to their row, and never returned by any route. `make cloud-setup` generates the master key into the Modal secret; locally it is kept in `~/.config/slate/master.key`. The task, credential and device databases live in `SLATE_HOME` (`~/.slate` locally) and are saved to the `slate-hermes` volume with Hermes's state.
 
 ## Speech
 

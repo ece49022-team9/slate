@@ -1,14 +1,12 @@
 import { useState } from 'react'
 import App from './App'
 import Dashboard from './Dashboard'
-import DeviceLab from './lab/DeviceLab'
 
-type Tab = 'dashboard' | 'mic' | 'lab'
+type Tab = 'dashboard' | 'mic'
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'mic', label: 'Mic test' },
-  { id: 'lab', label: 'Device lab' },
 ]
 
 export default function Root() {
@@ -34,8 +32,6 @@ export default function Root() {
           <h1>Slate</h1>
           <Dashboard />
         </main>
-      ) : tab === 'lab' ? (
-        <DeviceLab />
       ) : (
         <App />
       )}

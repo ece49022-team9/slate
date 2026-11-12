@@ -74,6 +74,14 @@ export type Approval = {
   credentials: CredentialRef[]
 }
 
+export type Device = {
+  id: string
+  name: string
+  created_at: string
+  revoked_at: string | null
+  last_seen_at: string | null
+}
+
 export type TaskUpdatedEvent = Envelope<'task.updated', Task>
 export type ApprovalRequestedEvent = Envelope<'approval.requested', Approval>
 export type ApprovalResolvedEvent = Envelope<'approval.resolved', Approval>
