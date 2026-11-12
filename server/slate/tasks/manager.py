@@ -3,13 +3,14 @@ web app as an event, and enforces approval deadlines.
 
 Event types sent on /api/ws/events:
 - task.updated        data = the task after the change
-- approval.requested  data = the new approval (summary, deadline)
+- approval.requested  data = the new approval (summary, deadline, and the
+                      credentials it would let the task use)
 - approval.resolved   data = the closed approval (status, decided_by)
 """
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from slate.api.events import EventBus
 from slate.tasks.machine import Event, State
@@ -17,6 +18,7 @@ from slate.tasks.store import (
     PENDING,
     Approval,
     ApprovalClosed,
+    CredentialRef,
     Task,
     TaskStore,
 )
@@ -31,10 +33,14 @@ class TaskManager:
         bus: EventBus,
         *,
         clock: Callable[[], float] = time.time,
+        describe_credential: Callable[[str], CredentialRef] | None = None,
     ) -> None:
+        """describe_credential(id) returns the name to show the user for a
+        credential, or raises if it does not exist."""
         self.store = store
         self.bus = bus
         self.clock = clock
+        self.describe_credential = describe_credential
         self.timers: dict[str, asyncio.TimerHandle] = {}
         self.waiters: dict[str, asyncio.Future[Approval]] = {}
 
@@ -93,9 +99,23 @@ class TaskManager:
         summary: str,
         *,
         timeout: float = DEFAULT_APPROVAL_TIMEOUT,
+        credentials: Sequence[str] = (),
     ) -> Approval:
+        """Ask the user. If credentials are named, approving also lets this
+        task use exactly those credentials while it runs; nothing else.
+        Unknown credential ids raise before anything is written."""
+        refs: list[CredentialRef] = []
+        if credentials:
+            if self.describe_credential is None:
+                raise RuntimeError("no credential store connected")
+            refs = [self.describe_credential(cid) for cid in credentials]
         task, approval = self.store.request_approval(
-            task_id, summary, timeout=timeout, actor="agent", now=self.clock()
+            task_id,
+            summary,
+            timeout=timeout,
+            actor="agent",
+            now=self.clock(),
+            credentials=refs,
         )
         self._arm(approval)
         self._publish_task(task)

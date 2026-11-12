@@ -65,6 +65,14 @@ export type Task = {
 
 export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'timed_out' | 'cancelled'
 
+// A credential the task may use if this approval is approved, named as the
+// user was shown it when the approval was requested.
+export type CredentialRef = {
+  id: string
+  service: string
+  label: string
+}
+
 export type Approval = {
   id: string
   task_id: string
@@ -74,6 +82,7 @@ export type Approval = {
   decided_by: string | null
   decided_at: string | null
   created_at: string
+  credentials: CredentialRef[]
 }
 
 export type TaskUpdatedEvent = Envelope<'task.updated', Task>

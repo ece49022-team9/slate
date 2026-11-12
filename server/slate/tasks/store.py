@@ -12,13 +12,19 @@ Two extra guards sit on top of that:
 - an approval can only leave "pending" once. Whichever decision (approve,
   deny, timeout, cancel) commits first wins, and every later one gets
   ApprovalClosed.
+
+Credential grants: an approval can name credentials the task wants to use
+(approval_credentials). They are written in the same transaction as the
+approval, with the service and label the user was shown. A task may use a
+credential only while it is running and only if an approval that named it
+was approved. See credential_access().
 """
 
 import sqlite3
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -61,7 +67,19 @@ CREATE TABLE IF NOT EXISTS approvals (
     created_at  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS approvals_by_status ON approvals (status, deadline);
+
+CREATE TABLE IF NOT EXISTS approval_credentials (
+    approval_id    TEXT NOT NULL REFERENCES approvals (id) ON DELETE CASCADE,
+    credential_id  TEXT NOT NULL,
+    service        TEXT NOT NULL,  -- as shown to the user when they decided
+    label          TEXT NOT NULL,
+    PRIMARY KEY (approval_id, credential_id)
+);
+CREATE INDEX IF NOT EXISTS approval_credentials_by_credential
+    ON approval_credentials (credential_id);
 """
+
+MAX_CREDENTIALS_PER_APPROVAL = 10
 
 PENDING = "pending"
 
@@ -105,6 +123,15 @@ class Task:
 
 
 @dataclass(frozen=True)
+class CredentialRef:
+    """A credential named in an approval, as the user saw it."""
+
+    id: str
+    service: str
+    label: str
+
+
+@dataclass(frozen=True)
 class Approval:
     id: str
     task_id: str
@@ -114,9 +141,12 @@ class Approval:
     decided_by: str | None
     decided_at: float | None
     created_at: float
+    # Credentials this approval lets the task use once approved.
+    credentials: tuple[CredentialRef, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        data["credentials"] = [asdict(ref) for ref in self.credentials]
         for key in ("deadline", "decided_at", "created_at"):
             data[key] = iso(data[key])
         return data
@@ -238,7 +268,7 @@ class TaskStore:
                 "SELECT * FROM approvals WHERE task_id = ? ORDER BY created_at",
                 (task_id,),
             ).fetchall()
-        return [to_approval(row) for row in rows]
+            return [self._with_credentials(conn, to_approval(row)) for row in rows]
 
     def get_approval(self, approval_id: str) -> Approval:
         with self.read() as conn:
@@ -257,7 +287,39 @@ class TaskStore:
                 "SELECT * FROM approvals WHERE status = ? ORDER BY deadline",
                 (PENDING,),
             ).fetchall()
-        return [to_approval(row) for row in rows]
+            return [self._with_credentials(conn, to_approval(row)) for row in rows]
+
+    def credential_access(
+        self, task_id: str, credential_id: str
+    ) -> tuple[str | None, str | None]:
+        """May this task use this credential right now?
+
+        Returns (approval_id, None) when allowed: the approved approval that
+        granted it. Returns (None, reason) when not:
+        no_such_task, task_<state> (not running), or not_granted.
+        Both reads come from one snapshot, so the answer is consistent."""
+        with self.read() as conn:
+            conn.execute("BEGIN")
+            try:
+                row = conn.execute(
+                    "SELECT state FROM tasks WHERE id = ?", (task_id,)
+                ).fetchone()
+                if row is None:
+                    return None, "no_such_task"
+                if row["state"] != State.RUNNING.value:
+                    return None, f"task_{row['state']}"
+                grant = conn.execute(
+                    "SELECT a.id FROM approvals a "
+                    "JOIN approval_credentials c ON c.approval_id = a.id "
+                    "WHERE a.task_id = ? AND a.status = 'approved' "
+                    "AND c.credential_id = ? ORDER BY a.decided_at LIMIT 1",
+                    (task_id, credential_id),
+                ).fetchone()
+            finally:
+                conn.execute("COMMIT")
+        if grant is None:
+            return None, "not_granted"
+        return grant["id"], None
 
     # Writes
 
@@ -336,7 +398,14 @@ class TaskStore:
         timeout: float,
         actor: str,
         now: float,
+        credentials: tuple[CredentialRef, ...] | list[CredentialRef] = (),
     ) -> tuple[Task, Approval]:
+        refs: dict[str, CredentialRef] = {}
+        for ref in credentials:
+            refs.setdefault(ref.id, ref)  # the same credential twice is one grant
+        if len(refs) > MAX_CREDENTIALS_PER_APPROVAL:
+            limit = MAX_CREDENTIALS_PER_APPROVAL
+            raise ValueError(f"an approval can name at most {limit} credentials")
         approval = Approval(
             id=new_id("apr"),
             task_id=task_id,
@@ -346,6 +415,7 @@ class TaskStore:
             decided_by=None,
             decided_at=None,
             created_at=now,
+            credentials=tuple(refs.values()),
         )
         with self.write() as conn:
             task = self._transition(
@@ -363,6 +433,11 @@ class TaskStore:
                     None,
                     approval.created_at,
                 ),
+            )
+            conn.executemany(
+                "INSERT INTO approval_credentials "
+                "(approval_id, credential_id, service, label) VALUES (?, ?, ?, ?)",
+                [(approval.id, r.id, r.service, r.label) for r in approval.credentials],
             )
         return task, approval
 
@@ -420,7 +495,23 @@ class TaskStore:
         ).fetchone()
         if row is None:
             raise ApprovalNotFound(approval_id)
-        return to_approval(row)
+        return self._with_credentials(conn, to_approval(row))
+
+    def _with_credentials(
+        self, conn: sqlite3.Connection, approval: Approval
+    ) -> Approval:
+        rows = conn.execute(
+            "SELECT credential_id, service, label FROM approval_credentials "
+            "WHERE approval_id = ? ORDER BY rowid",
+            (approval.id,),
+        ).fetchall()
+        if not rows:
+            return approval
+        refs = tuple(
+            CredentialRef(row["credential_id"], row["service"], row["label"])
+            for row in rows
+        )
+        return replace(approval, credentials=refs)
 
     def _transition(
         self,

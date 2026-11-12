@@ -37,6 +37,7 @@ Tasks = Annotated[TaskManager, Depends(manager)]
 
 class Decision(BaseModel):
     decision: Literal["approve", "deny"]
+    # Kept so old clients still validate. Ignored: the route decides who acted.
     source: Literal["web", "device"] = "web"
     # The task version the user was looking at. If the task changed since,
     # the decision is refused instead of applied to something they did not see.
@@ -70,12 +71,32 @@ def decide(
     body: Decision,
     tasks: Tasks,
 ) -> dict[str, Any]:
+    # Always "web": this endpoint only proves the caller is the local web app.
+    # A device decision has to come signed through /api/device/approvals.
+    return decide_or_raise(
+        tasks,
+        approval_id,
+        body.decision == "approve",
+        actor="web",
+        expected_version=body.expected_version,
+    )
+
+
+def decide_or_raise(
+    tasks: TaskManager,
+    approval_id: str,
+    approve: bool,
+    *,
+    actor: str,
+    expected_version: int | None,
+) -> dict[str, Any]:
+    """Shared by the web and device routes so both give the same errors."""
     try:
         task, approval = tasks.decide(
             approval_id,
-            body.decision == "approve",
-            actor=body.source,
-            expected_version=body.expected_version,
+            approve,
+            actor=actor,
+            expected_version=expected_version,
         )
     except ApprovalNotFound:
         raise HTTPException(404, "no such approval") from None
@@ -102,8 +123,12 @@ def decide(
 
 @router.post("/tasks/{task_id}/cancel")
 def cancel_task(task_id: str, tasks: Tasks) -> dict[str, Any]:
+    return cancel_or_raise(tasks, task_id, actor="web")
+
+
+def cancel_or_raise(tasks: TaskManager, task_id: str, *, actor: str) -> dict[str, Any]:
     try:
-        return tasks.cancel(task_id, actor="web").to_dict()
+        return tasks.cancel(task_id, actor=actor).to_dict()
     except TaskNotFound:
         raise HTTPException(404, "no such task") from None
     except InvalidTransition as bad:

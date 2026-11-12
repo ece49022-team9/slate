@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 
+from slate.access.credentials import AccessDenied, CredentialStore
 from slate.api.events import EventBus
 from slate.tasks.manager import TaskManager
 
@@ -73,18 +74,48 @@ async def run_demo(bus: EventBus, interval: float = 1.5) -> None:
         loop += 1
 
 
-async def run_task_demo(manager: TaskManager, approval_timeout: float = 30.0) -> None:
+async def run_task_demo(
+    manager: TaskManager,
+    approval_timeout: float = 30.0,
+    credentials: CredentialStore | None = None,
+) -> None:
     """A real task that stops for approval. Answer it from the web app or with
-    POST /api/approvals/{id}; if nobody answers it times out."""
+    POST /api/approvals/{id}; if nobody answers it times out.
+
+    If a credential for duke-energy.com is saved, the approval names it, and
+    once approved the task uses it the way the agent would (see its audit log
+    at GET /api/credentials/{id})."""
     while True:
         task = manager.create("Pay the electric bill", kind="payment")
         manager.start(task.id)
         await asyncio.sleep(2)
+        duke = None
+        if credentials is not None:
+            duke = next(
+                (c for c in credentials.all() if c.service == "duke-energy.com"), None
+            )
         approval = manager.request_approval(
-            task.id, "Pay $84.12 to Duke Energy?", timeout=approval_timeout
+            task.id,
+            "Pay $84.12 to Duke Energy?",
+            timeout=approval_timeout,
+            credentials=[duke.id] if duke else (),
         )
         result = await manager.wait_for_decision(approval.id)
         if result.status == "approved":
             await asyncio.sleep(2)
+            if credentials is not None and duke is not None:
+                try:
+                    secret = credentials.use(
+                        duke.id, task_id=task.id, purpose="log in to pay the bill"
+                    )
+                except AccessDenied as denied:
+                    manager.fail(
+                        task.id, f"could not use the credential: {denied.reason}"
+                    )
+                    await asyncio.sleep(10)
+                    continue
+                # A real agent would type this into the login page; the demo
+                # only proves it got the right one, without showing it.
+                del secret
             manager.succeed(task.id, "Paid $84.12, confirmation 55120")
         await asyncio.sleep(10)
