@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from slate.bluetooth import Bluetooth
-from slate.board import ROOT, load
+from slate.board import BOARD, ROOT, load
 from slate.link import BAUD, Link
 from slate.voice.device import CLOUD, cloud, socket_url
 
@@ -333,7 +333,7 @@ async def breadboard(
 ) -> AsyncIterator[Breadboard]:
     if not QEMU.exists():
         raise RuntimeError(f"slate.breadboard: {QEMU} is missing; run make sim-setup")
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     mic = board["device"]["mic"]
     bench = Breadboard(
         Ssd1351(board["device"]["oled"]["pins"]),

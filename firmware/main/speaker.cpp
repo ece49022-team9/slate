@@ -3,6 +3,7 @@
 #include "Arduino.h"
 #include "perf.h"
 #include "driver/i2s_std.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 #include <atomic>
@@ -15,7 +16,15 @@ static std::atomic<bool> reply_writing{false};
 static std::atomic<uint32_t> reply_arrived_at{0};
 static std::atomic<bool> stopping{false};
 
-//static constexpr int SPEAKER_SD = 4;
+// Release SD_MODE to the board's external channel-select bias after init.
+// Never force it high: resistor networks on breakout boards can select channels.
+static void amplifier(bool enabled) {
+#if defined(SLATE_BOARD_S3) && !defined(SLATE_PCM5102)
+  if (enabled) pinMode(SPEAKER_SD, INPUT);
+  else { gpio_set_level(static_cast<gpio_num_t>(SPEAKER_SD), 0); pinMode(SPEAKER_SD, OUTPUT); }
+#endif
+}
+bool speaker_ready() { return speaker_tx != nullptr && !stopping.load(); }
 static constexpr size_t REPLY_BUFFER_BYTES = 8192;
 static constexpr size_t REPLY_BLOCK_SAMPLES = 128;
 static constexpr uint32_t REPLY_PREBUFFER_MS = 160;
@@ -58,8 +67,8 @@ void speaker_start() {
     return;
   }
 
-  //pinMode(SPEAKER_SD, OUTPUT);
-  //digitalWrite(SPEAKER_SD, LOW);
+  amplifier(false);
+  stopping.store(false);
   i2s_chan_config_t channel_config =
       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
   // Match the tone producer's blocks so DMA never transmits a partially
@@ -67,8 +76,11 @@ void speaker_start() {
   channel_config.dma_frame_num = 128;
   channel_config.auto_clear = true;
 
-  ESP_ERROR_CHECK(
-      i2s_new_channel(&channel_config, &speaker_tx, nullptr));
+  esp_err_t error = i2s_new_channel(&channel_config, &speaker_tx, nullptr);
+  if (error != ESP_OK) {
+    Serial.printf("slate.speaker: allocate I2S1 failed: %s\n", esp_err_to_name(error));
+    return;
+  }
 
   i2s_std_config_t config = {
       .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SPEAKER_RATE),
@@ -89,19 +101,32 @@ void speaker_start() {
       },
   };
 
-
-  ESP_ERROR_CHECK(
-      i2s_channel_init_std_mode(speaker_tx, &config));
-
-  ESP_ERROR_CHECK(i2s_channel_enable(speaker_tx));
+#ifdef SLATE_PCM5102
+  // At 16 kHz the PCM5102's BCK PLL requires 64 clocks per stereo frame.
+  // Expand PCM explicitly to full-width words before DMA.
+  config.slot_cfg.data_bit_width = I2S_DATA_BIT_WIDTH_32BIT;
+  config.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
+  config.slot_cfg.ws_width = 32;
+#endif
+  error = i2s_channel_init_std_mode(speaker_tx, &config);
+  if (error == ESP_OK) error = i2s_channel_enable(speaker_tx);
+  if (error != ESP_OK) {
+    Serial.printf("slate.speaker: initialize failed: %s\n", esp_err_to_name(error));
+    i2s_del_channel(speaker_tx);
+    speaker_tx = nullptr;
+    return;
+  }
 
   if (!reply_audio) {
     reply_audio = xStreamBufferCreate(REPLY_BUFFER_BYTES, 1);
     configASSERT(reply_audio);
-    configASSERT(xTaskCreate(play_replies, "Speaker", 2048, nullptr, 3, nullptr) == pdPASS);
+    configASSERT(xTaskCreate(play_replies, "Speaker", 4096, nullptr, 3, nullptr) == pdPASS);
   }
 
-  //digitalWrite(SPEAKER_SD, HIGH);
+  amplifier(true);
+#ifdef SLATE_PCM5102
+  Serial.println("slate.speaker: PCM5102 explicit 32-bit PCM, LRCLK=16000 BCLK=1024000; GPIO16 untouched");
+#endif
 
 }
 
@@ -111,18 +136,39 @@ size_t speaker_write(const uint8_t* data, size_t bytes) {
   }
   size_t written = 0;
 
+#ifdef SLATE_PCM5102
+  int32_t expanded[128];
+  size_t consumed = 0;
+  while (consumed < bytes) {
+    size_t count = min(size_t(128), (bytes - consumed) / sizeof(int16_t));
+    for (size_t i = 0; i < count; ++i) {
+      int16_t sample;
+      memcpy(&sample, data + consumed + i * sizeof(sample), sizeof(sample));
+      expanded[i] = int32_t(sample) * 65536;
+    }
+    esp_err_t error = i2s_channel_write(speaker_tx, expanded, count * sizeof(int32_t), &written, 1000);
+    if (error != ESP_OK || written != count * sizeof(int32_t)) {
+      Serial.printf("slate.speaker: PCM5102 write failed: %s bytes=%u\n", esp_err_to_name(error), unsigned(written));
+      return consumed;
+    }
+    consumed += count * sizeof(int16_t);
+  }
+  return consumed;
+#else
   esp_err_t error = i2s_channel_write(
       speaker_tx,
       data,
       bytes,
       &written,
-      portMAX_DELAY);
+      1000);
 
   if (error != ESP_OK) {
+    Serial.printf("slate.speaker: write failed: %s\n", esp_err_to_name(error));
     return 0;
   }
 
   return written;
+#endif
 }
 
 void speaker_play(const uint8_t* pcm, size_t bytes) {
@@ -144,6 +190,7 @@ void speaker_flush() {
 }
 
 bool speaker_stop() {
+  amplifier(false);
   if (!speaker_tx) return true;
   stopping.store(true);
   speaker_flush();
@@ -156,7 +203,7 @@ bool speaker_stop() {
 }
 void speaker_test() {
   const int frequency = 440;
-  const int duration_ms = 1000;
+  const int duration_ms = 500;
 
   const int samples = SPEAKER_RATE * duration_ms / 1000;
 
@@ -168,14 +215,16 @@ void speaker_test() {
     for (int j = 0; j < count; j++) {
       float t = (float)(i + j) / SPEAKER_RATE;
       int16_t sample =
-          (int16_t)(sin(2.0 * PI * frequency * t) * 20000);
+          (int16_t)(sin(2.0 * PI * frequency * t) * 2000);
 
       buffer[j * 2] = sample;
       buffer[j * 2 + 1] = sample;
     }
 
-    speaker_write(
-        (const uint8_t*)buffer,
-        count * 2 * sizeof(int16_t));
+    size_t bytes = count * 2 * sizeof(int16_t);
+    if (speaker_write((const uint8_t*)buffer, bytes) != bytes) {
+      Serial.println("slate.speaker: test tone incomplete");
+      return;
+    }
   }
 }

@@ -62,3 +62,25 @@ pins = { sda = "io", scl = "in" }
 name = "Prototype power signals"
 supply_v = [3.3, 3.3]
 pins = { hold = "in", sense = "out", fg_alrt = "out", chg_stat = "out", pgood = "out" }
+
+[mcu.esp32-s3-wroom-1-n16r8]
+name = "ESP32-S3-WROOM-1-N16R8"
+gpio = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]
+input_only = [46]
+reserved = { 19 = "USB D-", 20 = "USB D+", 43 = "UART0 TX", 44 = "UART0 RX" }
+strapping = { 0 = "download boot", 3 = "JTAG source", 45 = "flash voltage", 46 = "download boot" }
+
+[part.max98357a-sd]
+name = "MAX98357A with shutdown"
+supply_v = [2.5, 5.5]
+pins = { bclk = "in", lrclk = "in", din = "in", sd = "in" }
+
+[part.slate-reserved]
+name = "Uninitialized future peripherals"
+supply_v = [3.3, 3.3]
+pins = { haptics_en = "in", miso_sd = "out", sdcs = "in", sdcd = "out" }
+
+[part.slate-console]
+name = "Dedicated USB, UART0 and boot signals"
+supply_v = [3.3, 3.3]
+pins = { usb_dm = "io", usb_dp = "io", uart_tx = "in", uart_rx = "out", boot = "out" }

@@ -1,12 +1,12 @@
 import copy
 import unittest
 
-from slate.board import check, header, load
+from slate.board import BOARD, check, header, load
 
 
 class BoardTests(unittest.TestCase):
     def setUp(self):
-        board, self.parts = load()
+        board, self.parts = load(BOARD.with_name("board-prototype.toml"))
         self.board = copy.deepcopy(board)
         self.oled = self.board["device"]["oled"]
         self.mic = self.board["device"]["mic"]
@@ -113,3 +113,45 @@ class BoardTests(unittest.TestCase):
         power = self.board["device"]["power"]
         for pin, gpio in (power["pins"] | power["i2c"]).items():
             self.assertIn(f"constexpr int POWER_{pin.upper()} = {gpio};", generated)
+
+
+class S3BoardTests(unittest.TestCase):
+    def setUp(self):
+        self.board, self.parts = load()
+
+    def errors(self):
+        return [p for p in check(self.board, self.parts) if p.level == "error"]
+
+    def test_final_map(self):
+        self.assertEqual(self.errors(), [])
+        self.assertEqual(self.board["device"]["mic"]["pins"], {"clk": 4, "data": 5})
+        self.assertEqual(
+            self.board["device"]["speaker"]["pins"],
+            {"bclk": 6, "lrclk": 17, "din": 15, "sd": 16},
+        )
+
+    def test_inaccessible_pins(self):
+        for pin in [*range(22, 38), 49]:
+            with self.subTest(pin=pin):
+                self.board["device"]["mic"]["pins"]["clk"] = pin
+                self.assertTrue(self.errors())
+
+    def test_console_pins_cannot_be_repurposed(self):
+        for pin in [19, 20, 43, 44]:
+            self.board["device"]["mic"]["pins"]["clk"] = pin
+            self.assertTrue(self.errors())
+
+    def test_shared_spi_and_i2c(self):
+        self.board["device"]["second_oled"] = copy.deepcopy(
+            self.board["device"]["oled"]
+        )
+        self.board["device"]["second_oled"]["pins"].update(cs=38, dc=39, reset=48)
+        self.assertEqual(self.errors(), [])
+        self.board["device"]["haptics"] = {
+            "part": "drv2605",
+            "pins": {"sda": 8, "scl": 9},
+            "bus": "i2c0",
+        }
+        self.assertEqual(self.errors(), [])
+        self.board["device"]["second_oled"]["pins"]["cs"] = 10
+        self.assertTrue(self.errors())
