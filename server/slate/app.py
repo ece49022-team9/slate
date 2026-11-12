@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,11 +16,14 @@ from slate.api.demo import run_demo, run_task_demo
 from slate.api.events import EventBus
 from slate.api.events import router as events_router
 from slate.api.tasks import router as tasks_router
+from slate.device import router as device_router
 from slate.health import router as health_router
 from slate.tasks.manager import TaskManager
 from slate.tasks.store import TaskStore
 from slate.voice.routes import router as voice_router
 from slate.voice.session import VoiceSessions
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 
 @asynccontextmanager
@@ -70,6 +74,7 @@ app = FastAPI(
 )
 app.include_router(health_router, prefix="/api")
 app.include_router(voice_router, prefix="/api")
+app.include_router(device_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(credentials_router, prefix="/api")

@@ -26,8 +26,11 @@ def parse(stream: bytes, cuts: list[int]) -> Link:
     bounds = sorted({0, len(stream), *(cut % (len(stream) + 1) for cut in cuts)})
     with tempfile.TemporaryDirectory() as directory:
         link = Link(bytearray().extend, Path(directory) / "serial.log")
-        for start, end in zip(bounds, bounds[1:], strict=False):
-            link.feed(stream[start:end])
+        try:
+            for start, end in zip(bounds, bounds[1:], strict=False):
+                link.feed(stream[start:end])
+        finally:
+            link.close()
     return link
 
 

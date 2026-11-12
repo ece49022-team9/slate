@@ -57,3 +57,8 @@ name = "DRV2605L haptic driver"
 inventory = 0
 supply_v = [2.0, 5.2]
 pins = { sda = "io", scl = "in" }
+
+[part.slate-power]
+name = "Prototype power signals"
+supply_v = [3.3, 3.3]
+pins = { hold = "in", sense = "out", fg_alrt = "out", chg_stat = "out", pgood = "out" }

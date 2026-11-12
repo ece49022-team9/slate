@@ -2861,6 +2861,172 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Device:D_Schottky"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 1.016)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(in_pos_files yes)
+			(duplicate_pin_numbers_are_jumpers no)
+			(property "Reference" "D"
+				(at 0 2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "D_Schottky"
+				(at 0 -2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Description" "Schottky diode"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_keywords" "diode Schottky"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_fp_filters" "TO-???* *_Diode_* *SingleDiode* D_*"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(symbol "D_Schottky_0_1"
+				(polyline
+					(pts
+						(xy -1.905 0.635) (xy -1.905 1.27) (xy -1.27 1.27) (xy -1.27 -1.27) (xy -0.635 -1.27) (xy -0.635 -0.635)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 1.27) (xy 1.27 -1.27) (xy -1.27 0) (xy 1.27 1.27)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 0) (xy -1.27 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "D_Schottky_1_1"
+				(pin passive line
+					(at -3.81 0 0)
+					(length 2.54)
+					(name "K"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 3.81 0 180)
+					(length 2.54)
+					(name "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Device:L"
 			(pin_numbers
 				(hide yes)
@@ -3022,6 +3188,207 @@
 					(at 0 -3.81 90)
 					(length 1.27)
 					(name "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+		(symbol "Device:LED"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 1.016)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(in_pos_files yes)
+			(duplicate_pin_numbers_are_jumpers no)
+			(property "Reference" "D"
+				(at 0 2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "LED"
+				(at 0 -2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Description" "Light emitting diode"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Sim.Pins" "1=K 2=A"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_keywords" "LED diode"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "ki_fp_filters" "LED* LED_SMD:* LED_THT:*"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(symbol "LED_0_1"
+				(polyline
+					(pts
+						(xy -3.048 -0.762) (xy -4.572 -2.286) (xy -3.81 -2.286) (xy -4.572 -2.286) (xy -4.572 -1.524)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -1.778 -0.762) (xy -3.302 -2.286) (xy -2.54 -2.286) (xy -3.302 -2.286) (xy -3.302 -1.524)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -1.27 0) (xy 1.27 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -1.27 -1.27) (xy -1.27 1.27)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 -1.27) (xy 1.27 1.27) (xy -1.27 0) (xy 1.27 -1.27)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "LED_1_1"
+				(pin passive line
+					(at -3.81 0 0)
+					(length 2.54)
+					(name "K"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 3.81 0 180)
+					(length 2.54)
+					(name "A"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -7478,12 +7845,6 @@
 		(uuid "51154592-9dcd-426c-a899-9dad157ae3c4")
 	)
 	(junction
-		(at 190.5 163.83)
-		(diameter 0)
-		(color 0 0 0 0)
-		(uuid "58074ede-bb7d-40ab-819e-b8d1e3ff4580")
-	)
-	(junction
 		(at 506.73 110.49)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -7578,6 +7939,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "b692aa1b-ae81-4590-b391-6002d099d2ca")
+	)
+	(junction
+		(at 538.48 198.12)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "b93c7b5d-2dbb-454b-94ce-71f5ea9a3e67")
 	)
 	(junction
 		(at 501.65 231.14)
@@ -7706,6 +8073,10 @@
 		(uuid "37837811-e10a-4b96-b02c-087e67848fcb")
 	)
 	(no_connect
+		(at 50.8 74.93)
+		(uuid "451f1452-9806-425b-937a-480e90a5462e")
+	)
+	(no_connect
 		(at 128.27 67.31)
 		(uuid "67decc01-f1ef-40e4-a97e-93e151e5a79a")
 	)
@@ -7720,14 +8091,6 @@
 	(no_connect
 		(at 471.17 45.72)
 		(uuid "855839ea-9003-4eca-9fa2-67f43e178e00")
-	)
-	(no_connect
-		(at 128.27 95.25)
-		(uuid "a4a79fa9-62c1-40d7-8263-91cd9ef44937")
-	)
-	(no_connect
-		(at 50.8 74.93)
-		(uuid "b448c39e-d149-4bab-9d8a-d81b4259e619")
 	)
 	(no_connect
 		(at 53.34 118.11)
@@ -7778,16 +8141,6 @@
 			(type default)
 		)
 		(uuid "01c8a9ad-363d-4570-b203-cfb17b3d35fa")
-	)
-	(wire
-		(pts
-			(xy 463.55 129.54) (xy 463.55 144.78)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "02ae9c5f-8ab5-46e6-ac5c-4635bd16dfde")
 	)
 	(wire
 		(pts
@@ -7972,6 +8325,16 @@
 	)
 	(wire
 		(pts
+			(xy 538.48 179.07) (xy 538.48 181.61)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1a9c59ed-3b5f-4320-af52-846121f5898b")
+	)
+	(wire
+		(pts
 			(xy 92.71 54.61) (xy 97.79 54.61)
 		)
 		(stroke
@@ -8022,7 +8385,7 @@
 	)
 	(wire
 		(pts
-			(xy 179.07 163.83) (xy 179.07 165.1)
+			(xy 179.07 161.29) (xy 179.07 165.1)
 		)
 		(stroke
 			(width 0)
@@ -8199,6 +8562,16 @@
 			(type default)
 		)
 		(uuid "305e99bc-97f2-4e28-a770-880077be69ee")
+	)
+	(wire
+		(pts
+			(xy 134.62 96.52) (xy 134.62 95.25)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "30c2e496-e9c0-4eb9-bdb3-789fed0a0023")
 	)
 	(wire
 		(pts
@@ -8503,16 +8876,6 @@
 	)
 	(wire
 		(pts
-			(xy 449.58 144.78) (xy 463.55 144.78)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "5569aac2-f64f-4ab4-af09-ead8dc76dad9")
-	)
-	(wire
-		(pts
 			(xy 125.73 137.16) (xy 125.73 138.43)
 		)
 		(stroke
@@ -8530,6 +8893,26 @@
 			(type default)
 		)
 		(uuid "56927b40-b450-43c8-8508-7cedfe385a29")
+	)
+	(wire
+		(pts
+			(xy 529.59 198.12) (xy 538.48 198.12)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "577650e9-a160-4d6e-8a39-c0faeb61da6b")
+	)
+	(wire
+		(pts
+			(xy 538.48 198.12) (xy 541.02 198.12)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5a73e60f-950a-4c42-a193-085e2674ea25")
 	)
 	(wire
 		(pts
@@ -8793,6 +9176,16 @@
 	)
 	(wire
 		(pts
+			(xy 529.59 189.23) (xy 529.59 190.5)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7a45317d-7546-43bd-83ae-b6b15c9ccf84")
+	)
+	(wire
+		(pts
 			(xy 444.5 156.21) (xy 444.5 168.91)
 		)
 		(stroke
@@ -9023,7 +9416,7 @@
 	)
 	(wire
 		(pts
-			(xy 179.07 163.83) (xy 182.88 163.83)
+			(xy 179.07 161.29) (xy 182.88 161.29)
 		)
 		(stroke
 			(width 0)
@@ -9513,6 +9906,16 @@
 	)
 	(wire
 		(pts
+			(xy 538.48 189.23) (xy 538.48 190.5)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c5bf0ce6-817f-4f1a-8d5e-26e0c5c5ce08")
+	)
+	(wire
+		(pts
 			(xy 87.63 57.15) (xy 97.79 57.15)
 		)
 		(stroke
@@ -9553,7 +9956,7 @@
 	)
 	(wire
 		(pts
-			(xy 190.5 162.56) (xy 190.5 173.99)
+			(xy 190.5 161.29) (xy 190.5 173.99)
 		)
 		(stroke
 			(width 0)
@@ -9693,16 +10096,6 @@
 	)
 	(wire
 		(pts
-			(xy 523.24 198.12) (xy 541.02 198.12)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "d7da12b6-1d48-45fc-a390-9dc84f93fa6d")
-	)
-	(wire
-		(pts
 			(xy 113.03 36.83) (xy 113.03 39.37)
 		)
 		(stroke
@@ -9750,6 +10143,22 @@
 			(type default)
 		)
 		(uuid "dcc201b1-38e4-44d1-843f-3c2cfe347d60")
+	)
+	(wire
+		(pts
+			(xy 467.36 110.49) (xy 467.36 113.03)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4e2b7c91-6d3a-4f05-b8e1-9a7c2d5f0b36")
+	)
+	(junction
+		(at 467.36 113.03)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "c7a1e3f8-2b94-4d6e-8f05-3d9b6a1c4e72")
 	)
 	(wire
 		(pts
@@ -9993,6 +10402,16 @@
 	)
 	(wire
 		(pts
+			(xy 134.62 95.25) (xy 128.27 95.25)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f3cc2690-6330-451f-8d16-cc90563647ec")
+	)
+	(wire
+		(pts
 			(xy 111.76 160.02) (xy 124.46 160.02)
 		)
 		(stroke
@@ -10020,6 +10439,16 @@
 			(type default)
 		)
 		(uuid "f6875430-e02e-4cb4-8f9f-d3f9a1b95839")
+	)
+	(wire
+		(pts
+			(xy 529.59 179.07) (xy 529.59 181.61)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f77227b9-9371-47ca-94e0-6435ad59ad1d")
 	)
 	(wire
 		(pts
@@ -10181,6 +10610,16 @@
 		)
 		(uuid "20c64036-991e-4b1b-98a4-ff5775595cc0")
 	)
+	(label "PGOOD"
+		(at 538.48 179.07 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "222f927b-f93d-4820-8ef3-7372b90bbb1e")
+	)
 	(label "OLED_DC"
 		(at 87.63 90.17 0)
 		(effects
@@ -10202,7 +10641,7 @@
 		(uuid "267c03e0-3eef-41b5-b77a-06bbf3f6649a")
 	)
 	(label "OLED_CS"
-		(at 53.34 130.81 180)
+		(at 53.34 128.27 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10241,6 +10680,26 @@
 		)
 		(uuid "30d7d037-2cf3-4c5e-a240-5ae9666108ab")
 	)
+	(label "SCL"
+		(at 33.02 234.95 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "31c5bdc0-61b8-4473-b202-71608462efb3")
+	)
+	(label "CHG_STAT"
+		(at 529.59 179.07 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "37948965-e33d-4d73-bd00-aa5aa0f1547b")
+	)
 	(label "USB_DM"
 		(at 135.89 59.69 180)
 		(effects
@@ -10260,6 +10719,16 @@
 			(justify right bottom)
 		)
 		(uuid "41f2a868-aade-47c9-ba04-49a551c2247b")
+	)
+	(label "FG_ALRT"
+		(at 33.02 242.57 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "428d4a4c-c9f0-4d55-a4b2-27b5ecf51e68")
 	)
 	(label "I2S_DOUT"
 		(at 167.64 182.88 0)
@@ -10302,7 +10771,7 @@
 		(uuid "4896b3b1-22be-489b-9122-834da703ac7f")
 	)
 	(label "SDCS"
-		(at 53.34 138.43 180)
+		(at 53.34 125.73 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10322,7 +10791,7 @@
 		(uuid "49447753-3f8f-479b-ad0d-bd3a0ac3c9e3")
 	)
 	(label "OLED_RST"
-		(at 53.34 135.89 180)
+		(at 53.34 130.81 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10332,7 +10801,7 @@
 		(uuid "4b81194c-a2d9-4771-8d36-313f5c2da566")
 	)
 	(label "MISO_SD"
-		(at 53.34 128.27 180)
+		(at 53.34 123.19 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10402,7 +10871,7 @@
 		(uuid "626136c3-c237-4962-9b5e-38c2bd6fe9de")
 	)
 	(label "SPI_CLK"
-		(at 53.34 123.19 180)
+		(at 53.34 135.89 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10492,7 +10961,7 @@
 		(uuid "8936ffae-5627-4e46-91ee-eaf0e8e47c14")
 	)
 	(label "SPI_MOSI"
-		(at 53.34 125.73 180)
+		(at 53.34 138.43 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10641,16 +11110,6 @@
 		)
 		(uuid "c71e6a2d-29fe-42f7-9406-633d893e880e")
 	)
-	(label "VSYS"
-		(at 48.26 81.28 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left bottom)
-		)
-		(uuid "cc04f52f-e0d9-44fa-a95c-2cf56e7948ef")
-	)
 	(label "PDM_DATA"
 		(at 111.76 170.18 0)
 		(effects
@@ -10731,6 +11190,16 @@
 		)
 		(uuid "e8789e31-2b1d-43f8-ac3b-10fc4af3c6a0")
 	)
+	(label "SDA"
+		(at 33.02 229.87 90)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "e954aad3-0586-431d-ac31-bed2821e290d")
+	)
 	(label "USB_DP"
 		(at 135.89 62.23 180)
 		(effects
@@ -10802,7 +11271,7 @@
 		(uuid "f8d6592d-2473-4754-a56f-669bf3db459c")
 	)
 	(label "VSYS"
-		(at 541.02 198.12 0)
+		(at 523.24 198.12 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10841,6 +11310,494 @@
 		)
 		(uuid "fe646338-de6a-4048-91be-02e897e7adb3")
 	)
+	(label "U6_EN"
+		(at 463.55 132.08 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "d5a356f5-a989-4857-bab3-8c7b7d15ebdf")
+	)
+	(symbol
+		(lib_id "Device:D_Schottky")
+		(at 459.74 135.89 180)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "71bcfaba-e22a-42f5-b45b-28638ab0f6e7")
+		(property "Reference" "D6"
+			(at 459.74 132.08 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "BAT54WS"
+			(at 459.74 139.7 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Diode_SMD:D_SOD-323_HandSoldering"
+			(at 459.74 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 459.74 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Schottky diode: VBUS keeps U6 enabled while USB is connected"
+			(at 459.74 135.89 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "73bceebb-ab7a-4372-be14-c652e29bd717")
+		)
+		(pin "2"
+			(uuid "1b2cde15-54e8-494a-92d7-f99b0a5d3891")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "D6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:C")
+		(at 457.2 148.59 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "3543a09f-d531-4e7c-a826-ccdcbc410198")
+		(property "Reference" "C21"
+			(at 459.74 147.32 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "10uF"
+			(at 459.74 149.86 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder"
+			(at 457.2 148.59 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 457.2 148.59 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "U6 EN hold-up: rides through ESP resets on battery"
+			(at 457.2 148.59 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "731e494b-4b76-4886-a495-19e8b8445e70")
+		)
+		(pin "2"
+			(uuid "d0c83f31-e8e4-4667-9deb-540d32702c1c")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "C21")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 457.2 152.4 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(uuid "372f8662-064c-4065-a17d-0c911193e79c")
+		(property "Reference" "#PWR070"
+			(at 457.2 158.75 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 457.2 156.21 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 457.2 152.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 457.2 152.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 457.2 152.4 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "e9139004-e6b0-4468-bbe0-ebade176abf8")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR070")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(wire
+		(pts
+			(xy 463.55 129.54) (xy 463.55 135.89)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "dbbeb7e1-51d5-4c4e-a5fe-94095eb2c2a2")
+	)
+	(wire
+		(pts
+			(xy 463.55 135.89) (xy 463.55 144.78)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "88a0ebef-09f4-46c4-aeb0-2f3843fdea4f")
+	)
+	(wire
+		(pts
+			(xy 449.58 144.78) (xy 457.2 144.78)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5faf6074-91f2-4392-8ef2-b2ae4db024d4")
+	)
+	(wire
+		(pts
+			(xy 457.2 144.78) (xy 463.55 144.78)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d8d363b1-0f02-4015-9dbf-d0ee6a96615e")
+	)
+	(junction
+		(at 463.55 135.89)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "43b411e2-7554-4950-9346-9b03f59518fd")
+	)
+	(junction
+		(at 457.2 144.78)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "12837c1a-62a8-43ef-b3cf-f66053c41568")
+	)
+	(wire
+		(pts
+			(xy 455.93 135.89) (xy 453.39 135.89)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5b96cbad-f421-4a01-ad73-33fbc18fdcbc")
+	)
+	(label "VBUS"
+		(at 453.39 135.89 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "7928d71d-ca0d-48ce-97cd-09675db3f2ea")
+	)
+	(symbol
+		(lib_id "power:+3.3V")
+		(at 541.02 198.12 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "6dd817a9-abf0-4faa-a3ad-1be341bcb46d")
+		(property "Reference" "#PWR069"
+			(at 541.02 201.93 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+3.3V"
+			(at 541.02 194.31 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 541.02 198.12 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 541.02 198.12 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
+			(at 541.02 198.12 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "a303326e-172e-41f2-8004-42467626fc48")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR069")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:LED")
+		(at 529.59 185.42 270)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "015eed6e-f9f3-4b82-9b7c-1d378f3024e1")
+		(property "Reference" "D4"
+			(at 532.13 182.5624 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "LED"
+			(at 532.13 185.1024 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "LED_SMD:LED_0805_2012Metric_Pad1.15x1.40mm_HandSolder"
+			(at 529.59 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 529.59 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Light emitting diode"
+			(at 529.59 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Sim.Pins" "1=K 2=A"
+			(at 529.59 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "2"
+			(uuid "b5714d1e-adca-4fff-83e9-943bc9af9189")
+		)
+		(pin "1"
+			(uuid "b56b72d1-0baa-4a8b-927b-0cd70bfc863e")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "D4")
+					(unit 1)
+				)
+			)
+		)
+	)
 	(symbol
 		(lib_id "power:GND")
 		(at 433.07 68.58 0)
@@ -10853,7 +11810,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "02852169-6d2c-4fe7-ab08-259d3e4a02a7")
-		(property "Reference" "#PWR075"
+		(property "Reference" "#PWR044"
 			(at 433.07 74.93 0)
 			(hide yes)
 			(show_name no)
@@ -10913,7 +11870,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR075")
+					(reference "#PWR044")
 					(unit 1)
 				)
 			)
@@ -10931,7 +11888,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "044cafbb-d92d-4f5b-8415-adf67a6fa659")
-		(property "Reference" "#PWR082"
+		(property "Reference" "#PWR046"
 			(at 447.04 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -10991,7 +11948,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR082")
+					(reference "#PWR046")
 					(unit 1)
 				)
 			)
@@ -11008,7 +11965,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "08debf65-aef1-4b0e-84b1-f9cd0ea4c97b")
-		(property "Reference" "C13"
+		(property "Reference" "C10"
 			(at 392.176 131.572 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11072,7 +12029,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C13")
+					(reference "C10")
 					(unit 1)
 				)
 			)
@@ -11090,7 +12047,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "09deef47-9aaa-4d52-8259-7a5f39be7a31")
-		(property "Reference" "#PWR083"
+		(property "Reference" "#PWR052"
 			(at 467.36 132.08 0)
 			(hide yes)
 			(show_name no)
@@ -11150,7 +12107,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR083")
+					(reference "#PWR052")
 					(unit 1)
 				)
 			)
@@ -11168,7 +12125,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "0c64ceca-d8f4-4ac9-b6bf-1661e5569993")
-		(property "Reference" "#PWR086"
+		(property "Reference" "#PWR043"
 			(at 425.45 165.1 0)
 			(hide yes)
 			(show_name no)
@@ -11228,7 +12185,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR086")
+					(reference "#PWR043")
 					(unit 1)
 				)
 			)
@@ -11246,7 +12203,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "0c99c664-3e11-4253-bb49-02bf437ca6cc")
-		(property "Reference" "#PWR094"
+		(property "Reference" "#PWR01"
 			(at 20.32 246.38 0)
 			(hide yes)
 			(show_name no)
@@ -11306,7 +12263,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR094")
+					(reference "#PWR01")
 					(unit 1)
 				)
 			)
@@ -11323,7 +12280,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "0f16052a-b6b3-4cb3-88e9-42273c060ce6")
-		(property "Reference" "#PWR046"
+		(property "Reference" "#PWR037"
 			(at 337.82 139.7 0)
 			(hide yes)
 			(show_name no)
@@ -11383,7 +12340,85 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR046")
+					(reference "#PWR037")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+3.3V")
+		(at 48.26 81.28 180)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "1264bd79-53e2-4202-9dea-f3e63ed32bdd")
+		(property "Reference" "#PWR06"
+			(at 48.26 77.47 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+3.3V"
+			(at 48.26 86.36 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 48.26 81.28 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 48.26 81.28 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
+			(at 48.26 81.28 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "e2495cce-8497-4437-be25-cf176f172c45")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR06")
 					(unit 1)
 				)
 			)
@@ -11401,7 +12436,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "127370a2-387c-4eb3-80df-30dd474726cb")
-		(property "Reference" "#FLG05"
+		(property "Reference" "#FLG02"
 			(at 487.68 83.185 0)
 			(hide yes)
 			(show_name no)
@@ -11461,7 +12496,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#FLG05")
+					(reference "#FLG02")
 					(unit 1)
 				)
 			)
@@ -11479,7 +12514,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "13376e4f-7427-4ad7-bd14-d4c882ca0912")
-		(property "Reference" "#PWR089"
+		(property "Reference" "#PWR036"
 			(at 200.66 176.53 0)
 			(hide yes)
 			(show_name no)
@@ -11539,7 +12574,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR089")
+					(reference "#PWR036")
 					(unit 1)
 				)
 			)
@@ -11557,7 +12592,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "13ec6905-05ea-4ba2-9ccc-28d65291e487")
-		(property "Reference" "U2"
+		(property "Reference" "U1"
 			(at 54.6802 49.53 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11644,7 +12679,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "U2")
+					(reference "U1")
 					(unit 1)
 				)
 			)
@@ -11788,7 +12823,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "1741edf4-b38d-44c5-88bb-6ab41aeb21f4")
-		(property "Reference" "C23"
+		(property "Reference" "C19"
 			(at 517.906 104.902 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11852,7 +12887,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C23")
+					(reference "C19")
 					(unit 1)
 				)
 			)
@@ -11870,7 +12905,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "18a507c7-2d70-4477-b75c-11b17dd8a91d")
-		(property "Reference" "#PWR056"
+		(property "Reference" "#PWR053"
 			(at 476.25 100.33 0)
 			(hide yes)
 			(show_name no)
@@ -11930,7 +12965,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR056")
+					(reference "#PWR053")
 					(unit 1)
 				)
 			)
@@ -11948,7 +12983,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "1bedadf5-00f5-4fb7-915d-18a12727d2c0")
-		(property "Reference" "#PWR012"
+		(property "Reference" "#PWR016"
 			(at 105.41 45.72 0)
 			(hide yes)
 			(show_name no)
@@ -12008,7 +13043,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR012")
+					(reference "#PWR016")
 					(unit 1)
 				)
 			)
@@ -12026,7 +13061,7 @@
 		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "1c9eeb12-ab4d-43bc-b809-fa3e06a6a306")
-		(property "Reference" "R20"
+		(property "Reference" "R8"
 			(at 162.56 198.1199 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12090,7 +13125,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R20")
+					(reference "R8")
 					(unit 1)
 				)
 			)
@@ -12107,7 +13142,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "1cba0acf-54bc-4060-9d58-9e5c5da64851")
-		(property "Reference" "C20"
+		(property "Reference" "C4"
 			(at 85.598 44.196 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12169,7 +13204,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C20")
+					(reference "C4")
 					(unit 1)
 				)
 			)
@@ -12186,7 +13221,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "1f87c431-3a5e-4932-bd65-02afcbc3812f")
-		(property "Reference" "U10"
+		(property "Reference" "U7"
 			(at 502.412 224.282 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12296,7 +13331,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "U10")
+					(reference "U7")
 					(unit 1)
 				)
 			)
@@ -12392,7 +13427,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "230dd215-fb9b-4217-9201-9eb37f8c7881")
-		(property "Reference" "#PWR059"
+		(property "Reference" "#PWR054"
 			(at 478.79 234.95 0)
 			(hide yes)
 			(show_name no)
@@ -12452,7 +13487,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR059")
+					(reference "#PWR054")
 					(unit 1)
 				)
 			)
@@ -12471,7 +13506,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "245d6d29-acaa-42a0-8c53-7fdb494d608c")
-		(property "Reference" "#PWR076"
+		(property "Reference" "#PWR019"
 			(at 120.65 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -12531,7 +13566,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR076")
+					(reference "#PWR019")
 					(unit 1)
 				)
 			)
@@ -12549,7 +13584,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "26be0ba7-0f28-480f-9024-5218e0f55884")
-		(property "Reference" "#PWR084"
+		(property "Reference" "#PWR048"
 			(at 455.93 135.89 0)
 			(hide yes)
 			(show_name no)
@@ -12609,7 +13644,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR084")
+					(reference "#PWR048")
 					(unit 1)
 				)
 			)
@@ -12627,7 +13662,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "27f089ed-b433-4e7f-b005-4f25ee33deaa")
-		(property "Reference" "#PWR071"
+		(property "Reference" "#PWR035"
 			(at 187.96 210.82 0)
 			(hide yes)
 			(show_name no)
@@ -12687,7 +13722,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR071")
+					(reference "#PWR035")
 					(unit 1)
 				)
 			)
@@ -12705,7 +13740,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "281ca8c7-0fb4-4184-bc94-f243f16d4ddf")
-		(property "Reference" "R13"
+		(property "Reference" "R21"
 			(at 515.62 120.6499 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12769,7 +13804,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R13")
+					(reference "R21")
 					(unit 1)
 				)
 			)
@@ -12787,7 +13822,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "298b4f4e-446a-478e-b4c9-5dea3b2b593b")
-		(property "Reference" "U1"
+		(property "Reference" "U2"
 			(at 115.1733 41.91 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12968,7 +14003,86 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "U1")
+					(reference "U2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector:TestPoint")
+		(at 33.02 234.95 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "2ad843f6-c491-4e59-ba62-05bd8abed06b")
+		(property "Reference" "SCL1"
+			(at 35.56 230.3779 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "SCL"
+			(at 35.56 232.9179 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "TestPoint:TestPoint_Pad_D2.0mm"
+			(at 38.1 234.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 38.1 234.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "test point"
+			(at 33.02 234.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "335f0c83-9a78-47f3-a0d2-4d4a2be4075c")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "SCL1")
 					(unit 1)
 				)
 			)
@@ -12985,7 +14099,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "2c53218d-95a4-4357-817e-f6a817053dc6")
-		(property "Reference" "C19"
+		(property "Reference" "C8"
 			(at 186.69 168.402 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -13047,7 +14161,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C19")
+					(reference "C8")
 					(unit 1)
 				)
 			)
@@ -13143,7 +14257,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "30294d43-483c-4eb5-8f7d-89ffe03f9a68")
-		(property "Reference" "#PWR013"
+		(property "Reference" "#PWR028"
 			(at 140.97 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -13203,7 +14317,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR013")
+					(reference "#PWR028")
 					(unit 1)
 				)
 			)
@@ -13221,7 +14335,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "304c4778-08de-4ab9-bdb9-3bb64b81f14d")
-		(property "Reference" "#PWR08"
+		(property "Reference" "#PWR011"
 			(at 69.85 59.69 0)
 			(hide yes)
 			(show_name no)
@@ -13281,7 +14395,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR08")
+					(reference "#PWR011")
 					(unit 1)
 				)
 			)
@@ -13298,7 +14412,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "333bb680-a7b4-46e9-a654-ec2bcba2b2d7")
-		(property "Reference" "R28"
+		(property "Reference" "R13"
 			(at 439.928 172.72 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -13360,7 +14474,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R28")
+					(reference "R13")
 					(unit 1)
 				)
 			)
@@ -13378,7 +14492,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "3471bd47-6f8f-428e-9e80-89e37c2a2115")
-		(property "Reference" "C18"
+		(property "Reference" "C1"
 			(at 31.75 53.086 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -13440,7 +14554,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C18")
+					(reference "C1")
 					(unit 1)
 				)
 			)
@@ -13457,7 +14571,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "360178f9-ff62-49eb-8f18-f0346d0b1c69")
-		(property "Reference" "R1"
+		(property "Reference" "R2"
 			(at 74.93 60.9599 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -13521,7 +14635,100 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R1")
+					(reference "R2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:LED")
+		(at 134.62 107.95 90)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "39b09eaa-2446-4eaf-b965-5aa49056c76b")
+		(property "Reference" "D1"
+			(at 138.43 108.2674 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Value" "LED"
+			(at 138.43 110.8074 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Footprint" "LED_SMD:LED_0805_2012Metric_Pad1.15x1.40mm_HandSolder"
+			(at 134.62 107.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 134.62 107.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Light emitting diode"
+			(at 134.62 107.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Sim.Pins" "1=K 2=A"
+			(at 134.62 107.95 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "2"
+			(uuid "df84ccf5-b86e-4441-ae44-73042b5b280e")
+		)
+		(pin "1"
+			(uuid "0467d076-a4ab-408e-9cfe-3eee7494f3b6")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "D1")
 					(unit 1)
 				)
 			)
@@ -13538,7 +14745,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "3acafc6b-4b9d-4526-a112-0066dc2a9a1e")
-		(property "Reference" "C17"
+		(property "Reference" "C20"
 			(at 523.24 207.772 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -13602,7 +14809,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C17")
+					(reference "C20")
 					(unit 1)
 				)
 			)
@@ -13620,7 +14827,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "3f7e221d-295d-4b0c-847f-7bd200ab59a3")
-		(property "Reference" "R3"
+		(property "Reference" "R7"
 			(at 143.51 87.6299 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -13684,7 +14891,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R3")
+					(reference "R7")
 					(unit 1)
 				)
 			)
@@ -13722,7 +14929,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Button_Switch_THT:SW_NKK_GW12LJP"
+		(property "Footprint" "Button_Switch_SMD:SW_SPST_CK_KMS2xxGP"
 			(at 431.8 151.13 0)
 			(hide yes)
 			(show_name no)
@@ -13782,7 +14989,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "41512bd7-16f3-47ee-9dbb-665ff60fb3e2")
-		(property "Reference" "#PWR077"
+		(property "Reference" "#PWR027"
 			(at 138.43 24.13 0)
 			(hide yes)
 			(show_name no)
@@ -13842,7 +15049,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR077")
+					(reference "#PWR027")
 					(unit 1)
 				)
 			)
@@ -13860,7 +15067,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "41e76a0e-8e5e-4866-bc0d-45081ea9cf97")
-		(property "Reference" "#PWR091"
+		(property "Reference" "#PWR022"
 			(at 124.46 162.56 0)
 			(hide yes)
 			(show_name no)
@@ -13920,7 +15127,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR091")
+					(reference "#PWR022")
 					(unit 1)
 				)
 			)
@@ -14137,7 +15344,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "437960a1-3463-45de-9fa3-ffc57bd83bf0")
-		(property "Reference" "R23"
+		(property "Reference" "R3"
 			(at 87.63 33.02 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -14199,7 +15406,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R23")
+					(reference "R3")
 					(unit 1)
 				)
 			)
@@ -14217,7 +15424,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "45297e65-e14d-4a56-880c-b05c7ceb0b8b")
-		(property "Reference" "#PWR070"
+		(property "Reference" "#PWR030"
 			(at 170.18 209.55 0)
 			(hide yes)
 			(show_name no)
@@ -14277,7 +15484,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR070")
+					(reference "#PWR030")
 					(unit 1)
 				)
 			)
@@ -14294,7 +15501,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "45444d66-a9cb-41a2-8981-fbd1f49cf18d")
-		(property "Reference" "#PWR049"
+		(property "Reference" "#PWR038"
 			(at 378.46 158.75 0)
 			(hide yes)
 			(show_name no)
@@ -14354,7 +15561,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR049")
+					(reference "#PWR038")
 					(unit 1)
 				)
 			)
@@ -14437,6 +15644,248 @@
 		)
 	)
 	(symbol
+		(lib_id "Device:R_US")
+		(at 175.26 48.26 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "48443e58-2f07-4f40-92ad-f5ad5fc505bb")
+		(property "Reference" "R11"
+			(at 177.8 46.9899 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1.5k"
+			(at 177.8 49.5299 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
+			(at 176.276 48.514 90)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 175.26 48.26 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, US symbol"
+			(at 175.26 48.26 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "e5200296-5e6d-4c56-92e6-0c2120011aee")
+		)
+		(pin "2"
+			(uuid "cbb92ae0-0f4c-47e0-85e1-ec8f1a54edd3")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "R11")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R_US")
+		(at 529.59 194.31 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "4966f326-a362-40cb-92af-671fa9a43d23")
+		(property "Reference" "R24"
+			(at 532.13 193.0399 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1.5k"
+			(at 532.13 195.5799 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
+			(at 530.606 194.564 90)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 529.59 194.31 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, US symbol"
+			(at 529.59 194.31 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "2"
+			(uuid "493942af-aea1-406c-8a74-9a8838e9a57f")
+		)
+		(pin "1"
+			(uuid "6894df84-364b-4d17-b2ea-2f915d69036d")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "R24")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+3.3V")
+		(at 175.26 44.45 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "4d1df88a-10ed-46fd-a583-db07b3bb93c8")
+		(property "Reference" "#PWR031"
+			(at 175.26 48.26 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+3.3V"
+			(at 175.26 39.37 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 175.26 44.45 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 175.26 44.45 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+3.3V\""
+			(at 175.26 44.45 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "2e47c3d6-dd08-45b0-9d0a-84f62c674f27")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR031")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "power:GND")
 		(at 452.12 118.11 0)
 		(unit 1)
@@ -14448,7 +15897,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "4e739775-29b5-4a84-9a7c-085823d024d7")
-		(property "Reference" "#PWR041"
+		(property "Reference" "#PWR047"
 			(at 452.12 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -14508,7 +15957,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR041")
+					(reference "#PWR047")
 					(unit 1)
 				)
 			)
@@ -14526,7 +15975,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "4e8bc26f-47f2-4a13-b4db-06a360cda98a")
-		(property "Reference" "#PWR054"
+		(property "Reference" "#PWR050"
 			(at 461.01 82.55 0)
 			(hide yes)
 			(show_name no)
@@ -14586,7 +16035,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR054")
+					(reference "#PWR050")
 					(unit 1)
 				)
 			)
@@ -14614,7 +16063,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1.18k"
+		(property "Value" "3.3k"
 			(at 472.186 223.52 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -14675,7 +16124,7 @@
 	)
 	(symbol
 		(lib_id "Device:C")
-		(at 186.69 163.83 270)
+		(at 186.69 161.29 270)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -14684,8 +16133,8 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "50d6a7a0-e571-47c0-9227-2c2eadcf13e5")
-		(property "Reference" "C26"
-			(at 182.626 160.02 90)
+		(property "Reference" "C7"
+			(at 182.626 157.48 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -14695,7 +16144,7 @@
 			)
 		)
 		(property "Value" "22uF"
-			(at 182.626 162.56 90)
+			(at 182.626 160.02 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -14705,7 +16154,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_1206_3216Metric_Pad1.33x1.80mm_HandSolder"
-			(at 182.88 164.7952 0)
+			(at 182.88 162.2552 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -14716,7 +16165,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 186.69 163.83 0)
+			(at 186.69 161.29 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -14727,7 +16176,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor"
-			(at 186.69 163.83 0)
+			(at 186.69 161.29 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -14746,7 +16195,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C26")
+					(reference "C7")
 					(unit 1)
 				)
 			)
@@ -14764,7 +16213,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "5171afa0-4b6e-495e-bc3c-08c499703c1f")
-		(property "Reference" "#PWR092"
+		(property "Reference" "#PWR024"
 			(at 125.73 170.18 0)
 			(hide yes)
 			(show_name no)
@@ -14824,7 +16273,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR092")
+					(reference "#PWR024")
 					(unit 1)
 				)
 			)
@@ -14842,7 +16291,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "51cb6336-c6e6-4acf-ba22-ca6bfc6645ff")
-		(property "Reference" "#PWR043"
+		(property "Reference" "#PWR05"
 			(at 44.45 200.66 0)
 			(hide yes)
 			(show_name no)
@@ -14902,7 +16351,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR043")
+					(reference "#PWR05")
 					(unit 1)
 				)
 			)
@@ -14920,7 +16369,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "5202d365-947b-4dc4-ac32-7ccbdedb370f")
-		(property "Reference" "U3"
+		(property "Reference" "U6"
 			(at 485.14 102.87 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -15143,7 +16592,100 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "U3")
+					(reference "U6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:LED")
+		(at 538.48 185.42 270)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "53540135-65c5-4a11-9f0b-72b535e37ace")
+		(property "Reference" "D5"
+			(at 541.02 182.5624 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "LED"
+			(at 541.02 185.1024 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "LED_SMD:LED_0805_2012Metric_Pad1.15x1.40mm_HandSolder"
+			(at 538.48 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 538.48 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Light emitting diode"
+			(at 538.48 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Sim.Pins" "1=K 2=A"
+			(at 538.48 185.42 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "2"
+			(uuid "036cbf42-e926-4536-a554-2717de2c9089")
+		)
+		(pin "1"
+			(uuid "e79d696a-aa88-4752-9667-b6f8011b5abc")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "D5")
 					(unit 1)
 				)
 			)
@@ -15243,7 +16785,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "538d05a9-8aa1-45f9-a315-26c63e504de6")
-		(property "Reference" "#PWR072"
+		(property "Reference" "#PWR025"
 			(at 127 148.59 0)
 			(hide yes)
 			(show_name no)
@@ -15303,7 +16845,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR072")
+					(reference "#PWR025")
 					(unit 1)
 				)
 			)
@@ -15321,7 +16863,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "54af30f8-bb41-4a30-be35-7038e3a88a80")
-		(property "Reference" "R12"
+		(property "Reference" "R19"
 			(at 509.27 113.0299 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -15385,7 +16927,89 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R12")
+					(reference "R19")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R_US")
+		(at 134.62 100.33 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "55de2348-69b5-4b24-ad29-c93d2c7736a5")
+		(property "Reference" "R5"
+			(at 137.16 99.0599 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1.5k"
+			(at 137.16 101.5999 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
+			(at 135.636 100.584 90)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 134.62 100.33 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, US symbol"
+			(at 134.62 100.33 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "356f245c-fc34-48dc-bc79-cfb1658df73b")
+		)
+		(pin "2"
+			(uuid "d0bcec18-0d71-41ce-84c4-aa3fc53484a1")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "R5")
 					(unit 1)
 				)
 			)
@@ -15402,7 +17026,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "58415f38-373b-459d-80c7-0a49b916c92a")
-		(property "Reference" "#PWR053"
+		(property "Reference" "#PWR042"
 			(at 394.97 144.78 0)
 			(hide yes)
 			(show_name no)
@@ -15462,7 +17086,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR053")
+					(reference "#PWR042")
 					(unit 1)
 				)
 			)
@@ -15562,7 +17186,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "608d2361-5bfc-4d6f-bfec-354be24a4978")
-		(property "Reference" "#PWR06"
+		(property "Reference" "#PWR017"
 			(at 113.03 30.48 0)
 			(hide yes)
 			(show_name no)
@@ -15622,7 +17246,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR06")
+					(reference "#PWR017")
 					(unit 1)
 				)
 			)
@@ -15640,7 +17264,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "6167e742-914b-4e0a-93f0-d94b0f57c706")
-		(property "Reference" "J7"
+		(property "Reference" "J3"
 			(at 107.315 154.94 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -15711,7 +17335,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "J7")
+					(reference "J3")
 					(unit 1)
 				)
 			)
@@ -15728,7 +17352,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "62d1c4d6-0cf2-44c8-8fa8-99629a45a09c")
-		(property "Reference" "R30"
+		(property "Reference" "R4"
 			(at 96.774 63.754 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -15792,7 +17416,85 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R30")
+					(reference "R4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 134.62 111.76 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "66702748-bc07-4029-ac3b-687a89536b4e")
+		(property "Reference" "#PWR026"
+			(at 134.62 118.11 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 134.62 116.84 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 134.62 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 134.62 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 134.62 111.76 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "664b3dcb-d148-4a6d-bb7a-8a04d7e01c75")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR026")
 					(unit 1)
 				)
 			)
@@ -15810,7 +17512,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "6cccf8d3-2722-4bbe-8b1a-0cfc4d348349")
-		(property "Reference" "R26"
+		(property "Reference" "R25"
 			(at 534.67 222.2499 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -15874,7 +17576,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R26")
+					(reference "R25")
 					(unit 1)
 				)
 			)
@@ -15891,7 +17593,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "6d07d53e-03fb-49ef-8a69-c3a0955b71e9")
-		(property "Reference" "C16"
+		(property "Reference" "C18"
 			(at 515.62 192.278 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -15955,7 +17657,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C16")
+					(reference "C18")
 					(unit 1)
 				)
 			)
@@ -16052,7 +17754,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "6e2b4149-b815-4697-af9b-08c1e6966f84")
-		(property "Reference" "C28"
+		(property "Reference" "C3"
 			(at 54.61 85.09 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -16114,7 +17816,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C28")
+					(reference "C3")
 					(unit 1)
 				)
 			)
@@ -16132,7 +17834,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "6ec175ea-21e8-4c75-8bf4-61c38fcd8555")
-		(property "Reference" "R25"
+		(property "Reference" "R22"
 			(at 524.51 226.0599 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -16196,7 +17898,85 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R25")
+					(reference "R22")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 175.26 59.69 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "7012aefc-eabd-4d64-a40b-0948ab9f2686")
+		(property "Reference" "#PWR032"
+			(at 175.26 66.04 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "GND"
+			(at 175.26 64.77 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 175.26 59.69 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 175.26 59.69 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 175.26 59.69 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "49cb5d36-7059-43ca-b1fe-bfdfe88877f6")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "#PWR032")
 					(unit 1)
 				)
 			)
@@ -16214,7 +17994,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "7308035c-65ae-40f1-ba5e-ea6a403b7a84")
-		(property "Reference" "#PWR074"
+		(property "Reference" "#PWR015"
 			(at 96.52 30.48 0)
 			(hide yes)
 			(show_name no)
@@ -16274,7 +18054,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR074")
+					(reference "#PWR015")
 					(unit 1)
 				)
 			)
@@ -16368,7 +18148,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "75c9edcd-6d8b-4b88-9928-0f3574860832")
-		(property "Reference" "#PWR063"
+		(property "Reference" "#PWR058"
 			(at 501.65 248.92 0)
 			(hide yes)
 			(show_name no)
@@ -16428,7 +18208,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR063")
+					(reference "#PWR058")
 					(unit 1)
 				)
 			)
@@ -16446,7 +18226,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "7641a5b9-62e9-40e8-89ed-97640207a6c6")
-		(property "Reference" "#PWR085"
+		(property "Reference" "#PWR045"
 			(at 444.5 182.88 0)
 			(hide yes)
 			(show_name no)
@@ -16506,7 +18286,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR085")
+					(reference "#PWR045")
 					(unit 1)
 				)
 			)
@@ -16523,7 +18303,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "76e75e9b-948e-4f19-932c-f7a851045626")
-		(property "Reference" "C10"
+		(property "Reference" "C12"
 			(at 449.326 112.522 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -16587,7 +18367,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C10")
+					(reference "C12")
 					(unit 1)
 				)
 			)
@@ -16604,7 +18384,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "78fb07e8-6fa7-4baa-a7a6-2e3d43f6c350")
-		(property "Reference" "C11"
+		(property "Reference" "C13"
 			(at 459.74 113.03 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -16666,7 +18446,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C11")
+					(reference "C13")
 					(unit 1)
 				)
 			)
@@ -16684,7 +18464,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "79e403e3-4e1d-497f-8d64-a0f414b640dd")
-		(property "Reference" "J4"
+		(property "Reference" "J1"
 			(at 36.195 184.15 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -16746,7 +18526,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "J4")
+					(reference "J1")
 					(unit 1)
 				)
 			)
@@ -16764,7 +18544,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "7acc5ee5-3391-4e49-8633-f9e9179d4b75")
-		(property "Reference" "J1"
+		(property "Reference" "J2"
 			(at 59.69 124.4599 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -16855,7 +18635,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "J1")
+					(reference "J2")
 					(unit 1)
 				)
 			)
@@ -16873,7 +18653,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "7e4a127d-4390-4258-8b65-3fdd0a340c0d")
-		(property "Reference" "#PWR078"
+		(property "Reference" "#PWR029"
 			(at 153.67 41.91 0)
 			(hide yes)
 			(show_name no)
@@ -16933,7 +18713,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR078")
+					(reference "#PWR029")
 					(unit 1)
 				)
 			)
@@ -16950,7 +18730,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "7fca2027-efdc-4379-94bc-450d2bce2d33")
-		(property "Reference" "C24"
+		(property "Reference" "C11"
 			(at 444.246 112.522 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -17014,7 +18794,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C24")
+					(reference "C11")
 					(unit 1)
 				)
 			)
@@ -17032,7 +18812,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "82be1347-2b96-4afb-80c5-58d70d7dc2b4")
-		(property "Reference" "#PWR04"
+		(property "Reference" "#PWR02"
 			(at 27.94 58.42 0)
 			(hide yes)
 			(show_name no)
@@ -17092,7 +18872,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR04")
+					(reference "#PWR02")
 					(unit 1)
 				)
 			)
@@ -17109,7 +18889,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "830a6223-3fcc-4a3b-8dbc-cfda6350fb25")
-		(property "Reference" "L2"
+		(property "Reference" "L1"
 			(at 506.73 130.8099 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -17173,7 +18953,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "L2")
+					(reference "L1")
 					(unit 1)
 				)
 			)
@@ -17190,7 +18970,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "83b4dbb9-668e-45cf-9f19-8afdfbbebb76")
-		(property "Reference" "C22"
+		(property "Reference" "C16"
 			(at 507.746 104.902 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -17254,7 +19034,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C22")
+					(reference "C16")
 					(unit 1)
 				)
 			)
@@ -17431,7 +19211,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "84e6d788-2dd4-4347-a1bf-0e18ba928bba")
-		(property "Reference" "TP3"
+		(property "Reference" "TP1"
 			(at 15.748 57.15 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -17490,7 +19270,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "TP3")
+					(reference "TP1")
 					(unit 1)
 				)
 			)
@@ -17508,7 +19288,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "862c2924-6881-47cf-b744-81b5610055e1")
-		(property "Reference" "#PWR07"
+		(property "Reference" "#PWR012"
 			(at 72.39 59.69 0)
 			(hide yes)
 			(show_name no)
@@ -17568,7 +19348,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR07")
+					(reference "#PWR012")
 					(unit 1)
 				)
 			)
@@ -17585,7 +19365,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "8845d9c0-2a53-4dca-a252-598e8881cc72")
-		(property "Reference" "#PWR052"
+		(property "Reference" "#PWR041"
 			(at 388.62 140.97 0)
 			(hide yes)
 			(show_name no)
@@ -17645,7 +19425,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR052")
+					(reference "#PWR041")
 					(unit 1)
 				)
 			)
@@ -17733,6 +19513,99 @@
 		)
 	)
 	(symbol
+		(lib_id "Device:LED")
+		(at 175.26 55.88 90)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "89c6cf5a-c28f-49e2-a672-a272c21ab757")
+		(property "Reference" "D2"
+			(at 179.07 56.1974 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Value" "LED"
+			(at 179.07 58.7374 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(property "Footprint" "LED_SMD:LED_0805_2012Metric_Pad1.15x1.40mm_HandSolder"
+			(at 175.26 55.88 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 175.26 55.88 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Light emitting diode"
+			(at 175.26 55.88 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Sim.Pins" "1=K 2=A"
+			(at 175.26 55.88 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "2"
+			(uuid "710970d3-03d7-442c-ae17-b9242a7e70a6")
+		)
+		(pin "1"
+			(uuid "080c016b-3272-41d4-9e04-24614dc2933f")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "D2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "Device:C")
 		(at 109.22 39.37 90)
 		(unit 1)
@@ -17744,7 +19617,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "8b1c9df9-4ead-45b2-a452-1204d74b47a3")
-		(property "Reference" "C1"
+		(property "Reference" "C5"
 			(at 109.22 31.75 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -17806,7 +19679,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C1")
+					(reference "C5")
 					(unit 1)
 				)
 			)
@@ -17824,7 +19697,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "8e80b4ea-4d3b-4b10-82d4-782ac397d70e")
-		(property "Reference" "U11"
+		(property "Reference" "U3"
 			(at 192.6433 175.26 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -17933,7 +19806,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "U11")
+					(reference "U3")
 					(unit 1)
 				)
 			)
@@ -17951,7 +19824,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "91a83b15-351b-4615-b58d-c953c4c0554e")
-		(property "Reference" "U12"
+		(property "Reference" "U5"
 			(at 434.7211 53.34 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -18030,7 +19903,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "U12")
+					(reference "U5")
 					(unit 1)
 				)
 			)
@@ -18048,7 +19921,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "929d5562-797f-4ba6-8145-83f467463781")
-		(property "Reference" "#PWR01"
+		(property "Reference" "#PWR018"
 			(at 113.03 109.22 0)
 			(hide yes)
 			(show_name no)
@@ -18108,7 +19981,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR01")
+					(reference "#PWR018")
 					(unit 1)
 				)
 			)
@@ -18126,7 +19999,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "93fda0d1-4790-455d-a250-97a4fa4c29b8")
-		(property "Reference" "R14"
+		(property "Reference" "R23"
 			(at 525.78 116.8399 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -18190,7 +20063,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R14")
+					(reference "R23")
 					(unit 1)
 				)
 			)
@@ -18208,7 +20081,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "97ab9905-706a-4a16-b0cb-17c29921e729")
-		(property "Reference" "#PWR048"
+		(property "Reference" "#PWR067"
 			(at 523.24 110.49 0)
 			(hide yes)
 			(show_name no)
@@ -18269,7 +20142,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR048")
+					(reference "#PWR067")
 					(unit 1)
 				)
 			)
@@ -18286,7 +20159,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "98ec307d-5027-4410-ad47-620dcf12dbcf")
-		(property "Reference" "C25"
+		(property "Reference" "C9"
 			(at 194.564 163.2237 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -18348,7 +20221,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C25")
+					(reference "C9")
 					(unit 1)
 				)
 			)
@@ -18366,7 +20239,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "99ecb137-91e5-4da0-8a60-ca431970a525")
-		(property "Reference" "#PWR079"
+		(property "Reference" "#PWR068"
 			(at 532.13 223.52 0)
 			(hide yes)
 			(show_name no)
@@ -18426,7 +20299,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR079")
+					(reference "#PWR068")
 					(unit 1)
 				)
 			)
@@ -18444,7 +20317,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "9bbe04d2-9926-434c-83c5-f04c364a2727")
-		(property "Reference" "TP4"
+		(property "Reference" "TP2"
 			(at 15.748 69.85 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -18503,7 +20376,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "TP4")
+					(reference "TP2")
 					(unit 1)
 				)
 			)
@@ -18521,7 +20394,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "9cd419e1-58fc-4d64-aaa7-12bd4e343939")
-		(property "Reference" "#PWR081"
+		(property "Reference" "#PWR064"
 			(at 520.7 96.52 0)
 			(hide yes)
 			(show_name no)
@@ -18581,7 +20454,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR081")
+					(reference "#PWR064")
 					(unit 1)
 				)
 			)
@@ -18598,7 +20471,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "9ee2bab8-8cef-4922-84bd-cac258249ffc")
-		(property "Reference" "R2"
+		(property "Reference" "R1"
 			(at 64.77 60.452 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -18662,7 +20535,86 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R2")
+					(reference "R1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector:TestPoint")
+		(at 33.02 229.87 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "9f744625-5667-4ea3-a0c5-c16b7e1f9338")
+		(property "Reference" "SDA1"
+			(at 35.56 225.2979 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "SDA"
+			(at 35.56 227.8379 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "TestPoint:TestPoint_Pad_D2.0mm"
+			(at 38.1 229.87 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 38.1 229.87 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "test point"
+			(at 33.02 229.87 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "d4238f06-9570-423e-9fc9-a069b0569d4c")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "SDA1")
 					(unit 1)
 				)
 			)
@@ -18678,10 +20630,9 @@
 		(on_board yes)
 		(in_pos_files yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "a0d228f9-6c08-4fe6-955a-f18831b0b43e")
-		(property "Reference" "TP1"
-			(at 22.86 225.2979 0)
+		(property "Reference" "TX1"
+			(at 22.86 225.298 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -18702,7 +20653,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "TestPoint:TestPoint_THTPad_D1.5mm_Drill0.7mm"
+		(property "Footprint" "TestPoint:TestPoint_Pad_D2.0mm"
 			(at 25.4 229.87 0)
 			(hide yes)
 			(show_name no)
@@ -18741,7 +20692,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "TP1")
+					(reference "TX1")
 					(unit 1)
 				)
 			)
@@ -18840,7 +20791,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a3ccd2bd-c2da-4acb-9370-cc54b1e8f43e")
-		(property "Reference" "#PWR093"
+		(property "Reference" "#PWR020"
 			(at 121.92 168.91 0)
 			(hide yes)
 			(show_name no)
@@ -18900,7 +20851,86 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR093")
+					(reference "#PWR020")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector:TestPoint")
+		(at 33.02 242.57 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "a4f44ab3-e8b4-4e94-8f9c-20cab4095231")
+		(property "Reference" "FG_ALRT1"
+			(at 35.56 237.9979 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "FG_ALRT"
+			(at 35.56 240.5379 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "TestPoint:TestPoint_Pad_D2.0mm"
+			(at 38.1 242.57 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 38.1 242.57 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "test point"
+			(at 33.02 242.57 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "5ef4dd80-e699-42c1-b7fb-c273009b6760")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "FG_ALRT1")
 					(unit 1)
 				)
 			)
@@ -18918,7 +20948,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a6f821e0-90de-4d20-bacf-064c0239ff89")
-		(property "Reference" "D1"
+		(property "Reference" "D3"
 			(at 438.15 144.78 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -18984,7 +21014,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "D1")
+					(reference "D3")
 					(unit 1)
 				)
 			)
@@ -19002,7 +21032,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "a767d2e5-3a86-418d-9575-9d27e2672381")
-		(property "Reference" "#PWR055"
+		(property "Reference" "#PWR051"
 			(at 464.82 85.09 0)
 			(hide yes)
 			(show_name no)
@@ -19062,7 +21092,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR055")
+					(reference "#PWR051")
 					(unit 1)
 				)
 			)
@@ -19080,7 +21110,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "aa4a9667-d5c1-400d-82b2-c208ed668917")
-		(property "Reference" "#PWR061"
+		(property "Reference" "#PWR056"
 			(at 486.41 234.95 0)
 			(hide yes)
 			(show_name no)
@@ -19140,7 +21170,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR061")
+					(reference "#PWR056")
 					(unit 1)
 				)
 			)
@@ -19158,7 +21188,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "aad2f3a6-d6bb-4545-a632-b3b26852ffd3")
-		(property "Reference" "#PWR090"
+		(property "Reference" "#PWR033"
 			(at 179.07 171.45 0)
 			(hide yes)
 			(show_name no)
@@ -19218,7 +21248,83 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR090")
+					(reference "#PWR033")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Mechanical:MountingHole")
+		(at 21.59 271.78 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "ac9f805d-6f5b-439b-9fb8-228e54359228")
+		(property "Reference" "H3"
+			(at 24.13 270.5099 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "MountingHole"
+			(at 24.13 273.0499 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "MountingHole:MountingHole_2.2mm_M2"
+			(at 21.59 271.78 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 21.59 271.78 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Mounting Hole without connection"
+			(at 21.59 271.78 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "H3")
 					(unit 1)
 				)
 			)
@@ -19235,7 +21341,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "ae7e9db0-438d-4d92-a038-4369a6aeb6f6")
-		(property "Reference" "R22"
+		(property "Reference" "R10"
 			(at 167.386 192.024 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -19297,7 +21403,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R22")
+					(reference "R10")
 					(unit 1)
 				)
 			)
@@ -19314,7 +21420,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "af924321-5636-4cec-b3ed-392c8fd6c3bd")
-		(property "Reference" "R27"
+		(property "Reference" "R14"
 			(at 459.74 124.968 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -19376,7 +21482,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R27")
+					(reference "R14")
 					(unit 1)
 				)
 			)
@@ -19394,7 +21500,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "afa9a672-4bcb-4a42-a4d3-198c65a9f05d")
-		(property "Reference" "J6"
+		(property "Reference" "J4"
 			(at 108.585 133.35 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -19465,7 +21571,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "J6")
+					(reference "J4")
 					(unit 1)
 				)
 			)
@@ -19483,7 +21589,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b2b1a546-ddf6-48d0-8238-5b48f9ec01a6")
-		(property "Reference" "#PWR044"
+		(property "Reference" "#PWR059"
 			(at 502.92 154.94 0)
 			(hide yes)
 			(show_name no)
@@ -19543,7 +21649,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR044")
+					(reference "#PWR059")
 					(unit 1)
 				)
 			)
@@ -19643,7 +21749,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "bd25b815-8794-43ea-a2a3-fadcbf227481")
-		(property "Reference" "#PWR098"
+		(property "Reference" "#PWR04"
 			(at 44.45 119.38 0)
 			(hide yes)
 			(show_name no)
@@ -19703,7 +21809,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR098")
+					(reference "#PWR04")
 					(unit 1)
 				)
 			)
@@ -19721,7 +21827,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "bd2c85fc-927a-473d-b42b-511a46fe6ffa")
-		(property "Reference" "#PWR069"
+		(property "Reference" "#PWR023"
 			(at 125.73 140.97 0)
 			(hide yes)
 			(show_name no)
@@ -19781,7 +21887,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR069")
+					(reference "#PWR023")
 					(unit 1)
 				)
 			)
@@ -19798,7 +21904,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "c18da4a6-1dd7-4544-b100-4130647ae236")
-		(property "Reference" "C12"
+		(property "Reference" "C17"
 			(at 512.826 104.902 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -19862,7 +21968,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C12")
+					(reference "C17")
 					(unit 1)
 				)
 			)
@@ -19879,7 +21985,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "c706dd84-957a-4208-8a51-94b1c2773724")
-		(property "Reference" "#PWR050"
+		(property "Reference" "#PWR039"
 			(at 381 124.46 0)
 			(hide yes)
 			(show_name no)
@@ -19939,7 +22045,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR050")
+					(reference "#PWR039")
 					(unit 1)
 				)
 			)
@@ -19957,7 +22063,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "c89b40db-480a-484e-bc97-b20e32ec675d")
-		(property "Reference" "#PWR042"
+		(property "Reference" "#PWR049"
 			(at 459.74 123.19 0)
 			(hide yes)
 			(show_name no)
@@ -20017,7 +22123,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR042")
+					(reference "#PWR049")
 					(unit 1)
 				)
 			)
@@ -20035,7 +22141,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "cc212fde-3449-4aeb-a3b0-ad61f37131de")
-		(property "Reference" "#PWR057"
+		(property "Reference" "#PWR014"
 			(at 86.36 54.61 0)
 			(hide yes)
 			(show_name no)
@@ -20095,83 +22201,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR057")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Mechanical:MountingHole")
-		(at 22.2134 271.0924 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom no)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "cc56aba8-1ca8-470c-8eed-645a75cbb015")
-		(property "Reference" "H3"
-			(at 24.7534 269.8223 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "MountingHole"
-			(at 24.7534 272.3623 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "MountingHole:MountingHole_2.2mm_M2"
-			(at 22.2134 271.0924 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 22.2134 271.0924 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Mounting Hole without connection"
-			(at 22.2134 271.0924 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(instances
-			(project "ESP32_PRELIM_DESIGN"
-				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "H3")
+					(reference "#PWR014")
 					(unit 1)
 				)
 			)
@@ -20189,7 +22219,7 @@
 		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "cf85bc4c-2ba1-4d8a-ab74-0ee1f7ded731")
-		(property "Reference" "R21"
+		(property "Reference" "R9"
 			(at 172.72 198.1199 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -20253,7 +22283,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R21")
+					(reference "R9")
 					(unit 1)
 				)
 			)
@@ -20271,7 +22301,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d015087d-e9a7-429c-b9f1-619bcddf4ffb")
-		(property "Reference" "#PWR060"
+		(property "Reference" "#PWR055"
 			(at 481.33 208.28 0)
 			(hide yes)
 			(show_name no)
@@ -20331,7 +22361,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR060")
+					(reference "#PWR055")
 					(unit 1)
 				)
 			)
@@ -20349,7 +22379,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d20c78f8-1b1a-4f4f-82bc-5372fa9baacf")
-		(property "Reference" "#PWR087"
+		(property "Reference" "#PWR021"
 			(at 123.19 151.13 0)
 			(hide yes)
 			(show_name no)
@@ -20409,7 +22439,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR087")
+					(reference "#PWR021")
 					(unit 1)
 				)
 			)
@@ -20426,7 +22456,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "d498d930-0135-4e8a-b2d5-7ed0a268664a")
-		(property "Reference" "#PWR05"
+		(property "Reference" "#PWR010"
 			(at 62.23 68.58 0)
 			(hide yes)
 			(show_name no)
@@ -20486,7 +22516,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR05")
+					(reference "#PWR010")
 					(unit 1)
 				)
 			)
@@ -20504,7 +22534,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d69dc035-41f4-4aa4-b288-691b5d97d8fe")
-		(property "Reference" "#PWR047"
+		(property "Reference" "#PWR062"
 			(at 515.62 96.52 0)
 			(hide yes)
 			(show_name no)
@@ -20564,7 +22594,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR047")
+					(reference "#PWR062")
 					(unit 1)
 				)
 			)
@@ -20582,7 +22612,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "d82fbdff-719e-4325-abd5-43fbb7124a8e")
-		(property "Reference" "#PWR068"
+		(property "Reference" "#PWR040"
 			(at 384.81 154.94 0)
 			(hide yes)
 			(show_name no)
@@ -20642,7 +22672,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR068")
+					(reference "#PWR040")
 					(unit 1)
 				)
 			)
@@ -20660,7 +22690,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e03c5ce7-3407-4ac9-a3bf-e11bca011b04")
-		(property "Reference" "#PWR058"
+		(property "Reference" "#PWR057"
 			(at 501.65 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -20720,7 +22750,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR058")
+					(reference "#PWR057")
 					(unit 1)
 				)
 			)
@@ -20738,7 +22768,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e65e4c83-28eb-4a78-a4c8-b2d213899d4e")
-		(property "Reference" "#PWR051"
+		(property "Reference" "#PWR013"
 			(at 81.28 43.18 0)
 			(hide yes)
 			(show_name no)
@@ -20798,7 +22828,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR051")
+					(reference "#PWR013")
 					(unit 1)
 				)
 			)
@@ -20896,7 +22926,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e821eb22-6d0f-474f-8a30-85824d085292")
-		(property "Reference" "#PWR02"
+		(property "Reference" "#PWR08"
 			(at 58.42 48.26 0)
 			(hide yes)
 			(show_name no)
@@ -20956,7 +22986,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR02")
+					(reference "#PWR08")
 					(unit 1)
 				)
 			)
@@ -21062,7 +23092,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ed3db234-08ff-4f45-b51a-ca40b3407c5a")
-		(property "Reference" "TP5"
+		(property "Reference" "GND1"
 			(at 22.86 235.4579 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -21084,7 +23114,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "TestPoint:TestPoint_THTPad_D1.5mm_Drill0.7mm"
+		(property "Footprint" "TestPoint:TestPoint_Pad_D2.0mm"
 			(at 25.4 240.03 0)
 			(hide yes)
 			(show_name no)
@@ -21123,7 +23153,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "TP5")
+					(reference "GND1")
 					(unit 1)
 				)
 			)
@@ -21141,7 +23171,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ed696df7-b389-4f09-9f88-7614b4f2c2af")
-		(property "Reference" "#PWR073"
+		(property "Reference" "#PWR034"
 			(at 182.88 180.34 0)
 			(hide yes)
 			(show_name no)
@@ -21201,7 +23231,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR073")
+					(reference "#PWR034")
 					(unit 1)
 				)
 			)
@@ -21219,7 +23249,7 @@
 		(dnp no)
 		(uuid "ee7329ce-9526-4e81-8d6e-433602c6fbe2")
 		(property "Reference" "R18"
-			(at 479.806 220.98 0)
+			(at 481.33 220.98 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -21229,8 +23259,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "1.78k"
-			(at 479.806 223.52 0)
+		(property "Value" "2k"
+			(at 481.838 223.52 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -21301,7 +23331,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ef559924-e2ea-4ab7-ba1c-40f4be5dc3f0")
-		(property "Reference" "C21"
+		(property "Reference" "C6"
 			(at 116.84 29.21 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -21363,7 +23393,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C21")
+					(reference "C6")
 					(unit 1)
 				)
 			)
@@ -21381,7 +23411,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f04f23fc-c4a9-4c92-8110-91b37eb65237")
-		(property "Reference" "R24"
+		(property "Reference" "R6"
 			(at 144.78 26.67 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -21443,7 +23473,89 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R24")
+					(reference "R6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:R_US")
+		(at 538.48 194.31 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "f1772796-4bc9-4a8b-a508-7b2345c7a38c")
+		(property "Reference" "R26"
+			(at 541.02 193.0399 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1.5k"
+			(at 541.02 195.5799 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Resistor_SMD:R_0805_2012Metric_Pad1.20x1.40mm_HandSolder"
+			(at 539.496 194.564 90)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 538.48 194.31 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, US symbol"
+			(at 538.48 194.31 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "2"
+			(uuid "14207a12-b152-4c06-86b5-bd2a75405bdd")
+		)
+		(pin "1"
+			(uuid "744db699-8778-47db-8bab-cbebe8b338f9")
+		)
+		(instances
+			(project "ESP32_PRELIM_DESIGN"
+				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
+					(reference "R26")
 					(unit 1)
 				)
 			)
@@ -21461,7 +23573,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f18cb892-caf6-477c-870b-524e96bdbed1")
-		(property "Reference" "#PWR097"
+		(property "Reference" "#PWR07"
 			(at 49.53 119.38 0)
 			(hide yes)
 			(show_name no)
@@ -21521,7 +23633,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR097")
+					(reference "#PWR07")
 					(unit 1)
 				)
 			)
@@ -21539,7 +23651,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f3059553-ceba-405e-8674-d4a05006b844")
-		(property "Reference" "#PWR045"
+		(property "Reference" "#PWR061"
 			(at 513.08 132.08 0)
 			(hide yes)
 			(show_name no)
@@ -21599,7 +23711,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR045")
+					(reference "#PWR061")
 					(unit 1)
 				)
 			)
@@ -21617,7 +23729,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f44170d0-7b43-405a-a1fb-562282b496fd")
-		(property "Reference" "TP2"
+		(property "Reference" "RX1"
 			(at 22.86 230.3779 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -21639,7 +23751,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "TestPoint:TestPoint_THTPad_D1.5mm_Drill0.7mm"
+		(property "Footprint" "TestPoint:TestPoint_Pad_D2.0mm"
 			(at 25.4 234.95 0)
 			(hide yes)
 			(show_name no)
@@ -21678,7 +23790,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "TP2")
+					(reference "RX1")
 					(unit 1)
 				)
 			)
@@ -21696,7 +23808,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "f5b533c9-1ec9-4821-92d3-5925a4a6d04f")
-		(property "Reference" "#PWR080"
+		(property "Reference" "#PWR060"
 			(at 510.54 95.25 0)
 			(hide yes)
 			(show_name no)
@@ -21756,7 +23868,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR080")
+					(reference "#PWR060")
 					(unit 1)
 				)
 			)
@@ -21774,7 +23886,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "fa2be7eb-ddae-42c8-9bc6-b39ba37944b0")
-		(property "Reference" "R29"
+		(property "Reference" "R12"
 			(at 387.35 151.1299 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -21838,83 +23950,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R29")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Mechanical:MountingHole")
-		(at 22.86 276.86 0)
-		(unit 1)
-		(body_style 1)
-		(exclude_from_sim no)
-		(in_bom no)
-		(on_board yes)
-		(in_pos_files yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "fb792c37-0d7e-4205-9f46-8894058c1878")
-		(property "Reference" "H4"
-			(at 25.4 275.5899 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "MountingHole"
-			(at 25.4 278.1299 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "MountingHole:MountingHole_2.2mm_M2"
-			(at 22.86 276.86 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Datasheet" ""
-			(at 22.86 276.86 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(property "Description" "Mounting Hole without connection"
-			(at 22.86 276.86 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-			)
-		)
-		(instances
-			(project "ESP32_PRELIM_DESIGN"
-				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "H4")
+					(reference "R12")
 					(unit 1)
 				)
 			)
@@ -21932,7 +23968,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "fc7ae755-9b3c-496a-9cc0-86bcd8505418")
-		(property "Reference" "#PWR064"
+		(property "Reference" "#PWR063"
 			(at 515.62 184.15 0)
 			(hide yes)
 			(show_name no)
@@ -21992,7 +24028,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR064")
+					(reference "#PWR063")
 					(unit 1)
 				)
 			)
@@ -22010,7 +24046,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "fd0a44c7-aaea-40cd-9881-f06e68924d83")
-		(property "Reference" "R19"
+		(property "Reference" "R20"
 			(at 509.27 224.79 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -22072,7 +24108,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "R19")
+					(reference "R20")
 					(unit 1)
 				)
 			)
@@ -22090,7 +24126,7 @@
 		(in_pos_files yes)
 		(dnp no)
 		(uuid "fd2c2eba-6e44-4122-858d-b65a87d3b79a")
-		(property "Reference" "C27"
+		(property "Reference" "C2"
 			(at 41.91 86.36 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -22152,7 +24188,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "C27")
+					(reference "C2")
 					(unit 1)
 				)
 			)
@@ -22170,7 +24206,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "ff008bc8-17b4-4f1b-acac-1ebd91d8c247")
-		(property "Reference" "#PWR062"
+		(property "Reference" "#PWR065"
 			(at 521.97 227.33 0)
 			(hide yes)
 			(show_name no)
@@ -22230,7 +24266,7 @@
 		(instances
 			(project "ESP32_PRELIM_DESIGN"
 				(path "/ad7b4e31-bbaa-4804-aa31-814eb5fa2fbb"
-					(reference "#PWR062")
+					(reference "#PWR065")
 					(unit 1)
 				)
 			)

@@ -1,9 +1,11 @@
 import io
 import random
+import struct
 import unittest
 import wave
 
 from slate.voice.audio import MAX_AUDIO_SECONDS, SAMPLE_RATE, read_wav, write_wav
+from slate.voice.device import trim_transport_silence
 
 
 class AudioTests(unittest.TestCase):
@@ -46,6 +48,13 @@ class AudioTests(unittest.TestCase):
             with self.subTest(samples=samples):
                 with self.assertRaisesRegex(ValueError, "complete 16-bit samples"):
                     write_wav(samples)
+
+    def test_removes_transport_wait_before_spoken_reply(self):
+        speech = struct.pack("<h", 2000) * (SAMPLE_RATE // 2)
+        captured = bytes(SAMPLE_RATE * 2 * 8) + speech + bytes(SAMPLE_RATE * 2)
+        trimmed = trim_transport_silence(captured)
+        self.assertIn(speech, trimmed)
+        self.assertLess(len(trimmed), SAMPLE_RATE * 2)
 
 
 if __name__ == "__main__":

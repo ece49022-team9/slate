@@ -61,6 +61,9 @@ class Link:
     def type(self, text: str) -> None:
         self.send(text.encode())
 
+    def close(self) -> None:
+        self.log.close()
+
     async def wait_for(self, text: str, seconds: float = 10) -> str:
         waiter = (text, asyncio.get_running_loop().create_future())
         self.waiters.append(waiter)
@@ -88,13 +91,20 @@ async def open_board(port: str, log: Path) -> tuple[Link, asyncio.Task]:
                 link.feed(chunk)
         finally:
             writer.close()
+            link.close()
 
     task = asyncio.create_task(read())
     booted = asyncio.create_task(link.wait_for("slate.state: 0"))
-    board = writer.transport.serial
-    board.dtr = False
-    board.rts = True
-    await asyncio.sleep(0.15)
-    board.rts = False
-    await booted
+    try:
+        board = writer.transport.serial
+        board.dtr = False
+        board.rts = True
+        await asyncio.sleep(0.15)
+        board.rts = False
+        await booted
+    except BaseException:
+        task.cancel()
+        booted.cancel()
+        await asyncio.gather(task, booted, return_exceptions=True)
+        raise
     return link, task

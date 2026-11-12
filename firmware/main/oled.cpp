@@ -1,25 +1,35 @@
 #include <Arduino.h>
+#include <atomic>
 #include <Adafruit_SSD1351.h>
 #include <SPI.h>
 #include "board.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "display.h"
 #include "oled.h"
+#include "perf.h"
 
 static Adafruit_SSD1351* oled;
 static uint16_t pixels[DISPLAY_PIXELS];
+static std::atomic<bool> stop_requested{false};
+static std::atomic<bool> stopped{false};
 
 static void draw(void*) {
   TickType_t next_frame = xTaskGetTickCount();
   uint32_t report_started = millis();
   uint32_t frames = 0;
-  for (;;) {
+  while (!stop_requested.load()) {
     uint32_t frame = xTaskGetTickCount() / pdMS_TO_TICKS(30);
+    int64_t started = esp_timer_get_time();
     display_render(display_get_state(), frame, pixels);
+    int64_t rendered = esp_timer_get_time();
     oled->drawRGBBitmap(0, 0, pixels, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    perf_time(PerfTimer::RENDER, uint32_t(rendered - started));
+    perf_time(PerfTimer::SPI, uint32_t(esp_timer_get_time() - rendered));
+    perf_stack(PerfTask::OLED);
     ++frames;
     uint32_t elapsed = millis() - report_started;
     if (elapsed >= 2000) {
@@ -27,11 +37,21 @@ static void draw(void*) {
                     static_cast<unsigned long>(frames),
                     static_cast<unsigned long>(elapsed),
                     frames * 1000.0f / elapsed);
+      perf_report();
       report_started = millis();
       frames = 0;
     }
     vTaskDelayUntil(&next_frame, pdMS_TO_TICKS(30));
   }
+  oled->fillScreen(0);
+  stopped.store(true); // No further SPI operations after this acknowledgment.
+  vTaskDelete(nullptr);
+}
+
+bool oled_stop() {
+  if (!oled) return true;
+  stop_requested.store(true);
+  return stopped.load();
 }
 
 void oled_start() {

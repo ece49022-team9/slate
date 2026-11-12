@@ -1,0 +1,3 @@
+name: slate-guard
+version: "1.0"
+description: Require Slate approval before sending messages or spending money

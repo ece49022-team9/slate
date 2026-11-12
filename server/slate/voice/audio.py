@@ -1,9 +1,11 @@
 import io
+import os
 import wave
 
 SAMPLE_RATE = 24_000
 SAMPLE_BYTES = 2
 MAX_AUDIO_SECONDS = 120
+IDLE_SECONDS = 600 if os.getenv("SLATE_DEMO") == "1" else 60
 
 
 def read_wav(data: bytes) -> bytes:
