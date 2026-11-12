@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +22,8 @@ class CloudStateTests(unittest.TestCase):
             (profile / "skills/bundled.png").write_bytes(b"\x89PNG")
             with (
                 patch.object(cloud, "SAVED", saved),
+                patch.object(cloud, "SLATE_SAVED", Path(directory) / "slate-saved"),
+                patch.object(cloud, "SLATE_HOME", Path(directory) / "slate"),
                 patch.object(cloud.runtime, "PROFILE", profile),
             ):
                 cloud.restore()
@@ -41,6 +44,8 @@ class CloudStateTests(unittest.TestCase):
             (profile / "skills/example/image.png").write_bytes(b"\x89PNG")
             with (
                 patch.object(cloud, "SAVED", saved),
+                patch.object(cloud, "SLATE_SAVED", Path(directory) / "slate-saved"),
+                patch.object(cloud, "SLATE_HOME", Path(directory) / "slate"),
                 patch.object(cloud.runtime, "PROFILE", profile),
                 patch.object(cloud, "state") as state,
             ):
@@ -48,6 +53,30 @@ class CloudStateTests(unittest.TestCase):
             state.commit.assert_called_once()
             self.assertTrue((saved / "skills/example/SKILL.md").exists())
             self.assertFalse((saved / "skills/example/image.png").exists())
+
+    def test_slate_databases_survive_a_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "profile").mkdir()
+            (root / "slate").mkdir()
+            with sqlite3.connect(root / "slate/tasks.sqlite3") as live:
+                live.execute("CREATE TABLE tasks (title TEXT)")
+                live.execute("INSERT INTO tasks VALUES ('Pay my bill')")
+            places = (
+                patch.object(cloud, "SAVED", root / "saved"),
+                patch.object(cloud, "SLATE_SAVED", root / "slate-saved"),
+                patch.object(cloud.runtime, "PROFILE", root / "profile"),
+                patch.object(cloud, "state"),
+            )
+            with places[0], places[1], places[2], places[3]:
+                with patch.object(cloud, "SLATE_HOME", root / "slate"):
+                    cloud.save()
+                with patch.object(cloud, "SLATE_HOME", root / "fresh"):
+                    cloud.restore()
+            with sqlite3.connect(root / "fresh/tasks.sqlite3") as restored:
+                rows = restored.execute("SELECT title FROM tasks").fetchall()
+            self.assertEqual(rows, [("Pay my bill",)])
+            self.assertFalse((root / "fresh/devices.sqlite3").exists())
 
 
 class CloudWarmUpTests(unittest.IsolatedAsyncioTestCase):

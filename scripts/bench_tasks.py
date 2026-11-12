@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 
-from slate.api.events import EventBus
+from slate.events import EventBus
 from slate.tasks.machine import Event
 from slate.tasks.manager import TaskManager
 from slate.tasks.store import ApprovalClosed, TaskStore

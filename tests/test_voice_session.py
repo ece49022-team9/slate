@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import tempfile
 import unittest
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
@@ -103,7 +104,8 @@ def cloud(agent, heard=None, said=None):
         yield b"\x40\x10" * (SAMPLE_RATE // 50)
 
     with (
-        patch.dict(os.environ, {"SLATE_DEVICE_TOKEN": TOKEN}),
+        tempfile.TemporaryDirectory() as home,
+        patch.dict(os.environ, {"SLATE_DEVICE_TOKEN": TOKEN, "SLATE_HOME": home}),
         patch("slate.voice.session.create_agent", return_value=agent),
         patch("slate.voice.session.transcribe_stream", transcribe),
         patch("slate.voice.session.speak_stream", speak),

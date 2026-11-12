@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from unittest import mock
 
@@ -6,9 +7,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
-from slate.api import events as events_module
-from slate.api.events import EventBus, send_events
-from slate.api.events import router as events_router
+from slate import events as events_module
+from slate.events import EventBus, send_events
+from slate.events import router as events_router
+from starlette.websockets import WebSocketDisconnect
 
 
 class CursorTests(unittest.TestCase):
@@ -177,22 +179,22 @@ class StreamTests(unittest.TestCase):
         app.include_router(events_router, prefix="/api")
         app.state.events = EventBus()
         self.bus = app.state.events
-        self.client = TestClient(app)
-        patch = mock.patch.object(events_module, "LOCAL_HOSTS", ("testclient",))
+        patch = mock.patch.dict(os.environ, {"SLATE_DEVICE_TOKEN": "owner"})
         patch.start()
         self.addCleanup(patch.stop)
+        self.client = TestClient(app, headers={"Authorization": "Bearer owner"})
 
     def test_reconnect_with_cursor_replays_only_missed_events(self):
         seen = [self.bus.publish("agent.step", {"n": n}) for n in range(3)]
         missed = [self.bus.publish("agent.step", {"n": n}) for n in range(3, 6)]
-        url = f"/api/ws/events?after={seen[-1]['id']}"
+        url = f"/api/events/socket?after={seen[-1]['id']}"
         with self.client.websocket_connect(url) as socket:
             received = [socket.receive_json() for _ in missed]
         self.assertEqual(received, missed)
 
     def test_stale_cursor_starts_with_resync(self):
         self.bus.publish("agent.step", {})
-        url = "/api/ws/events?after=evt_000000_0000000001"
+        url = "/api/events/socket?after=evt_000000_0000000001"
         with self.client.websocket_connect(url) as socket:
             self.assertEqual(socket.receive_json()["type"], "system.resync")
 
@@ -202,9 +204,29 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(stats["published"], 1)
         self.assertEqual(stats["boot"], self.bus.boot)
 
-    def test_stats_reject_other_machines(self):
-        with mock.patch.object(events_module, "LOCAL_HOSTS", ("127.0.0.1",)):
-            self.assertEqual(self.client.get("/api/events/stats").status_code, 403)
+    def test_stats_need_the_owner_token(self):
+        wrong = {"Authorization": "Bearer wrong"}
+        self.assertEqual(
+            self.client.get("/api/events/stats", headers=wrong).status_code, 401
+        )
+        self.client.headers.pop("Authorization")
+        self.assertEqual(self.client.get("/api/events/stats").status_code, 401)
+
+    def test_socket_needs_the_owner_token(self):
+        self.client.headers.pop("Authorization")
+        with self.assertRaises(WebSocketDisconnect) as refused:
+            with self.client.websocket_connect("/api/events/socket") as socket:
+                socket.receive_json()
+        self.assertEqual(refused.exception.code, 4401)
+
+    def test_browser_sends_the_token_as_a_subprotocol(self):
+        self.client.headers.pop("Authorization")
+        self.bus.publish("agent.step", {})
+        with self.client.websocket_connect(
+            "/api/events/socket", subprotocols=["slate", "owner"]
+        ) as socket:
+            self.assertEqual(socket.accepted_subprotocol, "slate")
+            self.assertEqual(socket.receive_json()["type"], "agent.step")
 
 
 if __name__ == "__main__":

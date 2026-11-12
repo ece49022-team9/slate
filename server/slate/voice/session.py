@@ -8,6 +8,7 @@ from functools import partial
 from typing import Any, Literal
 from uuid import uuid4
 
+import httpx
 import numpy as np
 import soxr
 from fastapi import WebSocket, WebSocketDisconnect
@@ -15,8 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from slate.agent import create_agent
 from slate.agent.agent import BACKGROUND_PROMPT
-from slate.api.events import EventBus
 from slate.device import DeviceCommand, DeviceSDK, agent_context
+from slate.events import EventBus
+from slate.tasks.machine import InvalidTransition
+from slate.tasks.manager import TaskManager
+from slate.tasks.store import ApprovalClosed, TaskNotFound
 from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE
 from slate.voice.client import speak_stream, transcribe_stream
 from slate.voice.live import LiveCall
@@ -31,6 +35,8 @@ CALL_LEAD_SECONDS = 0.2
 RECEIPT_SECONDS = 5
 HANGUP_SECONDS = 5
 KEPT_REPORTS = 50
+APPROVAL_SECONDS = 120
+SUMMARY_CHARS = 200
 PROFILE = os.getenv("SLATE_PROFILE") == "1"
 
 
@@ -55,10 +61,21 @@ def spoken_part(text: str, final: bool) -> tuple[str, bool]:
 
 class VoiceSession:
     def __init__(
-        self, socket: WebSocket, hello: Hello, events: EventBus | None = None
+        self,
+        socket: WebSocket,
+        hello: Hello,
+        events: EventBus | None = None,
+        tasks: TaskManager | None = None,
+        device_id: str | None = None,
     ) -> None:
         self.socket = socket
         self.events = events
+        self.task_manager = tasks
+        self.device_id = device_id
+        self.turn_tasks: dict[str, str] = {}
+        self.approvals: dict[tuple[str, str], str] = {}
+        self.background: dict[str, str] = {}
+        self.tools: dict[str, list[tuple[str, str]]] = {}
         self.profile = hello.profile or PROFILE
         self.send_timing = hello.profile
         self.reports: dict[str, dict] = {}
@@ -113,19 +130,84 @@ class VoiceSession:
             device_id=self.device_identity,
         )
 
-    def report_request(self, turn: Turn, text: str) -> None:
-        if self.events is None or not text:
+    def step(
+        self, turn: Turn, step_id: str, kind: str, title: str, status: str = "done"
+    ) -> None:
+        if self.events is None or not title:
             return
         self.events.publish(
             "agent.step",
-            {"step_id": "request", "kind": "request", "status": "done", "title": text},
+            {"step_id": step_id, "kind": kind, "status": status, "title": title},
             device_id=self.device_identity,
             session_id=turn.id,
         )
 
+    def track(self, turn: Turn, request: str) -> None:
+        self.step(turn, "request", "request", request)
+        if self.task_manager is None:
+            return
+        task = self.task_manager.create(
+            request[:SUMMARY_CHARS], kind="voice", session_id=turn.id
+        )
+        self.task_manager.start(task.id)
+        self.turn_tasks[turn.id] = task.id
+
+    def settle(self, turn: Turn, outcome: str, detail: str) -> None:
+        for step_id, tool in self.tools.pop(turn.id, []):
+            status = "done" if outcome == "succeed" else "failed"
+            self.step(turn, step_id, "tool", tool, status)
+        task_id = self.turn_tasks.pop(turn.id, None)
+        if task_id is None or self.task_manager is None:
+            return
+        try:
+            if outcome == "succeed":
+                self.task_manager.succeed(task_id, detail[:SUMMARY_CHARS])
+            elif outcome == "fail":
+                self.task_manager.fail(task_id, detail)
+            else:
+                self.task_manager.cancel(task_id, actor="device")
+        except (InvalidTransition, TaskNotFound):
+            logger.info("Task %s had already finished", task_id)
+
+    async def task_cancelled(self, task_id: str) -> None:
+        turn = self.turn
+        if turn is not None and self.turn_tasks.get(turn.id) == task_id:
+            self.turn_tasks.pop(turn.id)
+            await self.abort("Cancelled from the web app")
+
+    def ask(self, turn: Turn, event: dict) -> str | None:
+        task_id = self.turn_tasks.get(turn.id)
+        if self.task_manager is None or task_id is None:
+            return None
+        try:
+            approval = self.task_manager.request_approval(
+                task_id,
+                event.get("command", "Tool permission requested"),
+                timeout=APPROVAL_SECONDS,
+            )
+        except InvalidTransition as error:
+            logger.warning("Approval for task %s not tracked: %s", task_id, error)
+            return None
+        key = (event["run_id"], event["request_id"])
+        self.approvals[key] = approval.id
+        self.spawn(self.relay(approval.id, *key))
+        return approval.id
+
+    async def relay(self, approval_id: str, run_id: str, request_id: str) -> None:
+        assert self.task_manager is not None
+        try:
+            approval = await self.task_manager.wait_for_decision(approval_id)
+        finally:
+            self.approvals.pop((run_id, request_id), None)
+        choice = "once" if approval.status == "approved" else "deny"
+        try:
+            await self.agent.approve(run_id, request_id, choice)
+        except (ValueError, httpx.HTTPError) as error:
+            logger.info("Approval %s was not delivered: %s", approval_id, error)
+
     @property
     def device_identity(self) -> str:
-        return f"device-{self.id}"
+        return self.device_id or f"device-{self.id}"
 
     async def serve(self) -> None:
         self.report("idle")
@@ -246,6 +328,17 @@ class VoiceSession:
         try:
             if self.turn is None or message["turn_id"] != self.turn.id:
                 raise ValueError("This recording has ended")
+            if message["choice"] not in ("once", "deny"):
+                raise ValueError("Choose once or deny for this exact approval request")
+            approval_id = self.approvals.get((message["run_id"], message["request_id"]))
+            if approval_id is not None and self.task_manager is not None:
+                try:
+                    self.task_manager.decide(
+                        approval_id, message["choice"] == "once", actor="device"
+                    )
+                except ApprovalClosed:
+                    raise ValueError("This approval was already answered") from None
+                return
             await self.agent.approve(
                 message["run_id"], message["request_id"], message["choice"]
             )
@@ -263,15 +356,43 @@ class VoiceSession:
         if self.turn is not turn:
             return
         if event["type"] == "approval.request":
+            approval_id = self.ask(turn, event)
             await self.publish(
                 turn,
                 "approval",
                 run_id=event["run_id"],
                 request_id=event["request_id"],
                 command=event.get("command", "Tool permission requested"),
+                **({"approval_id": approval_id} if approval_id else {}),
             )
         elif event["type"] == "tool.started":
-            await self.publish(turn, "tool", tool=event.get("tool", "tool"))
+            tool = event.get("tool", "tool")
+            opened = self.tools.setdefault(turn.id, [])
+            step_id = f"tool-{len(opened) + 1}"
+            opened.append((step_id, tool))
+            self.step(turn, step_id, "tool", tool, "running")
+            await self.publish(turn, "tool", tool=tool)
+        elif event["type"] == "tool.completed":
+            opened = self.tools.get(turn.id, [])
+            tool = event.get("tool", "tool")
+            for index, (step_id, name) in enumerate(opened):
+                if name == tool:
+                    del opened[index]
+                    self.step(turn, step_id, "tool", tool)
+                    break
+        elif (
+            event["type"] == "subagent.start"
+            and str(event.get("depth", 0)) == "0"
+            and event.get("delegation_id")
+            and self.task_manager is not None
+        ):
+            task = self.task_manager.create(
+                event.get("goal") or "Background work",
+                kind="background",
+                session_id=turn.id,
+            )
+            self.task_manager.start(task.id)
+            self.background[event["delegation_id"]] = task.id
 
     async def publish(self, turn: Turn, kind: str, **fields: Any) -> None:
         if self.closed or self.turn is not turn:
@@ -423,7 +544,7 @@ class VoiceSession:
             await self.publish(turn, "transcript", text=text.strip(), final=True)
             turn.timing.mark("transcript_published")
             if text.strip():
-                self.report_request(turn, text.strip())
+                self.track(turn, text.strip())
                 self.report("respond")
                 stage = "assistant response"
                 reply = await self.respond(turn, text.strip(), tts_timing)
@@ -442,12 +563,16 @@ class VoiceSession:
                 )
                 fields = {"timing": timing} if self.send_timing else {}
                 await self.publish(turn, "reply", text=reply, final=True, **fields)
+                self.step(turn, "response", "response", reply)
+                self.settle(turn, "succeed", reply)
                 self.watch_background()
             self.report("idle")
         except asyncio.CancelledError:
+            self.settle(turn, "cancel", "Cancelled")
             raise
         except Exception:
             logger.exception("%s failed for turn %s", stage, turn.id)
+            self.settle(turn, "fail", f"{stage.capitalize()} failed")
             self.report("error")
             await self.publish(
                 turn,
@@ -545,6 +670,7 @@ class VoiceSession:
         turn = Turn()
         turn.finish()
         self.turn = turn
+        self.track(turn, request)
         try:
             await self.publish(turn, "tool", tool="slate agent")
             reply = await self.agent.run(
@@ -552,6 +678,13 @@ class VoiceSession:
                 partial(self.agent_progress, turn),
                 device_context=agent_context(turn.scope),
             )
+            self.settle(turn, "succeed", reply)
+        except asyncio.CancelledError:
+            self.settle(turn, "cancel", "Cancelled")
+            raise
+        except Exception:
+            self.settle(turn, "fail", "Assistant response failed")
+            raise
         finally:
             if self.turn is turn:
                 self.turn = None
@@ -570,6 +703,13 @@ class VoiceSession:
         while self.agent.pending:
             finished = await self.agent.background_finished()
             logger.info("Announcing background results %s", sorted(finished))
+            for delegation in finished:
+                task_id = self.background.pop(delegation, None)
+                if task_id is not None and self.task_manager is not None:
+                    try:
+                        self.task_manager.succeed(task_id, "Background work finished")
+                    except (InvalidTransition, TaskNotFound):
+                        logger.info("Background task %s had already finished", task_id)
             if (call := self.call) is not None:
                 reply = await self.agent.run(BACKGROUND_PROMPT)
                 await call.tell(spoken_part(reply, final=True)[0].strip())
@@ -652,16 +792,21 @@ class VoiceSession:
 
 
 class VoiceSessions:
-    def __init__(self, events: EventBus | None = None) -> None:
+    def __init__(
+        self, events: EventBus | None = None, tasks: TaskManager | None = None
+    ) -> None:
         self.events = events
+        self.task_manager = tasks
         self.current: VoiceSession | None = None
         self.lock = asyncio.Lock()
 
-    async def connect(self, socket: WebSocket, hello: Hello) -> VoiceSession:
+    async def connect(
+        self, socket: WebSocket, hello: Hello, device_id: str | None = None
+    ) -> VoiceSession:
         async with self.lock:
             previous, self.current = (
                 self.current,
-                VoiceSession(socket, hello, self.events),
+                VoiceSession(socket, hello, self.events, self.task_manager, device_id),
             )
             if previous is not None and not previous.closed:
                 logger.warning("Device %s replaced by a new connection", previous.id)

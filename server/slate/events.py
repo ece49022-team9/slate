@@ -6,15 +6,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 import anyio
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from starlette.requests import HTTPConnection
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
+
+from slate.access.routes import is_owner, require_owner, socket_token
 
 Event = dict[str, Any]
 
 router = APIRouter(tags=["events"])
-
-LOCAL_HOSTS = ("127.0.0.1", "::1")
-LOCAL_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
 
 SEND_TIMEOUT = 5.0
 
@@ -118,29 +116,19 @@ class EventBus:
         }
 
 
-def is_local(connection: HTTPConnection) -> bool:
-    origin = connection.headers.get("origin")
-    return (
-        connection.client is not None
-        and connection.client.host in LOCAL_HOSTS
-        and (origin is None or origin in LOCAL_ORIGINS)
-    )
-
-
-@router.get("/events/stats")
+@router.get("/events/stats", dependencies=[Depends(require_owner)])
 def event_stats(request: Request) -> dict[str, Any]:
-    if not is_local(request):
-        raise HTTPException(403, "Only the web app on this machine can use this")
     return request.app.state.events.snapshot()
 
 
-@router.websocket("/ws/events")
+@router.websocket("/events/socket")
 async def stream_events(websocket: WebSocket, after: str | None = None) -> None:
-    if not is_local(websocket):
-        await websocket.close(code=1008)
+    token, protocol = socket_token(websocket)
+    if not is_owner(token):
+        await websocket.close(4401, "Send the owner token")
         return
     bus: EventBus = websocket.app.state.events
-    await websocket.accept()
+    await websocket.accept(subprotocol=protocol)
     queue = bus.subscribe()
     backlog = bus.since(after)
     if backlog is None:

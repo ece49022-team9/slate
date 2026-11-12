@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import datetime
 import json
 import multiprocessing as mp
 import os
@@ -15,15 +16,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "docs" / "bench"
+OUT = ROOT / ".local" / "bench"
+TOKEN = "bench-owner-token"
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def serve(port: int, size: int, queue_size: int, deflate: bool) -> None:
     import uvicorn
     from fastapi import FastAPI, Request
     from pydantic import BaseModel
-    from slate.api.events import EventBus
-    from slate.api.events import router as events_router
+    from slate.events import EventBus
+    from slate.events import router as events_router
 
     class Load(BaseModel):
         rate: float
@@ -80,7 +83,8 @@ class Server:
         self.base = f"127.0.0.1:{self.port}"
         args = [str(self.port), str(size), str(queue_size), str(int(deflate))]
         self.process = subprocess.Popen(
-            [sys.executable, __file__, "serve", *args], env=os.environ.copy()
+            [sys.executable, __file__, "serve", *args],
+            env={**os.environ, "SLATE_DEVICE_TOKEN": TOKEN},
         )
         deadline = time.time() + 15
         while time.time() < deadline:
@@ -93,14 +97,15 @@ class Server:
         raise RuntimeError("bench server did not start")
 
     def get(self, path: str) -> dict:
-        with urllib.request.urlopen(f"http://{self.base}{path}", timeout=5) as reply:
+        request = urllib.request.Request(f"http://{self.base}{path}", headers=AUTH)
+        with urllib.request.urlopen(request, timeout=5) as reply:
             return json.load(reply)
 
     def post(self, path: str, body: dict) -> dict:
         request = urllib.request.Request(
             f"http://{self.base}{path}",
             data=json.dumps(body).encode(),
-            headers={"content-type": "application/json"},
+            headers={"content-type": "application/json", **AUTH},
         )
         with urllib.request.urlopen(request, timeout=5) as reply:
             return json.load(reply)
@@ -144,7 +149,7 @@ async def client(base: str, spec: dict, stop_ns: int) -> dict:
         return total is not None and last_seq == total - 1
 
     while time.monotonic_ns() < stop_ns and not finished():
-        url = f"ws://{base}/api/ws/events"
+        url = f"ws://{base}/api/events/socket"
         if last_id:
             url += f"?after={last_id}"
         drop_at = None
@@ -152,7 +157,9 @@ async def client(base: str, spec: dict, stop_ns: int) -> dict:
             drop_at = time.monotonic_ns() + int(spec["drop_every"] * 1e9)
         try:
             max_queue = {"fast": None, "stalled": 1}.get(kind, 16)
-            async with connect(url, max_queue=max_queue, open_timeout=5) as ws:
+            async with connect(
+                url, max_queue=max_queue, open_timeout=5, additional_headers=AUTH
+            ) as ws:
                 if kind == "stalled":
                     remaining = (stop_ns - time.monotonic_ns()) / 1e9
                     try:
@@ -464,6 +471,31 @@ def plot(results: dict) -> None:
     print(f"plot: {OUT / 'events.png'}")
 
 
+def record(results: dict, problems: list[str]) -> None:
+    fast = [r["fast_latency_ms"] for r in results["fanout"] if r["deflate"]]
+    entry = {
+        "at": datetime.datetime.now(datetime.UTC).isoformat(),
+        "case": "event-delivery",
+        "status": "passed" if not problems else "failed",
+        "git_revision": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
+        "scope": "bench",
+        "quick": results["quick"],
+        "artifact": str((OUT / "events.json").relative_to(ROOT)),
+        "definition": (
+            "Local uvicorn with one event bus; synthetic events at fixed rates to "
+            "fast, slow, flaky and stalled web app sockets on the same machine."
+        ),
+        "summary": {
+            "problems": problems,
+            "fanout_p99_ms": [row["p99"] for row in fast],
+        },
+    }
+    with (ROOT / "experiments/progress.jsonl").open("a") as log:
+        log.write(json.dumps(entry) + "\n")
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
         port, size, queue_size, deflate = (int(a) for a in sys.argv[2:6])
@@ -482,6 +514,7 @@ def main() -> None:
     results["problems"] = problems
     (OUT / "events.json").write_text(json.dumps(results, indent=1))
     print(f"results: {OUT / 'events.json'}")
+    record(results, problems)
     plot(results)
     print("PASS" if not problems else "FAIL: " + "; ".join(problems))
     sys.exit(1 if problems else 0)

@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,11 +11,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from slate.access.credentials import AccessDenied, CredentialNotFound, CredentialStore
 from slate.access.vault import Keyring
-from slate.api.events import EventBus
-from slate.api.tasks import require_local
-from slate.api.tasks import router as tasks_router
+from slate.events import EventBus
 from slate.tasks.machine import Event, State
 from slate.tasks.manager import TaskManager
+from slate.tasks.routes import router as tasks_router
 from slate.tasks.store import CredentialRef, TaskStore
 
 
@@ -288,8 +288,10 @@ class ApiTests(Setup, unittest.TestCase):
         app = FastAPI()
         app.include_router(tasks_router, prefix="/api")
         app.state.tasks = TaskManager(self.tasks, EventBus())
-        app.dependency_overrides[require_local] = lambda: None
-        self.client = TestClient(app)
+        patch = mock.patch.dict(os.environ, {"SLATE_DEVICE_TOKEN": "owner"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.client = TestClient(app, headers={"Authorization": "Bearer owner"})
 
     def tearDown(self):
         self.creds.close()

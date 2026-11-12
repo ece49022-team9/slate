@@ -64,7 +64,7 @@ class Keyring:
     def save(self) -> None:
         if self.path is None:
             raise RuntimeError(
-                "this keyring came from the environment; nothing to save"
+                "This keyring came from the environment, so there is nothing to save"
             )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")

@@ -1,6 +1,6 @@
 import unittest
 
-from slate.api.events import EventBus
+from slate.events import EventBus
 
 
 class EventBusTests(unittest.TestCase):

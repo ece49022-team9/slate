@@ -2,7 +2,7 @@ import asyncio
 import time
 from collections.abc import Callable, Sequence
 
-from slate.api.events import EventBus
+from slate.events import EventBus
 from slate.tasks.machine import Event, State
 from slate.tasks.store import (
     PENDING,

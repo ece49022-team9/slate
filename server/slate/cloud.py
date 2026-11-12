@@ -27,6 +27,9 @@ SOURCE = "/opt/hermes"
 DATA = "/data"
 HOME = "/root/hermes-home"
 SAVED = Path(DATA) / "hermes"
+SLATE_HOME = Path("/root/slate-home")
+SLATE_SAVED = Path(DATA) / "slate"
+SLATE_DATABASES = ("tasks.sqlite3", "credentials.sqlite3", "devices.sqlite3")
 SAVE_SECONDS = 300
 KEPT_FILES = ("auth.json", "SOUL.md")
 KEPT_DIRS = ("memories", "sessions", "skills", "cron", "kanban", "pairing", "hooks")
@@ -65,6 +68,7 @@ image = (
         {
             "PYTHONPATH": "/opt/slate/server",
             "SLATE_HERMES_HOME": HOME,
+            "SLATE_HOME": str(SLATE_HOME),
             "HERMES_ALLOW_ROOT_GATEWAY": "1",
             "SLATE_DEVICE_URL": "http://127.0.0.1:8000",
             "SLATE_DEVICE_MODE": os.environ.get("SLATE_DEVICE_MODE", "monty"),
@@ -94,11 +98,15 @@ def restore() -> None:
                 dirs_exist_ok=True,
                 ignore=skip_skill_images if name == "skills" else None,
             )
+    SLATE_HOME.mkdir(parents=True, exist_ok=True)
+    for name in SLATE_DATABASES:
+        if (SLATE_SAVED / name).exists():
+            shutil.copyfile(SLATE_SAVED / name, SLATE_HOME / name)
     for path in (runtime.PROFILE / "skills").rglob("*"):
         if path.is_file() and path.suffix.lower() == ".png":
             path.unlink()
             logger.info("slate.cloud: removed PNG from Hermes skill sync: %s", path)
-    logger.info("slate.cloud: restored Hermes state from the volume")
+    logger.info("slate.cloud: restored Hermes and Slate state from the volume")
 
 
 def save() -> None:
@@ -114,19 +122,19 @@ def save() -> None:
                 dirs_exist_ok=True,
                 ignore=skip_skill_images if name == "skills" else None,
             )
+    SLATE_SAVED.mkdir(parents=True, exist_ok=True)
+    databases = [(runtime.PROFILE / name, SAVED / name) for name in KEPT_DATABASES]
+    databases += [(SLATE_HOME / name, SLATE_SAVED / name) for name in SLATE_DATABASES]
     with tempfile.TemporaryDirectory() as scratch:
-        for name in KEPT_DATABASES:
-            if not (runtime.PROFILE / name).exists():
+        for live, saved in databases:
+            if not live.exists():
                 continue
-            copy = Path(scratch) / name
-            with (
-                sqlite3.connect(runtime.PROFILE / name) as source,
-                sqlite3.connect(copy) as target,
-            ):
+            copy = Path(scratch) / live.name
+            with sqlite3.connect(live) as source, sqlite3.connect(copy) as target:
                 source.backup(target)
-            shutil.copyfile(copy, SAVED / name)
+            shutil.copyfile(copy, saved)
     state.commit()
-    logger.info("slate.cloud: saved Hermes state to the volume")
+    logger.info("slate.cloud: saved Hermes and Slate state to the volume")
 
 
 def keep_saving(stopping: threading.Event) -> None:
@@ -255,6 +263,7 @@ def setup() -> None:
     settings = local_settings()
     settings.setdefault("device_token", secrets.token_urlsafe(32))
     settings.setdefault("agent_key", secrets.token_urlsafe(32))
+    settings.setdefault("master_key", secrets.token_hex(32))
     LOCAL.parent.mkdir(parents=True, exist_ok=True)
     LOCAL.write_text(json.dumps(settings, indent=2))
     profile = os.environ["MODAL_PROFILE"]
@@ -265,6 +274,7 @@ def setup() -> None:
         {
             "SLATE_DEVICE_TOKEN": settings["device_token"],
             "SLATE_AGENT_KEY": settings["agent_key"],
+            "SLATE_MASTER_KEY": settings["master_key"],
             "MODAL_TOKEN_ID": modal_login["token_id"],
             "MODAL_TOKEN_SECRET": modal_login["token_secret"],
             "SLATE_PUBLIC_URL": settings.get("url", ""),

@@ -1,9 +1,9 @@
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-from slate.api.events import LOCAL_HOSTS, LOCAL_ORIGINS
+from slate.access.routes import require_owner
 from slate.tasks.machine import InvalidTransition
 from slate.tasks.manager import TaskManager
 from slate.tasks.store import (
@@ -13,18 +13,7 @@ from slate.tasks.store import (
     TaskNotFound,
 )
 
-
-def require_local(request: Request) -> None:
-    origin = request.headers.get("origin")
-    if (
-        request.client is None
-        or request.client.host not in LOCAL_HOSTS
-        or (origin is not None and origin not in LOCAL_ORIGINS)
-    ):
-        raise HTTPException(403, "Only the web app on this machine can use this")
-
-
-router = APIRouter(tags=["tasks"], dependencies=[Depends(require_local)])
+router = APIRouter(tags=["tasks"], dependencies=[Depends(require_owner)])
 
 
 def manager(request: Request) -> TaskManager:
@@ -35,8 +24,8 @@ Tasks = Annotated[TaskManager, Depends(manager)]
 
 
 class Decision(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
     decision: Literal["approve", "deny"]
-    source: Literal["web", "device"] = "web"
     expected_version: int | None = None
 
 
@@ -115,8 +104,12 @@ def decide_or_raise(
 
 
 @router.post("/tasks/{task_id}/cancel")
-def cancel_task(task_id: str, tasks: Tasks) -> dict[str, Any]:
-    return cancel_or_raise(tasks, task_id, actor="web")
+async def cancel_task(task_id: str, request: Request, tasks: Tasks) -> dict[str, Any]:
+    task = cancel_or_raise(tasks, task_id, actor="web")
+    session = request.app.state.voice.current
+    if session is not None:
+        await session.task_cancelled(task_id)
+    return task
 
 
 def cancel_or_raise(tasks: TaskManager, task_id: str, *, actor: str) -> dict[str, Any]:

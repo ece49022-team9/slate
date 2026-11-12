@@ -126,19 +126,19 @@ class Use:
 
 def check_secret(kind: str, values: Any) -> dict[str, str]:
     if kind not in KINDS:
-        raise BadSecret(f"kind must be one of {', '.join(KINDS)}")
+        raise BadSecret(f"Choose a kind from {', '.join(KINDS)}")
     if not isinstance(values, dict):
-        raise BadSecret("secret must be an object of text fields")
+        raise BadSecret("Send the secret as an object of text fields")
     if len(values) > MAX_FIELDS:
-        raise BadSecret(f"at most {MAX_FIELDS} fields")
+        raise BadSecret(f"A secret has at most {MAX_FIELDS} fields")
     for name, value in values.items():
         if not isinstance(name, str) or not isinstance(value, str):
-            raise BadSecret(f"field {name!r} must be text")
+            raise BadSecret(f"Field {name!r} must be text")
         if not value or len(value) > MAX_VALUE:
-            raise BadSecret(f"field {name!r} must be 1 to {MAX_VALUE} characters")
+            raise BadSecret(f"Field {name!r} must be 1 to {MAX_VALUE} characters")
     missing = [name for name in KINDS[kind] if name not in values]
     if missing:
-        raise BadSecret(f"{kind} needs: {', '.join(missing)}")
+        raise BadSecret(f"A {kind} needs {', '.join(missing)}")
     return dict(values)
 
 

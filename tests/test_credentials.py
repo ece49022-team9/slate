@@ -16,11 +16,8 @@ from slate.access.credentials import (
     BadSecret,
     CredentialStore,
 )
-from slate.access.devices import DeviceStore
-from slate.access.signing import Verifier, signed_headers
+from slate.access.routes import router as access_router
 from slate.access.vault import DecryptError, Keyring, Sealed
-from slate.api.credentials import router as credentials_router
-from slate.api.tasks import require_local
 from slate.tasks.machine import Event
 from slate.tasks.store import TaskStore
 
@@ -269,62 +266,17 @@ class StoreTests(Base):
         self.store = CredentialStore(self.root / "cred.db", self.ring)
 
 
-class DeviceEncryptionTests(Base):
-    def test_device_secret_encrypted_and_still_verifies(self):
-        devices = DeviceStore(self.root / "d.db", keyring=self.ring)
-        device, secret = devices.pair("Slate")
-        with sqlite3.connect(self.root / "d.db") as conn:
-            stored = conn.execute("SELECT secret FROM devices").fetchone()[0]
-        self.assertNotEqual(bytes(stored), secret)
-        self.assertEqual(devices.get(device.id).secret, secret)
-        headers = {
-            k.lower(): v
-            for k, v in signed_headers(device.id, secret, "GET", "/p").items()
-        }
-        self.assertEqual(Verifier(devices).verify("GET", "/p", headers, b""), device.id)
-        devices.close()
-
-    def test_old_plain_rows_get_encrypted(self):
-        plain = DeviceStore(self.root / "d.db")
-        device, secret = plain.pair("Old")
-        plain.close()
-        devices = DeviceStore(self.root / "d.db", keyring=self.ring)
-        with sqlite3.connect(self.root / "d.db") as conn:
-            stored, nonce = conn.execute(
-                "SELECT secret, secret_nonce FROM devices"
-            ).fetchone()
-        self.assertIsNotNone(nonce)
-        self.assertNotEqual(bytes(stored), secret)
-        self.assertEqual(devices.get(device.id).secret, secret)
-        devices.close()
-
-    def test_old_database_without_new_columns(self):
-        path = self.root / "old.db"
-        with sqlite3.connect(path) as conn:
-            conn.execute(
-                "CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
-                "secret BLOB NOT NULL, "
-                "created_at REAL NOT NULL, revoked_at REAL, last_seen_at REAL)"
-            )
-            conn.execute(
-                "INSERT INTO devices VALUES "
-                "('dev_0000000000000001', 'x', ?, 0, NULL, NULL)",
-                (b"k" * 32,),
-            )
-        devices = DeviceStore(path, keyring=self.ring)
-        self.assertEqual(devices.get("dev_0000000000000001").secret, b"k" * 32)
-        devices.close()
-
-
 class ApiTests(Base):
     def setUp(self):
         super().setUp()
         app = FastAPI()
-        app.include_router(credentials_router, prefix="/api")
+        app.include_router(access_router, prefix="/api")
         app.state.credentials = self.store
-        app.dependency_overrides[require_local] = lambda: None
+        patch = mock.patch.dict(os.environ, {"SLATE_DEVICE_TOKEN": "owner"})
+        patch.start()
+        self.addCleanup(patch.stop)
         self.app = app
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"Authorization": "Bearer owner"})
 
     def test_add_list_detail_never_return_the_secret(self):
         made = self.client.post(
@@ -406,9 +358,20 @@ class ApiTests(Base):
         self.assertEqual(self.client.delete(f"/api/credentials/{cid}").status_code, 204)
         self.assertEqual(self.client.get(f"/api/credentials/{cid}").status_code, 404)
 
-    def test_local_only(self):
-        del self.app.dependency_overrides[require_local]
-        self.assertEqual(self.client.get("/api/credentials").status_code, 403)
+    def test_needs_the_owner_token(self):
+        self.client.headers.pop("Authorization")
+        self.assertEqual(self.client.get("/api/credentials").status_code, 401)
+        reply = self.client.post(
+            "/api/credentials",
+            json={
+                "service": "s",
+                "label": "l",
+                "kind": "password",
+                "secret": {"password": PASSWORD},
+            },
+        )
+        self.assertEqual(reply.status_code, 401)
+        self.assertEqual(self.store.all(), [])
 
 
 if __name__ == "__main__":

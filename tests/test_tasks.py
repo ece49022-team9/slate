@@ -1,17 +1,18 @@
 import asyncio
+import os
 import tempfile
 import threading
 import unittest
 from collections import deque
 from pathlib import Path
+from unittest import mock
+from unittest.mock import AsyncMock, Mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from slate.api.events import EventBus
-from slate.api.tasks import require_local
-from slate.api.tasks import router as tasks_router
+from slate.events import EventBus
 from slate.tasks.machine import (
     ACTIVE,
     TERMINAL,
@@ -22,6 +23,7 @@ from slate.tasks.machine import (
     next_state,
 )
 from slate.tasks.manager import TaskManager
+from slate.tasks.routes import router as tasks_router
 from slate.tasks.store import (
     ApprovalClosed,
     StaleVersion,
@@ -370,9 +372,12 @@ class ApiTests(unittest.TestCase):
         self.app.state.tasks = TaskManager(
             TaskStore(Path(self.dir.name) / "t.db"), EventBus()
         )
+        self.app.state.voice = Mock(current=None)
         self.store = self.app.state.tasks.store
-        self.app.dependency_overrides[require_local] = lambda: None
-        self.client = TestClient(self.app)
+        patch = mock.patch.dict(os.environ, {"SLATE_DEVICE_TOKEN": "owner"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.client = TestClient(self.app, headers={"Authorization": "Bearer owner"})
 
     def tearDown(self):
         self.dir.cleanup()
@@ -397,10 +402,10 @@ class ApiTests(unittest.TestCase):
     def test_first_decision_wins_second_gets_409(self):
         _, approval = self.waiting_task()
         url = f"/api/approvals/{approval.id}"
-        first = self.client.post(url, json={"decision": "approve", "source": "web"})
+        first = self.client.post(url, json={"decision": "approve"})
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.json()["task"]["state"], "running")
-        second = self.client.post(url, json={"decision": "deny", "source": "device"})
+        second = self.client.post(url, json={"decision": "deny"})
         self.assertEqual(second.status_code, 409)
         self.assertEqual(
             second.json()["detail"],
@@ -431,9 +436,17 @@ class ApiTests(unittest.TestCase):
         again = self.client.post(f"/api/tasks/{task.id}/cancel")
         self.assertEqual(again.status_code, 409)
 
-    def test_rejects_requests_from_other_machines(self):
-        self.app.dependency_overrides.clear()
-        self.assertEqual(self.client.get("/api/tasks").status_code, 403)
+    def test_cancel_stops_the_voice_turn_that_owns_the_task(self):
+        task, _ = self.waiting_task()
+        session = Mock(task_cancelled=AsyncMock())
+        self.app.state.voice = Mock(current=session)
+        self.client.post(f"/api/tasks/{task.id}/cancel")
+        session.task_cancelled.assert_awaited_once_with(task.id)
+
+    def test_needs_the_owner_token(self):
+        for token in ("", "Bearer wrong", "Bearer sdt_device"):
+            reply = self.client.get("/api/tasks", headers={"Authorization": token})
+            self.assertEqual(reply.status_code, 401)
 
 
 if __name__ == "__main__":
