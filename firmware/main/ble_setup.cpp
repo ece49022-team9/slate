@@ -20,7 +20,9 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 #include "ble_setup.h"
+#ifndef SLATE_BRINGUP
 #include "cloud.h"
+#endif
 #include "display.h"
 
 #if CONFIG_BT_CONTROLLER_DISABLED
@@ -34,6 +36,7 @@ extern "C" int __wrap_hal_uart_close(int port) {
 #endif
 
 static std::atomic<bool> running{false};
+static BleSetupCommandHandler command_handler;
 static bool released;
 static RTC_NOINIT_ATTR uint32_t setup_request;
 static std::atomic<uint16_t> connection{BLE_HS_CONN_HANDLE_NONE};
@@ -100,9 +103,15 @@ static int access(uint16_t, uint16_t, ble_gatt_access_ctxt* context, void*) {
   if (ble_hs_mbuf_to_flat(context->om, line, length, nullptr)) return BLE_ATT_ERR_UNLIKELY;
   if (!valid_line(line, length)) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
   line[length] = 0;
-  cloud_provision(line);
+  bool accepted = true;
+  if (command_handler) accepted = command_handler(line);
+#ifndef SLATE_BRINGUP
+  else cloud_provision(line);
+#else
+  else accepted = false;
+#endif
   memset(line, 0, sizeof(line));
-  return 0;
+  return accepted ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
 static ble_gatt_chr_def characteristics[] = {
@@ -212,13 +221,19 @@ void ble_setup_boot(bool requested) {
   else release_controller();
 }
 
-void ble_setup_start() {
+void ble_setup_start(BleSetupCommandHandler handler) {
   if (running.load()) return;
   if (released) {
+#ifdef SLATE_BRINGUP
+    Serial.println("slate.ble: reset board before restarting BLE; controller memory was released");
+    return;
+#else
     Serial.println("slate.ble: restarting for setup");
     setup_request = 0x5a7e0001;
     esp_restart();
+#endif
   }
+  command_handler = handler;
   esp_err_t result = nimble_port_init();
   if (result != ESP_OK) {
     Serial.printf("slate.ble: init failed %s\n", esp_err_to_name(result));
@@ -250,6 +265,18 @@ void ble_setup_start() {
 }
 
 bool ble_setup_active() { return running.load(); }
+
+void ble_setup_report() {
+  uint16_t handle = connection.load();
+  ble_gap_conn_desc descriptor{};
+  bool connected = running.load() && handle != BLE_HS_CONN_HANDLE_NONE &&
+                   ble_gap_conn_find(handle, &descriptor) == 0;
+  Serial.printf("slate.ble: active=%s connected=%s encrypted=%s authenticated=%s notify=%s restart_requires_reset=%s\n",
+    running.load() ? "yes" : "no", connected ? "yes" : "no",
+    connected && descriptor.sec_state.encrypted ? "yes" : "no",
+    connected && descriptor.sec_state.authenticated ? "yes" : "no",
+    subscribed.load() ? "yes" : "no", released ? "yes" : "no");
+}
 
 void ble_setup_status(const char* line) {
   if (!running.load()) return;
@@ -283,6 +310,7 @@ void ble_setup_finish() {
     return;
   }
   connection = BLE_HS_CONN_HANDLE_NONE;
+  subscribed.store(false);
   release_controller();
   display_set_text("");
   Serial.println("slate.ble: stopped");

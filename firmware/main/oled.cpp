@@ -65,11 +65,6 @@ void oled_start() {
                                 OLED_CS, OLED_DC, OLED_RESET);
   oled = &panel;
   oled->begin(OLED_SPI_HZ);
-#ifdef SLATE_BRINGUP
-  // Temporary brightness comparison: driver default master contrast is 0x0F.
-  const uint8_t master_contrast = 0x03;
-  oled->sendCommand(SSD1351_CMD_CONTRASTMASTER, &master_contrast, 1);
-#endif
   oled->setRotation(0);
   oled->fillScreen(0);
 #ifdef SLATE_BRINGUP

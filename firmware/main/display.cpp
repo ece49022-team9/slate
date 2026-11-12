@@ -66,14 +66,16 @@ void display_render(SlateState state, uint32_t frame, uint16_t* pixels) {
                  + 11.0f * level;
   float core_scale = 1.0f / (radius * radius);
   float halo_scale = 1.0f / ((radius + 12.0f) * (radius + 12.0f));
-  uint16_t color = state == SLATE_LISTEN
-                       ? (uint16_t(31.0f * level + 0.5f) << 11) | 0x07e0 |
-                             uint16_t(31.0f * level + 0.5f)
-                       : colors[state];
+  uint16_t color = colors[state];
   if (settings.custom) {
     color = ((settings.color >> 19) << 11) |
             (((settings.color >> 10) & 63) << 5) | ((settings.color >> 3) & 31);
   }
+  // Keep the audio tint unquantized until the final per-pixel RGB565 rounding.
+  float red = state == SLATE_LISTEN && !settings.custom ? 31.0f * level
+                                                       : float(color >> 11);
+  float blue = state == SLATE_LISTEN && !settings.custom ? 31.0f * level
+                                                        : float(color & 31);
   for (unsigned y = 0; y < DISPLAY_HEIGHT / 2; ++y) {
     float dy = float(y) - 63.5f;
     for (unsigned x = 0; x < DISPLAY_WIDTH / 2; ++x) {
@@ -84,9 +86,9 @@ void display_render(SlateState state, uint32_t frame, uint16_t* pixels) {
       float halo = std::max(0.0f, 1.0f - distance_squared * halo_scale);
       float intensity = std::min(1.0f, edge * edge * (3.0f - 2.0f * edge) *
                                  (0.55f + 0.45f * core) + 0.18f * halo * halo);
-      unsigned r = unsigned(float(color >> 11) * intensity + 0.5f);
+      unsigned r = unsigned(red * intensity + 0.5f);
       unsigned g = unsigned(float((color >> 5) & 63) * intensity + 0.5f);
-      unsigned b = unsigned(float(color & 31) * intensity + 0.5f);
+      unsigned b = unsigned(blue * intensity + 0.5f);
       uint16_t pixel = (r << 11) | (g << 5) | b;
       pixels[y * DISPLAY_WIDTH + x] = pixel;
       pixels[y * DISPLAY_WIDTH + DISPLAY_WIDTH - 1 - x] = pixel;
