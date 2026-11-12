@@ -1,4 +1,4 @@
-.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision pair monitor ports sim-setup sim sim-check sim-pair-check sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile duplex-profile cost-profile
+.PHONY: setup cloud-setup cloud-deploy cloud-logs web check board firmware flash provision pair monitor ports sim-setup sim sim-check sim-pair-check demo-local sim-speaker-check sim-voice bench calibrate-sim voice-deploy voice-check agent-setup agent-login agent browser browser-stop agent-check agent-e2e agent-managed agent-status eval-setup eval-memory eval-tau eval-tau-audit voice-profile device-check device-code-check device-code-profile duplex-profile cost-profile
 
 FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
@@ -83,6 +83,9 @@ sim-check:
 
 sim-pair-check:
 	uv run python scripts/check_pairing.py
+
+demo-local:
+	uv run python scripts/demo_local.py
 
 sim-speaker-check:
 	uv run python scripts/check_speaker.py
