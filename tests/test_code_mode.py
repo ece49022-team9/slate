@@ -258,7 +258,10 @@ class CodeModeTests(DeviceFixture):
             ):
                 server = build_server(mode=mode)
                 tools = await server.list_tools()
-                self.assertEqual({tool.name for tool in tools}, names | {"run_python"})
+                self.assertEqual(
+                    {tool.name for tool in tools},
+                    names | {"run_python", "list_credentials", "use_credential"},
+                )
                 for tool in tools:
                     if tool.name != "run_python":
                         self.assertIn("scope", tool.input_schema["properties"])

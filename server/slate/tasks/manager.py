@@ -14,6 +14,7 @@ from slate.tasks.store import (
 )
 
 DEFAULT_APPROVAL_TIMEOUT = 60.0
+LIVE_KINDS = frozenset({"voice", "background"})
 
 
 class TaskManager:
@@ -36,6 +37,14 @@ class TaskManager:
         now = self.clock()
         for task in self.store.in_state(State.RUNNING):
             self._apply(task.id, Event.FAIL, "server", "server restarted mid-task")
+        for task in self.store.in_state(State.AWAITING_APPROVAL):
+            if task.kind in LIVE_KINDS:
+                self._apply(
+                    task.id,
+                    Event.CANCEL,
+                    "server",
+                    "server restarted while waiting for approval",
+                )
         for approval in self.store.pending_approvals():
             if approval.deadline <= now:
                 self._expire(approval.id)

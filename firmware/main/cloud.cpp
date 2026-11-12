@@ -159,6 +159,9 @@ static void receive_text(uint8_t* payload, size_t length) {
     Serial.printf("slate.cloud.tool: %s\n", document["tool"] | "");
   } else if (!strcmp(type, "approval")) {
     Serial.println("slate.cloud.approval: requested");
+  } else if (!strcmp(type, "approval_resolved")) {
+    Serial.printf("slate.cloud.approval: %s by %s\n", document["status"] | "closed",
+                  document["decided_by"] | "server");
   } else if (!strcmp(type, "error")) {
     Serial.printf("slate.cloud.error: %s\n", document["message"] | "unknown error");
     active_turn = recording = false;

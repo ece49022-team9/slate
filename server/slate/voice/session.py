@@ -14,11 +14,12 @@ import soxr
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from slate.access.credentials import Credential
 from slate.agent import create_agent
 from slate.agent.agent import BACKGROUND_PROMPT
 from slate.device import DeviceCommand, DeviceSDK, agent_context
 from slate.events import EventBus
-from slate.tasks.machine import InvalidTransition
+from slate.tasks.machine import InvalidTransition, State
 from slate.tasks.manager import TaskManager
 from slate.tasks.store import ApprovalClosed, TaskNotFound
 from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE
@@ -37,6 +38,7 @@ HANGUP_SECONDS = 5
 KEPT_REPORTS = 50
 APPROVAL_SECONDS = 120
 SUMMARY_CHARS = 200
+SLATE_RUN = "slate"
 PROFILE = os.getenv("SLATE_PROFILE") == "1"
 
 
@@ -166,8 +168,14 @@ class VoiceSession:
                 self.task_manager.fail(task_id, detail)
             else:
                 self.task_manager.cancel(task_id, actor="device")
-        except (InvalidTransition, TaskNotFound):
-            logger.info("Task %s had already finished", task_id)
+        except InvalidTransition as error:
+            if error.state is not State.AWAITING_APPROVAL:
+                logger.info("Task %s had already finished", task_id)
+                return
+            logger.warning("Agent run ended while task %s waited for approval", task_id)
+            self.task_manager.cancel(task_id, actor="agent")
+        except TaskNotFound:
+            logger.info("Task %s is gone", task_id)
 
     async def task_cancelled(self, task_id: str) -> None:
         turn = self.turn
@@ -190,20 +198,74 @@ class VoiceSession:
             return None
         key = (event["run_id"], event["request_id"])
         self.approvals[key] = approval.id
-        self.spawn(self.relay(approval.id, *key))
+        self.spawn(self.relay(turn, approval.id, *key))
         return approval.id
 
-    async def relay(self, approval_id: str, run_id: str, request_id: str) -> None:
+    async def relay(
+        self, turn: Turn, approval_id: str, run_id: str, request_id: str
+    ) -> None:
         assert self.task_manager is not None
         try:
             approval = await self.task_manager.wait_for_decision(approval_id)
         finally:
             self.approvals.pop((run_id, request_id), None)
+        await self.publish(
+            turn,
+            "approval_resolved",
+            run_id=run_id,
+            request_id=request_id,
+            approval_id=approval_id,
+            status=approval.status,
+            decided_by=approval.decided_by,
+        )
         choice = "once" if approval.status == "approved" else "deny"
         try:
             await self.agent.approve(run_id, request_id, choice)
         except (ValueError, httpx.HTTPError) as error:
             logger.info("Approval %s was not delivered: %s", approval_id, error)
+
+    async def ask_for_credential(
+        self, turn: Turn, task_id: str, credential: Credential, purpose: str
+    ) -> bool:
+        assert self.task_manager is not None
+        summary = (
+            f"Use your {credential.service} {credential.kind} "
+            f"({credential.label}) to {purpose}"
+        )
+        try:
+            approval = self.task_manager.request_approval(
+                task_id,
+                summary,
+                timeout=APPROVAL_SECONDS,
+                credentials=[credential.id],
+            )
+        except InvalidTransition as error:
+            logger.warning("Credential approval for %s refused: %s", task_id, error)
+            return False
+        key = (SLATE_RUN, approval.id)
+        self.approvals[key] = approval.id
+        try:
+            await self.publish(
+                turn,
+                "approval",
+                run_id=SLATE_RUN,
+                request_id=approval.id,
+                command=summary,
+                approval_id=approval.id,
+            )
+            decided = await self.task_manager.wait_for_decision(approval.id)
+        finally:
+            self.approvals.pop(key, None)
+        await self.publish(
+            turn,
+            "approval_resolved",
+            run_id=SLATE_RUN,
+            request_id=approval.id,
+            approval_id=approval.id,
+            status=decided.status,
+            decided_by=decided.decided_by,
+        )
+        return decided.status == "approved"
 
     @property
     def device_identity(self) -> str:

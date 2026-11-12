@@ -1,4 +1,5 @@
 import os
+import re
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
@@ -14,6 +15,8 @@ from slate.agent.code_mode import (
     SandboxExecutor,
 )
 from slate.device import DeviceStatus
+
+CREDENTIAL_SECONDS = 135
 
 
 def build_server(*, mode: str | None = None) -> MCPServer:
@@ -56,6 +59,52 @@ def build_server(*, mode: str | None = None) -> MCPServer:
     )
     async def run_python(code: str) -> dict[str, Any]:
         return await python.execute(code)
+
+    async def credentials(method: str, path: str, scope: str, **kwargs) -> Any:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", scope):
+            raise ValueError("Scope must be an opaque capability identifier")
+        response = await client.request(
+            method,
+            f"/api/agent/credentials{path}",
+            headers={"Authorization": f"Bearer {scope}"},
+            **kwargs,
+        )
+        if response.is_error:
+            detail = response.json().get("detail", "Credential request failed")
+            raise RuntimeError(f"Credential HTTP {response.status_code}: {detail}")
+        return response.json()
+
+    @server.tool(
+        name="list_credentials",
+        description=(
+            "List the user's saved logins, cards and tokens for the active scope: "
+            "id, service, label and kind. Never returns secret values."
+        ),
+    )
+    async def list_credentials(scope: str) -> list[dict[str, Any]]:
+        return await credentials("GET", "", scope, timeout=5)
+
+    @server.tool(
+        name="use_credential",
+        description=(
+            "Get one saved credential's values for the active scope's task. "
+            "If the user has not allowed it for this task, Slate asks them first "
+            "and waits up to two minutes. Give a short purpose they will "
+            "recognize, like 'pay the October electric bill'. Type the values "
+            "only where they are needed; never say, show or store them."
+        ),
+        structured_output=True,
+    )
+    async def use_credential(
+        scope: str, credential_id: str, purpose: str
+    ) -> dict[str, Any]:
+        return await credentials(
+            "POST",
+            f"/{credential_id}/use",
+            scope,
+            json={"purpose": purpose},
+            timeout=CREDENTIAL_SECONDS,
+        )
 
     if selected == "tools":
 

@@ -58,6 +58,19 @@ async def asks_to_pay(agent, progress):
     return answer
 
 
+async def gives_up(agent, progress):
+    await progress(
+        {
+            "type": "approval.request",
+            "run_id": RUN,
+            "request_id": REQUEST,
+            "command": "Send the email",
+        }
+    )
+    await progress({"type": "answer.complete", "text": "I stopped waiting."})
+    return "I stopped waiting."
+
+
 async def fails(agent, progress):
     raise RuntimeError("model down")
 
@@ -171,6 +184,11 @@ class VoiceTaskTests(unittest.IsolatedAsyncioTestCase):
         self.manager.decide(approval.id, True, actor="web")
         await asyncio.wait_for(work, 2)
         self.assertEqual(agent.choices, ["once"])
+        [closed] = [e for e in self.sent(session) if e["type"] == "approval_resolved"]
+        self.assertEqual(
+            (closed["request_id"], closed["status"], closed["decided_by"]),
+            (REQUEST, "approved", "web"),
+        )
         task = self.store.get(approval.task_id)
         self.assertEqual(task.state.value, "succeeded")
         self.assertEqual(self.store.get_approval(approval.id).decided_by, "web")
@@ -262,6 +280,21 @@ class VoiceTaskTests(unittest.IsolatedAsyncioTestCase):
         task = self.store.get(approval.task_id)
         self.assertEqual(task.state.value, "cancelled")
         self.assertEqual(self.store.get_approval(approval.id).status, "cancelled")
+        await session.close()
+
+    async def test_run_that_ends_before_the_answer_closes_the_approval(self):
+        session = self.session(ScriptedAgent(gives_up))
+        work, _ = await self.talk(session, "Email my professor")
+        await asyncio.wait_for(work, 2)
+        [task] = self.store.recent()
+        self.assertEqual(
+            (task.state.value, task.reason), ("cancelled", "cancelled by agent")
+        )
+        [approval] = self.store.approvals(task.id)
+        self.assertEqual(approval.status, "cancelled")
+        await asyncio.sleep(0.05)
+        closed = [e for e in self.sent(session) if e["type"] == "approval_resolved"]
+        self.assertEqual(len(closed), 0)
         await session.close()
 
     async def test_failed_turn_fails_the_task(self):

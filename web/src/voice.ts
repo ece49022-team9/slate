@@ -213,6 +213,11 @@ export class VoiceConnection {
         if (typeof event.run_id !== 'string' || typeof event.request_id !== 'string' || typeof event.command !== 'string') return
         this.approval = { run_id: event.run_id, request_id: event.request_id, command: event.command }
         this.onAgent('', this.approval)
+      } else if (event.type === 'approval_resolved') {
+        if (this.approval && event.run_id === this.approval.run_id && event.request_id === this.approval.request_id) {
+          this.approval = undefined
+          this.onAgent('')
+        }
       } else if (event.type === 'transcript' && typeof event.text === 'string') {
         this.onTranscript(event.text, event.final === true)
         if (event.final && event.text) this.onState('responding')

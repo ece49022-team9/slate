@@ -338,6 +338,28 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(after.state, State.FAILED)
         self.assertEqual(after.reason, "server restarted mid-task")
 
+    async def test_restart_closes_approvals_of_voice_and_background_tasks(self):
+        voice = self.manager.create("Pay bill", kind="voice")
+        self.manager.start(voice.id)
+        lost = self.manager.request_approval(voice.id, "Pay $84?", timeout=600)
+        other = self.manager.create("Rotate key", kind="request")
+        self.manager.start(other.id)
+        kept = self.manager.request_approval(other.id, "Rotate?", timeout=600)
+        self.manager.close()
+        restarted = TaskManager(TaskStore(self.path), EventBus())
+        restarted.recover()
+        after = restarted.store.get(voice.id)
+        self.assertIs(after.state, State.CANCELLED)
+        self.assertEqual(after.reason, "server restarted while waiting for approval")
+        self.assertEqual(restarted.store.get_approval(lost.id).status, "cancelled")
+        self.assertNotIn(lost.id, restarted.timers)
+        self.assertIn(kept.id, restarted.timers)
+        self.assertEqual(
+            [event["type"] for event in restarted.bus.since(None)],
+            ["task.updated", "approval.resolved"],
+        )
+        restarted.close()
+
     async def test_restart_keeps_the_approval_deadline(self):
         task = self.manager.create("Pay bill")
         self.manager.start(task.id)

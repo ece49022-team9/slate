@@ -300,6 +300,21 @@ test('tool progress and approval requests reach the existing agent callback', as
   assert.deepEqual(f.events.at(-1), ['agent', '', approval])
 })
 
+test('an approval answered elsewhere closes the prompt for that request only', async t => {
+  const f = await fixture()
+  t.after(() => f.client.disconnect())
+  await start(f)
+  const approval = { run_id: 'run', request_id: 'request', command: 'Pay $84' }
+  f.socket.receive({ type: 'approval', turn_id: 'turn', ...approval })
+  f.socket.receive({ type: 'approval_resolved', turn_id: 'turn', run_id: 'run', request_id: 'other', status: 'approved' })
+  assert.deepEqual(f.events.at(-1), ['agent', '', approval])
+  f.socket.receive({ type: 'approval_resolved', turn_id: 'turn', run_id: 'run', request_id: 'request', status: 'approved', decided_by: 'web' })
+  assert.deepEqual(f.events.at(-1), ['agent', '', undefined])
+  const sent = f.socket.sent.length
+  await f.client.approve(approval, 'once')
+  assert.equal(f.socket.sent.length, sent)
+})
+
 test('announcements reach replies and enable speech only while idle', async t => {
   const f = await fixture()
   t.after(() => f.client.disconnect())

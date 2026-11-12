@@ -9,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.requests import HTTPConnection
 from starlette.websockets import WebSocketDisconnect
 
-from slate.access.credentials import BadSecret, CredentialNotFound, CredentialStore
+from slate.access.credentials import (
+    AccessDenied,
+    BadSecret,
+    CredentialNotFound,
+    CredentialStore,
+)
 from slate.access.devices import DeviceStore
 
 logger = logging.getLogger("slate.access")
@@ -212,3 +217,70 @@ def replace(
 def delete(credential_id: str, store: Credentials) -> None:
     found(store, credential_id)
     store.delete(credential_id)
+
+
+class CredentialUse(Body):
+    purpose: str = Field(min_length=1, max_length=200)
+
+
+agent_router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+def active_turn(request: Request) -> tuple[Any, Any, str]:
+    scope = bearer(request.headers)
+    if not scope:
+        raise HTTPException(401, "Send the turn scope as a bearer token")
+    session = request.app.state.voice.current
+    turn = None if session is None else session.turn
+    if turn is None or not hmac.compare_digest(turn.scope.encode(), scope.encode()):
+        raise HTTPException(409, "This turn has ended")
+    task_id = session.turn_tasks.get(turn.id)
+    if task_id is None:
+        raise HTTPException(409, "This turn has no task to use a credential for")
+    return session, turn, task_id
+
+
+ActiveTurn = Annotated[tuple[Any, Any, str], Depends(active_turn)]
+
+
+@agent_router.get("/credentials")
+def available(store: Credentials, turn: ActiveTurn) -> list[dict[str, Any]]:
+    return [
+        {key: item.to_dict()[key] for key in ("id", "service", "label", "kind")}
+        for item in store.all()
+    ]
+
+
+@agent_router.post("/credentials/{credential_id}/use")
+async def use(
+    credential_id: str,
+    body: Annotated[CredentialUse, parsed(CredentialUse)],
+    store: Credentials,
+    turn: ActiveTurn,
+) -> dict[str, Any]:
+    session, active, task_id = turn
+    try:
+        credential = store.get(credential_id)
+    except CredentialNotFound:
+        raise HTTPException(404, "This credential does not exist") from None
+    try:
+        secret = store.use(credential_id, task_id=task_id, purpose=body.purpose)
+    except AccessDenied as denied:
+        if denied.reason != "not_granted" or not await session.ask_for_credential(
+            active, task_id, credential, body.purpose
+        ):
+            raise HTTPException(
+                403, f"The user did not allow this credential ({denied.reason})"
+            ) from None
+        try:
+            secret = store.use(credential_id, task_id=task_id, purpose=body.purpose)
+        except AccessDenied as again:
+            raise HTTPException(
+                403, f"The user did not allow this credential ({again.reason})"
+            ) from None
+    logger.info("Released credential %s to task %s", credential_id, task_id)
+    return {
+        "credential_id": secret.credential_id,
+        "username": secret.username,
+        "values": secret.values,
+    }

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slate.access import home
 from slate.access.credentials import CredentialStore
 from slate.access.devices import DeviceStore
+from slate.access.routes import agent_router
 from slate.access.routes import router as access_router
 from slate.access.vault import Keyring
 from slate.device import router as device_router
@@ -65,3 +66,4 @@ app.include_router(device_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(access_router, prefix="/api")
+app.include_router(agent_router, prefix="/api")
