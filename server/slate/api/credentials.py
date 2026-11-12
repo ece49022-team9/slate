@@ -1,9 +1,3 @@
-"""Credential routes for the local web app. None of them return a secret.
-
-Bodies are parsed by hand instead of with a Pydantic model: FastAPI's default
-validation errors echo the input back, which here would be the password.
-"""
-
 import json
 from typing import Annotated, Any
 
@@ -28,13 +22,13 @@ Store = Annotated[CredentialStore, Depends(store)]
 async def body(request: Request) -> dict[str, Any]:
     raw = await request.body()
     if len(raw) > MAX_BODY:
-        raise HTTPException(413, "body too large")
+        raise HTTPException(413, "The request body is too large")
     try:
         data = json.loads(raw or b"{}")
     except ValueError:
-        raise HTTPException(422, "body must be JSON") from None
+        raise HTTPException(422, "Send the body as JSON") from None
     if not isinstance(data, dict):
-        raise HTTPException(422, "body must be a JSON object")
+        raise HTTPException(422, "Send the body as a JSON object")
     return data
 
 
@@ -54,7 +48,7 @@ def found(credentials: CredentialStore, credential_id: str):
     try:
         return credentials.get(credential_id)
     except CredentialNotFound:
-        raise HTTPException(404, "no such credential") from None
+        raise HTTPException(404, "This credential does not exist") from None
 
 
 @router.post("/credentials", status_code=201)

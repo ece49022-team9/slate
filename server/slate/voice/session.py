@@ -99,7 +99,6 @@ class VoiceSession:
             logger.error("Session task failed", exc_info=error)
 
     def report(self, state: str, *, online: bool = True) -> None:
-        """Tell the web dashboard what the device is doing right now."""
         if self.events is None:
             return
         self.events.publish(
@@ -115,7 +114,6 @@ class VoiceSession:
         )
 
     def report_request(self, turn: Turn, text: str) -> None:
-        """Show what the user said as the first step of a request."""
         if self.events is None or not text:
             return
         self.events.publish(

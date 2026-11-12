@@ -1,8 +1,6 @@
 import type { SlateEvent } from '../types/events'
 import type { EventFeed } from './mock'
 
-// Live events from the backend at /api/ws/events.
-// Reconnects with backoff (1s, 2s, 4s ... 30s) and resumes after the last event ID.
 export const socketFeed: EventFeed = {
   connect(onEvent) {
     let socket: WebSocket | undefined

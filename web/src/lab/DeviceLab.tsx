@@ -55,7 +55,6 @@ function save(lab: Lab | null): void {
     if (lab) localStorage.setItem(STORAGE, JSON.stringify(lab))
     else localStorage.removeItem(STORAGE)
   } catch {
-    // Storage is a convenience here; the lab still works without it.
   }
 }
 
@@ -83,7 +82,6 @@ export default function DeviceLab() {
   const [command, setCommand] = useState<Command>('ping')
   const [pending, setPending] = useState<Pending[]>([])
   const [target, setTarget] = useState<string>('')
-  // Time and nonce of the request on screen. Made fresh at every send.
   const [seed, setSeed] = useState(() => ({ timestamp: Math.floor(Date.now() / 1000), nonce: randomHex(16) }))
   const [lines, setLines] = useState<Array<[string, string]>>([])
   const [signature, setSignature] = useState('')
@@ -115,7 +113,6 @@ export default function DeviceLab() {
   }, [])
 
   useEffect(() => {
-    // Poll the backend: first right away, then every 3 s.
     const first = setTimeout(() => void refresh(), 0)
     const timer = setInterval(() => void refresh(), 3000)
     return () => {
@@ -185,7 +182,6 @@ export default function DeviceLab() {
     try {
       parsed = JSON.parse(text)
     } catch {
-      // keep the text
     }
     setLog((old) => [
       { n: (old[0]?.n ?? 0) + 1, label, attack, draft: d, sentBody, headers, status: reply.status, reply: parsed },
@@ -198,7 +194,6 @@ export default function DeviceLab() {
     setBusy(true)
     setError('')
     try {
-      // Fresh time and nonce at the moment of sending, like a real device.
       const fresh = { ...draft, timestamp: Math.floor(Date.now() / 1000), nonce: randomHex(16) }
       setSeed({ timestamp: fresh.timestamp, nonce: fresh.nonce })
       let d = fresh

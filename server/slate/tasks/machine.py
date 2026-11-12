@@ -1,11 +1,3 @@
-"""Task lifecycle as a finite state machine.
-
-The whole lifecycle is the TRANSITIONS table: (state, event) -> next state.
-Any pair that is not in the table is an illegal transition and is rejected.
-Terminal states have no outgoing edges, so once a task is finished it stays
-finished.
-"""
-
 from enum import StrEnum
 
 

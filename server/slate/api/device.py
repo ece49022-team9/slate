@@ -1,11 +1,3 @@
-"""Device pairing (local web app only) and signed device commands.
-
-Pairing, listing and revoking go through the local web app, like tasks.
-Everything under /api/device/ must be signed by a paired device; see
-slate.access.signing for the format. The device can do less than the web
-app on purpose: check the link, answer an approval, cancel a task.
-"""
-
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -30,9 +22,6 @@ def devices(request: Request) -> DeviceStore:
 Devices = Annotated[DeviceStore, Depends(devices)]
 
 
-# Pairing (web app)
-
-
 class PairRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
@@ -42,7 +31,6 @@ def pair(body: PairRequest, store: Devices) -> dict[str, Any]:
     paired, secret = store.pair(body.name)
     return {
         "device": paired.to_dict(),
-        # Shown once. Copy it to the device; it is never returned again.
         "secret": secret.hex(),
     }
 
@@ -56,7 +44,7 @@ def list_devices(store: Devices) -> list[dict[str, Any]]:
 def revoke(device_id: str, store: Devices) -> dict[str, Any]:
     revoked = store.revoke(device_id)
     if revoked is None:
-        raise HTTPException(404, "no such device")
+        raise HTTPException(404, "This device does not exist")
     return revoked.to_dict()
 
 
@@ -64,9 +52,6 @@ def revoke(device_id: str, store: Devices) -> dict[str, Any]:
 def auth_stats(request: Request) -> dict[str, int]:
     verifier: Verifier = request.app.state.verifier
     return {**verifier.stats, "remembered_nonces": verifier.remembered()}
-
-
-# Signed commands (device)
 
 
 @dataclass(frozen=True)
@@ -84,10 +69,10 @@ class AuthFailed(Exception):
 async def signed(request: Request) -> Signed:
     length = request.headers.get("content-length")
     if length is not None and length.isdigit() and int(length) > MAX_BODY:
-        raise HTTPException(413, "body too large")
+        raise HTTPException(413, "The request body is too large")
     body = await request.body()
     if len(body) > MAX_BODY:
-        raise HTTPException(413, "body too large")
+        raise HTTPException(413, "The request body is too large")
     path = request.url.path
     if request.url.query:
         path += "?" + request.url.query
@@ -102,7 +87,6 @@ async def signed(request: Request) -> Signed:
 
 async def auth_failed(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AuthFailed)
-    # server_time lets a device with a drifting clock fix itself and retry.
     return JSONResponse(
         {
             "error": "unauthorized",
@@ -117,7 +101,6 @@ SignedRequest = Annotated[Signed, Depends(signed)]
 
 
 def parse[T: BaseModel](model: type[T], body: bytes) -> T:
-    # Parse exactly the bytes that were signed.
     try:
         return model.model_validate_json(body or b"{}")
     except ValidationError as bad:

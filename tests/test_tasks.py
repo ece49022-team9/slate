@@ -46,7 +46,6 @@ class TempDB(unittest.TestCase):
 
 class TransitionTableTests(unittest.TestCase):
     def test_every_state_event_pair(self):
-        """All 7 x 8 = 56 pairs: allowed exactly when the table has them."""
         checked = 0
         for state in State:
             for event in Event:
@@ -74,7 +73,6 @@ class TransitionTableTests(unittest.TestCase):
         self.assertEqual(seen, set(State))
 
     def test_every_active_state_can_finish(self):
-        """No dead ends: from any active state some path reaches a terminal."""
         for start in ACTIVE:
             seen, todo = {start}, deque([start])
             while todo:
@@ -169,13 +167,11 @@ class StoreTests(TempDB):
             finished.append(task.id)
         remaining = {task.id for task in store.recent(limit=200)}
         self.assertEqual(remaining, set(finished[-5:]) | {t.id for t in active})
-        # Deleting a task also deletes its history.
         self.assertEqual(store.history(finished[0]), [])
 
 
 class RaceTests(TempDB):
     def race(self, actions):
-        """Run every action at the same moment on its own thread."""
         barrier = threading.Barrier(len(actions))
         results = [None] * len(actions)
 
@@ -215,7 +211,6 @@ class RaceTests(TempDB):
             losers = [value for kind, value in results if kind == "error"]
             self.assertEqual(len(winners), 1, f"trial {trial}")
             self.assertTrue(all(isinstance(e, ApprovalClosed) for e in losers))
-            # Exactly one edge left the approval state, and it matches the winner.
             exits = [
                 t
                 for t in self.store.history(task.id)
@@ -225,9 +220,6 @@ class RaceTests(TempDB):
             self.assertEqual(self.store.get(task.id), winners[0][0])
 
     def test_cancel_racing_approve(self):
-        """Result must equal one of the two serial orders:
-        cancel first: approval cancelled, approve refused.
-        approve first: task runs again, then cancel stops it."""
         orders = {
             ("cancelled", ("start", "request_approval", "cancel")),
             ("approved", ("start", "request_approval", "approve", "cancel")),
@@ -247,7 +239,7 @@ class RaceTests(TempDB):
                     ),
                 ]
             )
-            self.assertEqual(results[0][0], "ok")  # cancel always lands
+            self.assertEqual(results[0][0], "ok")
             self.assertIs(self.store.get(task.id).state, State.CANCELLED)
             status = self.store.get_approval(approval.id).status
             events = tuple(t.event for t in self.store.history(task.id))
@@ -258,8 +250,6 @@ class RandomSequenceTests(unittest.TestCase):
     @settings(max_examples=150, deadline=None)
     @given(st.lists(st.sampled_from([e for e in Event]), max_size=25))
     def test_store_always_agrees_with_the_table(self, events):
-        """Feed random events. The stored state must match the pure FSM, and
-        rejected events must leave no trace."""
         with tempfile.TemporaryDirectory() as folder:
             store = TaskStore(Path(folder) / "t.db")
             task = store.create("random", now=0.0)
@@ -333,7 +323,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         waiting = asyncio.create_task(self.manager.wait_for_decision(approval.id))
         self.manager.decide(approval.id, True, actor="web")
         self.assertEqual((await waiting).status, "approved")
-        await asyncio.sleep(0.1)  # past the old deadline
+        await asyncio.sleep(0.1)
         self.assertIs(self.manager.store.get(task.id).state, State.RUNNING)
         self.assertEqual(self.manager.timers, {})
 
@@ -350,7 +340,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         task = self.manager.create("Pay bill")
         self.manager.start(task.id)
         approval = self.manager.request_approval(task.id, "ok?", timeout=0.1)
-        self.manager.close()  # server goes down before the deadline
+        self.manager.close()
         restarted = TaskManager(TaskStore(self.path), EventBus())
         restarted.recover()
         self.assertIn(approval.id, restarted.timers)

@@ -1,22 +1,3 @@
-"""End-to-end latency and backpressure benchmark for /api/ws/events.
-
-The real EventBus and WebSocket route run under uvicorn in a child process.
-Real WebSocket clients run in other processes. Everything is on 127.0.0.1, so
-this measures our server, not the network.
-
-    uv run python scripts/bench_events.py           # full run, about 4 min
-    uv run python scripts/bench_events.py --quick   # about 1 min
-
-Latency is measured from when an event was *scheduled* to be published to
-when a client parsed it. Measuring from the scheduled time (not from when the
-publisher got around to it) keeps a stalled event loop from hiding its own
-delay ("coordinated omission"). time.monotonic_ns is one clock shared by all
-processes on Linux and macOS, so the two ends can be compared directly.
-
-Results go to docs/bench/events.json, and docs/bench/events.png when
-matplotlib is installed.
-"""
-
 import argparse
 import asyncio
 import json
@@ -35,9 +16,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "bench"
-
-
-# Server (child process)
 
 
 def serve(port: int, size: int, queue_size: int, deflate: bool) -> None:
@@ -69,11 +47,9 @@ def serve(port: int, size: int, queue_size: int, deflate: bool) -> None:
         for seq in range(total):
             due = start + seq * period
             wait = due - time.monotonic_ns()
-            # Always yield, even when behind, so sends keep running.
             await asyncio.sleep(max(0, wait) / 1e9)
             data = {"seq": seq, "total": total, "due_ns": due}
             if load.pad:
-                # Fresh random text per event, so compression cannot shrink it.
                 data["pad"] = os.urandom(load.pad // 2).hex()
             bus.publish("bench.tick", data)
             app.state.lag.append(time.monotonic_ns() - due)
@@ -143,17 +119,7 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-# Clients (worker processes)
-
-
 async def client(base: str, spec: dict, stop_ns: int) -> dict:
-    """One web app. kinds:
-    fast     reads as fast as it can
-    slow     sleeps read_delay after every event
-    stalled  connects and never reads
-    flaky    drops its connection every drop_every s, waits reconnect_delay,
-             then resumes from its cursor like the real web app
-    """
     from websockets.asyncio.client import connect
     from websockets.exceptions import ConnectionClosed
 
@@ -170,7 +136,7 @@ async def client(base: str, spec: dict, stop_ns: int) -> dict:
         "closed_after_s": None,
     }
     last_id = None
-    last_seq = -1  # nothing seen yet, so the first event must be seq 0
+    last_seq = -1
     total = None
     opened = time.monotonic_ns()
 
@@ -185,10 +151,6 @@ async def client(base: str, spec: dict, stop_ns: int) -> dict:
         if kind == "flaky":
             drop_at = time.monotonic_ns() + int(spec["drop_every"] * 1e9)
         try:
-            # Fast apps buffer without limit so they measure the server, not
-            # themselves. Slow and flaky apps keep websockets' default of 16
-            # frames, so when they lag the TCP window closes and the server
-            # feels it. A stalled app stops reading after one frame.
             max_queue = {"fast": None, "stalled": 1}.get(kind, 16)
             async with connect(url, max_queue=max_queue, open_timeout=5) as ws:
                 if kind == "stalled":
@@ -206,13 +168,13 @@ async def client(base: str, spec: dict, stop_ns: int) -> dict:
                     try:
                         message = await asyncio.wait_for(ws.recv(), max(timeout, 0))
                     except TimeoutError:
-                        break  # time to drop (flaky) or the run is over
+                        break
                     now = time.monotonic_ns()
                     event = json.loads(message)
                     last_id = event["id"]
                     if event["type"] == "system.resync":
                         result["resyncs"] += 1
-                        last_seq = None  # unknown until the next event
+                        last_seq = None
                         continue
                     if event["type"] != "bench.tick":
                         continue
@@ -268,9 +230,6 @@ def summary(ordered: list[int]) -> dict:
     }
 
 
-# Experiments
-
-
 def trial(
     specs: list[dict],
     rate: float,
@@ -294,15 +253,13 @@ def trial(
         ]
         for process in workers:
             process.start()
-        # Let every client connect before any event is published.
         deadline = time.time() + 15
         while server.get("/api/events/stats")["listeners"] < len(specs):
             if time.time() > deadline:
                 raise RuntimeError("clients did not connect")
             time.sleep(0.05)
         server.post("/bench/load", {"rate": rate, "duration": duration, "pad": pad})
-        load_start = time.monotonic() + 0.1  # the generator's start offset
-        # Sample server counters while the clients run.
+        load_start = time.monotonic() + 0.1
         clients, timeline = [], []
         while len(clients) < len(specs):
             try:

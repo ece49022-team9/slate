@@ -1,6 +1,3 @@
-"""A task may use a credential only while it is running AND only if the user
-approved an approval that named that exact credential."""
-
 import os
 import sqlite3
 import tempfile
@@ -114,7 +111,6 @@ class GrantTests(Setup, unittest.TestCase):
                 self.assertEqual(self.refused(task.id, self.duke), f"task_{state}")
 
     def test_grant_belongs_to_one_task(self):
-        """Another running task, even one started right after, gets nothing."""
         first, second = self.running(), self.running()
         approval = self.ask(first.id, self.duke)
         self.tasks.resolve(approval.id, "approved", actor="web", now=3.0)
@@ -131,8 +127,6 @@ class GrantTests(Setup, unittest.TestCase):
         self.assertEqual(self.refused(task.id, self.gmail), "not_granted")
 
     def test_while_waiting_again_earlier_grants_pause(self):
-        """During a second approval the task is not running, so nothing is
-        usable, not even what was granted before."""
         task = self.running()
         first = self.ask(task.id, self.duke)
         self.tasks.resolve(first.id, "approved", actor="web", now=3.0)
@@ -140,10 +134,6 @@ class GrantTests(Setup, unittest.TestCase):
         self.assertEqual(self.refused(task.id, self.duke), "task_awaiting_approval")
 
     def test_only_approved_approvals_grant_even_if_state_is_wrong(self):
-        """Second lock. Normally a task with an open or denied approval is not
-        running, so the state check already refuses. Force the task back to
-        running in the database: a pending or denied approval still grants
-        nothing."""
         for status in ("pending", "denied", "timed_out", "cancelled"):
             with self.subTest(status):
                 task = self.running()
@@ -313,9 +303,6 @@ class ApiTests(Setup, unittest.TestCase):
         self.assertEqual(names, ["Electric bill", "Main card"])
         self.assertNotIn("pw-duke", str(detail))
 
-
-# Model-based check: random sequences of task steps and credential uses.
-# The model says when a use must be allowed; the real code must agree.
 
 CREDS = ("duke", "gmail", "visa")
 step = st.one_of(

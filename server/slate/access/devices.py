@@ -1,13 +1,3 @@
-"""Paired devices and their signing secrets.
-
-Pairing makes a device id and a random 32-byte secret. The secret is shown
-once, to be copied onto the device, and is never returned by the API again.
-HMAC needs the server to know the secret itself (a hash would not work), so
-with a keyring the secret is encrypted at rest (see slate.access.vault) and
-only decrypted to check a signature. Rows written before encryption was
-turned on are encrypted the first time the store opens with a keyring.
-"""
-
 import os
 import secrets
 import sqlite3
@@ -45,7 +35,7 @@ class Device:
     created_at: float
     revoked_at: float | None
     last_seen_at: float | None
-    secret: bytes = field(repr=False)  # keep it out of logs and tracebacks
+    secret: bytes = field(repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,7 +66,7 @@ class DeviceStore:
             row["name"] for row in self.conn.execute("PRAGMA table_info(devices)")
         }
         for name, kind in (("secret_key_id", "TEXT"), ("secret_nonce", "BLOB")):
-            if name not in columns:  # database from before encryption
+            if name not in columns:
                 self.conn.execute(f"ALTER TABLE devices ADD COLUMN {name} {kind}")
         os.chmod(self.path, 0o600)
         self.keyring = keyring
@@ -134,8 +124,6 @@ class DeviceStore:
             )
 
     def encrypt_plain_rows(self) -> int:
-        """Encrypt rows from before the keyring, and re-encrypt rows under an
-        old key (after rotation). Returns how many rows changed."""
         assert self.keyring is not None
         with self.lock:
             rows = self.conn.execute(

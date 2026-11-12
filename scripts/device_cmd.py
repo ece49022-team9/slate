@@ -1,18 +1,3 @@
-"""Act as a paired Slate device against a running server (make server).
-
-    uv run python scripts/device_cmd.py pair "My Slate"  # saves .local/device.json
-    uv run python scripts/device_cmd.py ping
-    uv run python scripts/device_cmd.py approve apr_...
-    uv run python scripts/device_cmd.py deny apr_...
-    uv run python scripts/device_cmd.py cancel tsk_...
-
-Attack demos (each should be refused with 401):
-    ... ping --replay        send the same signed request twice
-    ... approve apr_... --tamper   sign "deny", send "approve"
-    ... ping --skew 120      sign with a clock 2 minutes off
-    ... ping --wrong-key     sign with a random key
-"""
-
 import argparse
 import json
 import secrets

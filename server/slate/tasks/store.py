@@ -1,25 +1,3 @@
-"""SQLite storage for tasks, their transition history, and approvals.
-
-Every change runs inside BEGIN IMMEDIATE, which takes SQLite's write lock
-before reading. So "read the current state, check the FSM, write the new
-state" is one atomic step, even with several threads or processes using the
-same file. Each operation opens its own connection, so nothing is shared
-between threads.
-
-Two extra guards sit on top of that:
-- tasks.version goes up by one on every transition. A caller can pass the
-  version it last saw, and the write is refused if the task moved since.
-- an approval can only leave "pending" once. Whichever decision (approve,
-  deny, timeout, cancel) commits first wins, and every later one gets
-  ApprovalClosed.
-
-Credential grants: an approval can name credentials the task wants to use
-(approval_credentials). They are written in the same transaction as the
-approval, with the service and label the user was shown. A task may use a
-credential only while it is running and only if an approval that named it
-was approved. See credential_access().
-"""
-
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -83,7 +61,6 @@ MAX_CREDENTIALS_PER_APPROVAL = 10
 
 PENDING = "pending"
 
-# How each approval outcome moves the task.
 APPROVAL_EVENTS = {
     "approved": Event.APPROVE,
     "denied": Event.DENY,
@@ -124,8 +101,6 @@ class Task:
 
 @dataclass(frozen=True)
 class CredentialRef:
-    """A credential named in an approval, as the user saw it."""
-
     id: str
     service: str
     label: str
@@ -141,7 +116,6 @@ class Approval:
     decided_by: str | None
     decided_at: float | None
     created_at: float
-    # Credentials this approval lets the task use once approved.
     credentials: tuple[CredentialRef, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -199,8 +173,6 @@ def to_approval(row: sqlite3.Row) -> Approval:
 
 class TaskStore:
     def __init__(self, path: str | Path, keep: int = 100) -> None:
-        """keep: how many finished tasks to remember. Active tasks are never
-        deleted, so the table holds at most keep + (active tasks) rows."""
         self.path = str(path)
         self.keep = keep
         if self.path != ":memory:":
@@ -239,8 +211,6 @@ class TaskStore:
             yield conn
         finally:
             conn.close()
-
-    # Reads
 
     def get(self, task_id: str) -> Task:
         with self.read() as conn:
@@ -292,12 +262,6 @@ class TaskStore:
     def credential_access(
         self, task_id: str, credential_id: str
     ) -> tuple[str | None, str | None]:
-        """May this task use this credential right now?
-
-        Returns (approval_id, None) when allowed: the approved approval that
-        granted it. Returns (None, reason) when not:
-        no_such_task, task_<state> (not running), or not_granted.
-        Both reads come from one snapshot, so the answer is consistent."""
         with self.read() as conn:
             conn.execute("BEGIN")
             try:
@@ -320,8 +284,6 @@ class TaskStore:
         if grant is None:
             return None, "not_granted"
         return grant["id"], None
-
-    # Writes
 
     def create(
         self,
@@ -369,11 +331,6 @@ class TaskStore:
         reason: str | None = None,
         expected_version: int | None = None,
     ) -> Task:
-        """Move a task along one FSM edge. Raises InvalidTransition,
-        StaleVersion, or TaskNotFound and changes nothing in that case.
-
-        Approve and deny go through resolve(), so they always close the
-        matching approval in the same transaction."""
         if event in (Event.APPROVE, Event.DENY):
             raise ValueError(f"use resolve() to {event.value} a task")
         with self.write() as conn:
@@ -381,7 +338,6 @@ class TaskStore:
                 conn, task_id, event, actor, now, reason, expected_version
             )
             if task.state is not State.AWAITING_APPROVAL:
-                # Leaving the approval state any other way closes the approval.
                 status = "timed_out" if event is Event.TIMEOUT else "cancelled"
                 conn.execute(
                     "UPDATE approvals SET status = ?, decided_by = ?, "
@@ -402,7 +358,7 @@ class TaskStore:
     ) -> tuple[Task, Approval]:
         refs: dict[str, CredentialRef] = {}
         for ref in credentials:
-            refs.setdefault(ref.id, ref)  # the same credential twice is one grant
+            refs.setdefault(ref.id, ref)
         if len(refs) > MAX_CREDENTIALS_PER_APPROVAL:
             limit = MAX_CREDENTIALS_PER_APPROVAL
             raise ValueError(f"an approval can name at most {limit} credentials")
@@ -450,8 +406,6 @@ class TaskStore:
         now: float,
         expected_version: int | None = None,
     ) -> tuple[Task, Approval]:
-        """Close a pending approval as approved, denied or timed_out.
-        Only the first call for an approval succeeds."""
         event = APPROVAL_EVENTS[outcome]
         with self.write() as conn:
             approval = self._approval(conn, approval_id)
@@ -475,13 +429,9 @@ class TaskStore:
                 "WHERE id = ? AND status = ?",
                 (outcome, actor, now, approval_id, PENDING),
             )
-            # Cannot happen while we hold the write lock; checked anyway so a
-            # future change that drops BEGIN IMMEDIATE fails loudly.
             assert closed.rowcount == 1
             approval = self._approval(conn, approval_id)
         return task, approval
-
-    # Helpers that run inside an open transaction
 
     def _task(self, conn: sqlite3.Connection, task_id: str) -> Task:
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -543,7 +493,6 @@ class TaskStore:
         return self._task(conn, task_id)
 
     def _prune(self, conn: sqlite3.Connection) -> None:
-        """Forget the oldest finished tasks beyond self.keep."""
         finished = tuple(state.value for state in TERMINAL)
         marks = ", ".join("?" for _ in finished)
         conn.execute(

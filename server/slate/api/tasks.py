@@ -15,14 +15,13 @@ from slate.tasks.store import (
 
 
 def require_local(request: Request) -> None:
-    """Same rule as the event socket: only the web app on this machine."""
     origin = request.headers.get("origin")
     if (
         request.client is None
         or request.client.host not in LOCAL_HOSTS
         or (origin is not None and origin not in LOCAL_ORIGINS)
     ):
-        raise HTTPException(403, "only the local web app can use this")
+        raise HTTPException(403, "Only the web app on this machine can use this")
 
 
 router = APIRouter(tags=["tasks"], dependencies=[Depends(require_local)])
@@ -37,10 +36,7 @@ Tasks = Annotated[TaskManager, Depends(manager)]
 
 class Decision(BaseModel):
     decision: Literal["approve", "deny"]
-    # Kept so old clients still validate. Ignored: the route decides who acted.
     source: Literal["web", "device"] = "web"
-    # The task version the user was looking at. If the task changed since,
-    # the decision is refused instead of applied to something they did not see.
     expected_version: int | None = None
 
 
@@ -57,7 +53,7 @@ def get_task(task_id: str, tasks: Tasks) -> dict[str, Any]:
     try:
         task = tasks.store.get(task_id)
     except TaskNotFound:
-        raise HTTPException(404, "no such task") from None
+        raise HTTPException(404, "This task does not exist") from None
     return {
         "task": task.to_dict(),
         "history": [step.to_dict() for step in tasks.store.history(task_id)],
@@ -71,8 +67,6 @@ def decide(
     body: Decision,
     tasks: Tasks,
 ) -> dict[str, Any]:
-    # Always "web": this endpoint only proves the caller is the local web app.
-    # A device decision has to come signed through /api/device/approvals.
     return decide_or_raise(
         tasks,
         approval_id,
@@ -90,7 +84,6 @@ def decide_or_raise(
     actor: str,
     expected_version: int | None,
 ) -> dict[str, Any]:
-    """Shared by the web and device routes so both give the same errors."""
     try:
         task, approval = tasks.decide(
             approval_id,
@@ -99,7 +92,7 @@ def decide_or_raise(
             expected_version=expected_version,
         )
     except ApprovalNotFound:
-        raise HTTPException(404, "no such approval") from None
+        raise HTTPException(404, "This approval does not exist") from None
     except ApprovalClosed as closed:
         raise HTTPException(
             409,
@@ -130,7 +123,7 @@ def cancel_or_raise(tasks: TaskManager, task_id: str, *, actor: str) -> dict[str
     try:
         return tasks.cancel(task_id, actor=actor).to_dict()
     except TaskNotFound:
-        raise HTTPException(404, "no such task") from None
+        raise HTTPException(404, "This task does not exist") from None
     except InvalidTransition as bad:
         raise HTTPException(
             409, {"error": "invalid_transition", "state": bad.state.value}

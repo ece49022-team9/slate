@@ -16,9 +16,6 @@ router = APIRouter(tags=["events"])
 LOCAL_HOSTS = ("127.0.0.1", "::1")
 LOCAL_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
 
-# Longest a single send may block. A web app that stops reading (frozen tab,
-# dead Wi-Fi) fills the TCP buffers, and then send() waits forever. After this
-# long we give up on it so it cannot hold a connection open indefinitely.
 SEND_TIMEOUT = 5.0
 
 
@@ -27,17 +24,6 @@ def now() -> str:
 
 
 class EventBus:
-    """Recent events in memory, pushed live to every connected web app.
-
-    Delivery rule: a web app that reconnects with the last id it saw gets
-    every event after it, in order, with no gaps and no repeats. If that is no
-    longer possible (the events left the buffer, or the server restarted) it
-    gets system.resync first, so it never misses events without knowing.
-
-    Event ids are evt_<boot>_<seq>. boot changes on every server start, so a
-    cursor from before a restart is always recognized as stale.
-    """
-
     def __init__(self, size: int = 500, queue_size: int = 100) -> None:
         self.buffer: deque[Event] = deque(maxlen=size)
         self.queues: set[asyncio.Queue[Event | None]] = set()
@@ -45,8 +31,8 @@ class EventBus:
         self.ids = itertools.count(1)
         self.boot = secrets.token_hex(3)
         self.prefix = f"evt_{self.boot}_"
-        self.last_seq = 0  # newest sequence number handed out
-        self.dropped = 0  # newest sequence number pushed out of the buffer
+        self.last_seq = 0
+        self.dropped = 0
         self.stats = {"published": 0, "resets": 0, "stalled": 0, "max_depth": 0}
 
     def envelope(
@@ -87,8 +73,6 @@ class EventBus:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                # This web app fell behind. Drop its backlog and make it
-                # reconnect; it resumes from its cursor out of self.buffer.
                 while not queue.empty():
                     queue.get_nowait()
                 queue.put_nowait(None)
@@ -100,26 +84,19 @@ class EventBus:
         return event
 
     def seq(self, event_id: str) -> int | None:
-        """The sequence number of an id from this boot, else None."""
         if not event_id.startswith(self.prefix):
             return None
         tail = event_id[len(self.prefix) :]
         return int(tail) if tail.isdigit() else None
 
     def since(self, cursor: str | None) -> list[Event] | None:
-        """Events after cursor, or None if some of them are gone."""
         if cursor is None:
             return list(self.buffer)
         seen = self.seq(cursor)
         if seen is None or seen > self.last_seq:
-            # Another boot, a malformed id, or an id we never handed out.
             return None
         if seen < self.dropped:
-            # Something after the cursor was pushed out of the buffer.
             return None
-        # Compare numbers instead of counting positions: sequence numbers in
-        # the buffer can skip (system.resync takes a number but is not
-        # buffered), so position arithmetic would skip events.
         return [event for event in self.buffer if self.seq(event["id"]) > seen]
 
     def subscribe(self) -> asyncio.Queue[Event | None]:
@@ -153,7 +130,7 @@ def is_local(connection: HTTPConnection) -> bool:
 @router.get("/events/stats")
 def event_stats(request: Request) -> dict[str, Any]:
     if not is_local(request):
-        raise HTTPException(403, "only the local web app can use this")
+        raise HTTPException(403, "Only the web app on this machine can use this")
     return request.app.state.events.snapshot()
 
 
@@ -168,12 +145,6 @@ async def stream_events(websocket: WebSocket, after: str | None = None) -> None:
     backlog = bus.since(after)
     if backlog is None:
         backlog = [bus.envelope("system.resync", {}), *bus.buffer]
-    # Send and listen at the same time, so a closed tab or a server reload
-    # ends this connection right away instead of leaving it waiting forever.
-    # Whichever side finishes first cancels the other. This uses an anyio task
-    # group, not bare asyncio tasks, because Starlette cancels handlers through
-    # anyio; bare tasks made that cancellation leak out as an error now and
-    # then (13 of 50 runs in the tests).
     try:
         async with anyio.create_task_group() as group:
 
@@ -204,19 +175,14 @@ async def send_events(
         while (event := await queue.get()) is not None:
             with anyio.fail_after(SEND_TIMEOUT):
                 await websocket.send_json(event)
-        # 1013 "try again later": the web app fell behind and should reconnect
-        # with its cursor right away.
         await websocket.close(code=1013)
     except WebSocketDisconnect:
         pass
     except TimeoutError:
-        # The web app stopped reading. Returning ends the handler, which
-        # closes the connection; a close frame would only block too.
         if bus is not None:
             bus.stats["stalled"] += 1
 
 
 async def wait_for_close(websocket: WebSocket) -> None:
-    """The web app never sends anything, so this returns when it disconnects."""
     async for _ in websocket.iter_text():
         pass

@@ -1,15 +1,3 @@
-"""The user's account credentials (passwords, tokens, cards), encrypted.
-
-Rules:
-- Secrets are encrypted with the keyring before they touch the database.
-- Nothing returns a secret to the web app. You can add, replace, rename,
-  delete and list; the list shows only names and a hint (card last 4).
-- The agent gets a secret with use(), and only for a task that is running
-  right now AND that the user approved to use this exact credential (the
-  approval named it). Every attempt, allowed or refused, is written to the
-  audit log, with the approval that allowed it.
-"""
-
 import json
 import secrets
 import sqlite3
@@ -23,7 +11,6 @@ from typing import Any
 from slate.access.vault import DecryptError, Keyring, Sealed
 from slate.tasks.store import CredentialRef
 
-# Fields each kind must have. Extra fields are allowed (up to MAX_FIELDS).
 KINDS: dict[str, tuple[str, ...]] = {
     "password": ("password",),
     "token": ("token",),
@@ -68,7 +55,7 @@ class CredentialNotFound(Exception):
 
 
 class BadSecret(ValueError):
-    """Message never includes secret values, so it is safe to show or log."""
+    pass
 
 
 class AccessDenied(Exception):
@@ -108,8 +95,6 @@ class Credential:
 
 @dataclass(frozen=True)
 class Secret:
-    """What the agent gets. repr hides the values so they stay out of logs."""
-
     credential_id: str
     username: str | None
     values: dict[str, str] = field(repr=False)
@@ -126,7 +111,7 @@ class Use:
     at: float
     allowed: bool
     reason: str | None
-    approval_id: str | None = None  # the approval that granted an allowed use
+    approval_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -179,9 +164,6 @@ class CredentialStore:
         ),
         clock: Callable[[], float] = time.time,
     ) -> None:
-        """authorize(task_id, credential_id) returns (approval_id, None) if
-        the task may use that credential now, or (None, reason) if not.
-        In the app this is TaskStore.credential_access."""
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.keyring = keyring
@@ -195,14 +177,12 @@ class CredentialStore:
             row["name"]
             for row in self.conn.execute("PRAGMA table_info(credential_uses)")
         }
-        if "approval_id" not in columns:  # database from before grants
+        if "approval_id" not in columns:
             self.conn.execute("ALTER TABLE credential_uses ADD COLUMN approval_id TEXT")
         self.path.chmod(0o600)
 
     def close(self) -> None:
         self.conn.close()
-
-    # Web app side: never returns secret values
 
     def add(
         self,
@@ -249,7 +229,6 @@ class CredentialStore:
         return _credential(row)
 
     def describe(self, credential_id: str) -> CredentialRef:
-        """Name to show in an approval. Raises CredentialNotFound."""
         item = self.get(credential_id)
         return CredentialRef(item.id, item.service, item.label)
 
@@ -307,7 +286,6 @@ class CredentialStore:
         self.get(credential_id)
         with self.lock, self.conn:
             self.conn.execute("DELETE FROM credentials WHERE id = ?", (credential_id,))
-        # The audit log keeps its rows: who used it stays on record.
 
     def uses(self, credential_id: str, limit: int = 50) -> list[Use]:
         with self.lock:
@@ -329,11 +307,7 @@ class CredentialStore:
             for row in rows
         ]
 
-    # Agent side: the only way to get a value back
-
     def use(self, credential_id: str, *, task_id: str, purpose: str) -> Secret:
-        """Decrypt one credential for a running task. Raises AccessDenied
-        otherwise. Do not keep the result after the step that needs it."""
         try:
             credential = self.get(credential_id)
         except CredentialNotFound:
@@ -367,10 +341,7 @@ class CredentialStore:
         self._log(credential_id, task_id, purpose, True, None, approval_id)
         return Secret(credential_id, credential.username, json.loads(plain))
 
-    # Rotation
-
     def rekey(self) -> int:
-        """Re-encrypt every row not under the current key. Returns the count."""
         with self.lock:
             rows = self.conn.execute(
                 "SELECT id, service, kind, key_id, nonce, ciphertext FROM credentials "

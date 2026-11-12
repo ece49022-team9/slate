@@ -1,9 +1,3 @@
-"""Measure the task state machine: transition latency, race safety,
-approval timeout accuracy, and history retention.
-
-    uv run python scripts/bench_tasks.py
-"""
-
 import asyncio
 import statistics
 import sys
@@ -39,7 +33,6 @@ def transition_latency(store: TaskStore, tasks: int = 300) -> list[float]:
 
 
 def race_trials(store: TaskStore, trials: int = 200, callers: int = 8) -> int:
-    """Return how many trials had exactly one winner."""
     clean = 0
     outcomes = ["approved", "denied", "timed_out"]
     for _ in range(trials):
@@ -71,9 +64,6 @@ def race_trials(store: TaskStore, trials: int = 200, callers: int = 8) -> int:
 
 
 async def timeout_error(store: TaskStore, count: int = 100) -> list[float]:
-    """How late each approval timer fires compared with its deadline.
-    The 1 s base gives setup (300 blocking writes) time to finish first,
-    so we measure the timer, not the setup."""
     manager = TaskManager(store, EventBus())
     approvals = []
     for n in range(count):

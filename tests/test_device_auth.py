@@ -27,7 +27,7 @@ from slate.tasks.machine import Event
 from slate.tasks.manager import TaskManager
 from slate.tasks.store import TaskStore
 
-T0 = 1_800_000_000  # a fixed "now" for every test
+T0 = 1_800_000_000
 
 
 class Clock:
@@ -45,8 +45,6 @@ def lower(headers: dict[str, str]) -> dict[str, str]:
 class Base(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        # The server started a while before "now", so slightly old requests
-        # are judged by the clock check, not the restart check.
         self.clock = Clock(T0 - 100)
         self.devices = DeviceStore(Path(self.dir.name) / "d.db", clock=self.clock)
         self.verifier = Verifier(self.devices, clock=self.clock)
@@ -75,7 +73,6 @@ class Base(unittest.TestCase):
 
 class FormatTests(unittest.TestCase):
     def test_known_answer(self):
-        """Fixed vector for checking the firmware's C version (docs/device-auth.md)."""
         secret = bytes(range(32))
         body = b'{"decision":"approve"}'
         message = canonical(
@@ -201,8 +198,6 @@ class VerifierTests(Base):
                     self.rejected("clock_skew", headers=headers)
 
     def test_restart_refuses_requests_signed_before_it(self):
-        """Nonces live in memory, so a restart forgets them. A request captured
-        just before the restart must still not work after it."""
         headers = self.headers()
         self.verify(headers=headers)
         self.clock.now += 5
@@ -240,7 +235,7 @@ class VerifierTests(Base):
         self.verify(headers=headers)
         self.assertEqual(self.verifier.remembered(), 1)
         self.clock.now += WINDOW + 1
-        self.verify()  # any request clears what can no longer pass the time check
+        self.verify()
         self.assertEqual(self.verifier.remembered(), 1)
         self.rejected("clock_skew", headers=headers)
 
@@ -279,7 +274,6 @@ class VerifierTests(Base):
     @settings(max_examples=300, deadline=None)
     @given(data=st.data())
     def test_random_single_change_is_always_refused(self, data):
-        """Change one byte anywhere in the request: it must never pass."""
         body = data.draw(st.binary(max_size=64))
         path = "/api/device/approvals/apr_" + data.draw(
             st.text("abc123", min_size=1, max_size=8)
@@ -407,7 +401,6 @@ class ApiTests(Base):
             self.client.post("/api/devices", json={"name": "x"}).status_code, 403
         )
         self.assertEqual(self.client.get("/api/devices").status_code, 403)
-        # The device routes are reachable from the network; the signature is the check.
         self.assertEqual(self.send("GET", "/api/device/ping").status_code, 200)
 
     def test_large_body_refused_before_reading(self):

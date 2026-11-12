@@ -1,9 +1,3 @@
-"""Key rotation: uv run python -m slate.access rotate
-
-Makes a new master key, re-encrypts every credential and device secret with
-it, then removes the old key. Stop the server first.
-"""
-
 import argparse
 import os
 from pathlib import Path

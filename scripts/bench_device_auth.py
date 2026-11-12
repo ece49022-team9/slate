@@ -1,8 +1,3 @@
-"""How much time does checking a signature add? Runs verify() directly.
-
-uv run python scripts/bench_device_auth.py
-"""
-
 import statistics
 import tempfile
 import time
@@ -34,7 +29,6 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         store = DeviceStore(Path(tmp) / "d.db")
         device, secret = store.pair("bench")
-        # Bigger window and limit so the bench measures checking, not the limit.
         verifier = Verifier(store, max_nonces=10 * N)
         for size in (0, 1024, 16 * 1024):
             body = b"x" * size

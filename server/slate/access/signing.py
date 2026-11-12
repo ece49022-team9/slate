@@ -1,41 +1,3 @@
-"""Signed device requests: HMAC-SHA256 with replay protection.
-
-The device and the server share a 32-byte secret made at pairing. Every
-request from the device carries four headers:
-
-    X-Slate-Device     device id, dev_ + 16 hex chars
-    X-Slate-Timestamp  unix seconds when the request was signed
-    X-Slate-Nonce      32 random hex chars, never reused
-    X-Slate-Signature  64 hex chars: HMAC-SHA256(secret, canonical string)
-
-The canonical string is these lines joined with "\\n":
-
-    SLATE-HMAC-SHA256-V1
-    METHOD               (upper case)
-    PATH                 (with "?query" if there is one)
-    TIMESTAMP
-    NONCE
-    DEVICE_ID
-    SHA256(body) in hex  (of the empty string for no body)
-
-So changing any part of the request (method, path, query, body, time, nonce,
-or which device it claims to be) breaks the signature.
-
-Checks, in this order, cheapest first:
-1. headers present and well formed            -> bad_format
-2. timestamp within WINDOW seconds of now     -> clock_skew
-3. timestamp not before this server started   -> before_boot
-4. device known and not revoked               -> unknown_device / revoked
-5. signature matches (constant-time compare)  -> bad_signature
-6. nonce not seen before for this device      -> replay
-7. device under MAX_NONCES requests per window -> rate_limited
-
-The nonce is only recorded after the signature passes, so someone without
-the key cannot burn a device's nonces. Step 3 closes the gap left by keeping
-nonces in memory: after a restart the nonce list is empty, but any request
-signed before the restart is refused by its timestamp.
-"""
-
 import hashlib
 import heapq
 import hmac
@@ -50,8 +12,8 @@ from dataclasses import dataclass
 from slate.access.devices import DeviceStore
 
 SCHEME = "SLATE-HMAC-SHA256-V1"
-WINDOW = 30  # seconds a signed request stays valid
-MAX_NONCES = 600  # per device per window: 20 requests/s on average
+WINDOW = 30
+MAX_NONCES = 600
 
 DEVICE_HEADER = "x-slate-device"
 TIMESTAMP_HEADER = "x-slate-timestamp"
@@ -103,8 +65,6 @@ def signed_headers(
     timestamp: int | None = None,
     nonce: str | None = None,
 ) -> dict[str, str]:
-    """What the device does. Python version for tests and the demo script;
-    the firmware does the same steps with mbedTLS."""
     timestamp = int(time.time()) if timestamp is None else timestamp
     nonce = secrets.token_hex(16) if nonce is None else nonce
     return {
@@ -127,7 +87,7 @@ class AuthError(Exception):
 @dataclass
 class _Seen:
     nonces: set[str]
-    expiry: list[tuple[float, str]]  # min-heap of (forget after, nonce)
+    expiry: list[tuple[float, str]]
 
 
 class Verifier:
@@ -151,7 +111,6 @@ class Verifier:
     def verify(
         self, method: str, path: str, headers: Mapping[str, str], body: bytes
     ) -> str:
-        """Returns the device id, or raises AuthError."""
         try:
             return self._check(method, path, headers, body)
         except AuthError as error:
@@ -191,8 +150,6 @@ class Verifier:
         if not hmac.compare_digest(expected, signature):
             raise AuthError("bad_signature")
 
-        # Check-and-record must be one step, or two copies of the same request
-        # arriving together could both pass.
         with self.lock:
             seen = self.seen.setdefault(device_id, _Seen(set(), []))
             while seen.expiry and seen.expiry[0][0] < now:
@@ -203,7 +160,6 @@ class Verifier:
             if len(seen.nonces) >= self.max_nonces:
                 raise AuthError("rate_limited", status=429)
             seen.nonces.add(nonce)
-            # Keep it while a request with this timestamp could still pass.
             heapq.heappush(seen.expiry, (timestamp + self.window, nonce))
             self.stats["accepted"] += 1
         return device_id

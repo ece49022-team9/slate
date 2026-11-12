@@ -43,7 +43,6 @@ class Base(unittest.TestCase):
         self.dir.cleanup()
 
     def granted(self, *credential_ids):
-        """A running task the user approved to use these credentials."""
         task = self.task()
         refs = [self.store.describe(cid) for cid in credential_ids]
         _, approval = self.tasks.request_approval(
@@ -68,7 +67,6 @@ class Base(unittest.TestCase):
         )
 
     def raw_file(self) -> bytes:
-        # Include the WAL in case sqlite has not merged it yet.
         data = (self.root / "cred.db").read_bytes()
         wal = self.root / "cred.db-wal"
         return data + (wal.read_bytes() if wal.exists() else b"")
@@ -136,7 +134,6 @@ class StoreTests(Base):
         raw = self.raw_file()
         for secret in (PASSWORD, CARD["number"], "1111 1234", CARD["cvc"] + '"'):
             self.assertNotIn(secret.encode(), raw)
-        # Names and hints are plain on purpose, so the list can show them.
         self.assertIn(b"duke-energy.com", raw)
 
     def test_list_never_has_values(self):
@@ -208,8 +205,6 @@ class StoreTests(Base):
         self.assertEqual(caught.exception.reason, "tampered")
 
     def test_swapping_rows_does_not_work(self):
-        """Copy the card's ciphertext over the password's row: an attacker
-        with database access cannot move a secret to where the agent reads it."""
         duke = self.duke()
         card = self.store.add("visa", "Main card", "card", CARD)
         with sqlite3.connect(self.root / "cred.db") as conn:

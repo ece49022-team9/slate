@@ -33,7 +33,6 @@ def step(
     return "agent.step", data
 
 
-# One request, start to finish. Same story as web/src/events/mock.ts.
 SCRIPT = [
     device("idle"),
     device("listen"),
@@ -59,7 +58,6 @@ SCRIPT = [
 
 
 async def run_demo(bus: EventBus, interval: float = 1.5) -> None:
-    """Replay the sample request forever so the dashboard has live data."""
     loop = 1
     while True:
         session = f"ses_server_{loop:02d}"
@@ -79,12 +77,6 @@ async def run_task_demo(
     approval_timeout: float = 30.0,
     credentials: CredentialStore | None = None,
 ) -> None:
-    """A real task that stops for approval. Answer it from the web app or with
-    POST /api/approvals/{id}; if nobody answers it times out.
-
-    If a credential for duke-energy.com is saved, the approval names it, and
-    once approved the task uses it the way the agent would (see its audit log
-    at GET /api/credentials/{id})."""
     while True:
         task = manager.create("Pay the electric bill", kind="payment")
         manager.start(task.id)
@@ -114,8 +106,6 @@ async def run_task_demo(
                     )
                     await asyncio.sleep(10)
                     continue
-                # A real agent would type this into the login page; the demo
-                # only proves it got the right one, without showing it.
                 del secret
             manager.succeed(task.id, "Paid $84.12, confirmation 55120")
         await asyncio.sleep(10)

@@ -33,8 +33,6 @@ async def lifespan(app: FastAPI):
     home = Path.home() / ".slate"
     keyring = Keyring.load()
     tasks = TaskStore(os.getenv("SLATE_TASKS_DB") or home / "tasks.sqlite3")
-    # A task may use a credential only while running, and only if an approved
-    # approval named it (TaskStore.credential_access).
     credentials_db = os.getenv("SLATE_CREDENTIALS_DB") or home / "credentials.sqlite3"
     app.state.credentials = CredentialStore(
         credentials_db, keyring, authorize=tasks.credential_access

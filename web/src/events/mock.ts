@@ -1,7 +1,5 @@
 import type { AgentStep, DeviceStatus, SlateEvent } from '../types/events'
 
-// Anything that can deliver events to the app.
-// Today: mockFeed. Later: a real WebSocket feed with the same shape.
 export type EventFeed = {
   connect(onEvent: (event: SlateEvent) => void): () => void
 }
@@ -45,7 +43,6 @@ const status: DeviceStatus = {
   firmware_version: '0.1.0',
 }
 
-// One request, start to finish. It replays forever with a new session ID.
 const script: Array<(session: string) => SlateEvent> = [
   () => device({ ...status, state: 'idle' }),
   () => device({ ...status, state: 'listen' }),

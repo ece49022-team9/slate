@@ -1,13 +1,3 @@
-"""Runs the task FSM inside the server: stores every change, pushes it to the
-web app as an event, and enforces approval deadlines.
-
-Event types sent on /api/ws/events:
-- task.updated        data = the task after the change
-- approval.requested  data = the new approval (summary, deadline, and the
-                      credentials it would let the task use)
-- approval.resolved   data = the closed approval (status, decided_by)
-"""
-
 import asyncio
 import time
 from collections.abc import Callable, Sequence
@@ -35,8 +25,6 @@ class TaskManager:
         clock: Callable[[], float] = time.time,
         describe_credential: Callable[[str], CredentialRef] | None = None,
     ) -> None:
-        """describe_credential(id) returns the name to show the user for a
-        credential, or raises if it does not exist."""
         self.store = store
         self.bus = bus
         self.clock = clock
@@ -44,15 +32,7 @@ class TaskManager:
         self.timers: dict[str, asyncio.TimerHandle] = {}
         self.waiters: dict[str, asyncio.Future[Approval]] = {}
 
-    # Lifecycle
-
     def recover(self) -> None:
-        """Call once at startup, inside the event loop.
-
-        A task that was running when the server stopped lost its work, so it
-        fails. An approval whose deadline passed while we were down times
-        out now; the rest get their timers back with the time they have left.
-        """
         now = self.clock()
         for task in self.store.in_state(State.RUNNING):
             self._apply(task.id, Event.FAIL, "server", "server restarted mid-task")
@@ -69,8 +49,6 @@ class TaskManager:
         for waiter in self.waiters.values():
             waiter.cancel()
         self.waiters.clear()
-
-    # Calls from the agent
 
     def create(
         self, title: str, *, kind: str = "request", session_id: str | None = None
@@ -101,13 +79,10 @@ class TaskManager:
         timeout: float = DEFAULT_APPROVAL_TIMEOUT,
         credentials: Sequence[str] = (),
     ) -> Approval:
-        """Ask the user. If credentials are named, approving also lets this
-        task use exactly those credentials while it runs; nothing else.
-        Unknown credential ids raise before anything is written."""
         refs: list[CredentialRef] = []
         if credentials:
             if self.describe_credential is None:
-                raise RuntimeError("no credential store connected")
+                raise RuntimeError("No credential store is connected")
             refs = [self.describe_credential(cid) for cid in credentials]
         task, approval = self.store.request_approval(
             task_id,
@@ -127,7 +102,6 @@ class TaskManager:
         return approval
 
     async def wait_for_decision(self, approval_id: str) -> Approval:
-        """Block the agent until the user answers or the deadline passes."""
         approval = self.store.get_approval(approval_id)
         if approval.status != PENDING:
             return approval
@@ -137,8 +111,6 @@ class TaskManager:
             self.waiters[approval_id] = waiter
         return await asyncio.shield(waiter)
 
-    # Calls from the user (web app or device button)
-
     def decide(
         self,
         approval_id: str,
@@ -147,7 +119,6 @@ class TaskManager:
         actor: str,
         expected_version: int | None = None,
     ) -> tuple[Task, Approval]:
-        """Raises ApprovalClosed if someone else (or the timer) got there first."""
         outcome = "approved" if approve else "denied"
         task, approval = self.store.resolve(
             approval_id,
@@ -158,8 +129,6 @@ class TaskManager:
         )
         self._closed(task, approval)
         return task, approval
-
-    # Internals
 
     def _apply(
         self, task_id: str, event: Event, actor: str, reason: str | None = None
@@ -191,8 +160,6 @@ class TaskManager:
                 approval_id, "timed_out", actor="timer", now=self.clock()
             )
         except ApprovalClosed:
-            # The user answered in the same instant and won the race. That is
-            # the expected outcome, not an error.
             return
         self._closed(task, approval)
 

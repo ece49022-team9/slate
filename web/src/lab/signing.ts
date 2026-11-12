@@ -1,6 +1,3 @@
-// Same signing as server/slate/access/signing.py, done in the browser with
-// WebCrypto so the lab can show every step. A real device does this in C.
-
 const encoder = new TextEncoder()
 
 export const SCHEME = 'SLATE-HMAC-SHA256-V1'

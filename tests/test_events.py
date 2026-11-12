@@ -31,9 +31,7 @@ class EventBusTests(unittest.TestCase):
         old = bus.publish("agent.step", {})
         for _ in range(3):
             bus.publish("agent.step", {})
-        # The event right after old has left the buffer, so a gap is unavoidable.
         self.assertIsNone(bus.since(old["id"]))
-        # After a server restart every old cursor is stale.
         self.assertIsNone(EventBus().since(old["id"]))
 
     def test_slow_listener_is_told_to_reconnect(self):

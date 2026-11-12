@@ -1,6 +1,3 @@
-// Event schema between the backend and the web app (v1).
-// Every message on /api/ws/events uses this envelope.
-
 export type Envelope<T extends string, D> = {
   v: 1
   id: string
@@ -10,8 +7,6 @@ export type Envelope<T extends string, D> = {
   session_id: string | null
   data: D
 }
-
-// Device
 
 export type DeviceState = 'idle' | 'listen' | 'mute' | 'transcribe' | 'respond' | 'error'
 
@@ -25,8 +20,6 @@ export type DeviceStatus = {
 
 export type DeviceStatusEvent = Envelope<'device.status', DeviceStatus>
 
-// Agent
-
 export type AgentStepKind = 'request' | 'model' | 'tool' | 'browser' | 'response'
 export type AgentStepStatus = 'running' | 'done' | 'failed'
 
@@ -39,8 +32,6 @@ export type AgentStep = {
 }
 
 export type AgentStepEvent = Envelope<'agent.step', AgentStep>
-
-// Tasks and approvals (server/slate/tasks)
 
 export type TaskState =
   | 'queued'
@@ -65,8 +56,6 @@ export type Task = {
 
 export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'timed_out' | 'cancelled'
 
-// A credential the task may use if this approval is approved, named as the
-// user was shown it when the approval was requested.
 export type CredentialRef = {
   id: string
   service: string
@@ -89,11 +78,7 @@ export type TaskUpdatedEvent = Envelope<'task.updated', Task>
 export type ApprovalRequestedEvent = Envelope<'approval.requested', Approval>
 export type ApprovalResolvedEvent = Envelope<'approval.resolved', Approval>
 
-// System
-
 export type SystemResyncEvent = Envelope<'system.resync', Record<string, never>>
-
-// All events the web app understands. Unknown types are ignored.
 
 export type SlateEvent =
   | DeviceStatusEvent

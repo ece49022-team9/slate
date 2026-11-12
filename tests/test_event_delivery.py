@@ -1,6 +1,3 @@
-"""Delivery guarantees of the event stream: what a web app sees when it falls
-behind, disconnects, or the server restarts."""
-
 import asyncio
 import unittest
 from unittest import mock
@@ -16,8 +13,6 @@ from slate.api.events import router as events_router
 
 class CursorTests(unittest.TestCase):
     def test_restart_with_overlapping_ids_forces_resync(self):
-        """Old bug: ids restarted at 1, so a cursor from before a restart
-        could land inside the new buffer and hide events without a resync."""
         old = EventBus()
         for _ in range(300):
             cursor = old.publish("device.status", {})["id"]
@@ -30,13 +25,12 @@ class CursorTests(unittest.TestCase):
         bus = EventBus(size=3)
         first = bus.publish("agent.step", {"n": 0})
         rest = [bus.publish("agent.step", {"n": n}) for n in range(1, 4)]
-        # first has left the buffer, but the client already has it.
         self.assertEqual(bus.since(first["id"]), rest)
 
     def test_replay_skips_nothing_when_numbers_have_holes(self):
         bus = EventBus(size=10)
         bus.publish("agent.step", {"n": 0})
-        hole = bus.envelope("system.resync", {})  # takes a number, not buffered
+        hole = bus.envelope("system.resync", {})
         after = [bus.publish("agent.step", {"n": n}) for n in (1, 2, 3)]
         self.assertEqual(bus.since(hole["id"]), after)
         self.assertEqual(bus.since(after[0]["id"]), after[1:])
@@ -60,13 +54,10 @@ class CursorTests(unittest.TestCase):
 
 
 class SimulatedClient:
-    """Follows the web app protocol: read from the live queue, and after any
-    disconnect reconnect with the last id seen."""
-
     def __init__(self, bus: EventBus) -> None:
         self.bus = bus
         self.last_id: str | None = None
-        self.seen: list[int | str] = []  # event numbers, "resync" marks
+        self.seen: list[int | str] = []
         self.pending: list[dict] = []
         self.queue = None
 
@@ -87,7 +78,7 @@ class SimulatedClient:
                 event = self.pending.pop(0)
             elif self.queue is not None and not self.queue.empty():
                 event = self.queue.get_nowait()
-                if event is None:  # server told us to reconnect (1013)
+                if event is None:
                     self.disconnect()
                     self.connect()
                     continue
@@ -105,7 +96,6 @@ operations = st.lists(
         st.tuples(st.just("publish"), st.integers(1, 30)),
         st.tuples(st.just("read"), st.integers(1, 30)),
         st.tuples(st.just("drop"), st.just(0)),
-        # Server restarts, publishes some events, then the client reconnects.
         st.tuples(st.just("restart"), st.integers(0, 30)),
     ),
     max_size=40,
@@ -115,8 +105,6 @@ operations = st.lists(
 class DeliveryPropertyTests(unittest.TestCase):
     @settings(max_examples=400, deadline=None)
     @given(operations, st.integers(2, 20), st.integers(1, 10))
-    # Found by this test: a resync takes a sequence number that never enters
-    # the buffer, so counting positions in the buffer skipped an event.
     @example(
         ops=[
             ("publish", 1),
@@ -132,9 +120,6 @@ class DeliveryPropertyTests(unittest.TestCase):
         queue_size=1,
     )
     def test_never_a_silent_gap(self, ops, size, queue_size):
-        """Under any mix of publishing, slow reading, dropped connections and
-        server restarts, the client's view is in order with no repeats, and
-        any jump in numbering comes right after a resync."""
         bus = EventBus(size=size, queue_size=queue_size)
         client = SimulatedClient(bus)
         client.connect()
@@ -173,7 +158,7 @@ class StalledSendTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_client_that_stops_reading_is_dropped(self):
         class Stuck:
             async def send_json(self, event):
-                await asyncio.Event().wait()  # TCP buffers full: never returns
+                await asyncio.Event().wait()
 
             async def close(self, code):
                 raise AssertionError("must not wait on a close frame")
