@@ -14,7 +14,6 @@ CALIBRATION = ROOT / "firmware/sim_calibration.toml"
 SERIAL_LOG = ROOT / ".local/resources-serial.log"
 TIMERS = ("render", "spi", "audio")
 STACKS = ("loop", "control", "oled", "pdm", "cloud", "speaker")
-FRAME_US = 30_000
 HEAP_MIN = 32_768
 HEAP_BLOCK = 16_384
 STACK_MIN = 512
@@ -95,12 +94,13 @@ def check(target: str, report: dict, scale: dict[str, float] | None) -> list[str
     board, _ = load(BOARD.with_name("board-prototype.toml"))
     mic = board["device"]["mic"]
     audio_us = 1_000_000 * BLOCK_SAMPLES // mic["sample_hz"]
+    frame_us = 1_000_000 // board["device"]["oled"]["frame_hz"]
     scale = scale or dict.fromkeys(TIMERS, 1.0)
     peak = {timer: report[f"{timer}_us"][1] * scale[timer] for timer in TIMERS}
     failures = []
     frame = peak["render"] + peak["spi"]
-    if frame > FRAME_US:
-        failures.append(f"frame takes {frame:.0f} us of a {FRAME_US} us budget")
+    if frame > frame_us:
+        failures.append(f"frame takes {frame:.0f} us of a {frame_us} us budget")
     if peak["audio"] > audio_us:
         failures.append(f"audio block takes {peak['audio']:.0f} us of {audio_us} us")
     if report["heap_min"] < HEAP_MIN:
@@ -115,7 +115,7 @@ def check(target: str, report: dict, scale: dict[str, float] | None) -> list[str
         if report[f"stack_{task}"] < STACK_MIN:
             failures.append(f"{task} stack has {report[f'stack_{task}']} bytes left")
     print(
-        f"slate.resources: {target} frame peak {frame:.0f}/{FRAME_US} us, audio peak "
+        f"slate.resources: {target} frame peak {frame:.0f}/{frame_us} us, audio peak "
         f"{peak['audio']:.0f}/{audio_us} us, heap min {report['heap_min']} of "
         f"{report['heap_total']} bytes, largest block {report['heap_block']}, "
         "stack left "

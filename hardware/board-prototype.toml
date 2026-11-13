@@ -4,7 +4,10 @@ supply_v = 3.3
 [device.oled]
 part = "ssd1351"
 pins = { clk = 18, data = 23, cs = 5, dc = 16, reset = 17 }
-spi_hz = 16_000_000
+# 16 MHz corrupted frames on the breadboard whenever the orb was blue, magenta
+# or white. A full 128x128 frame takes ~33 ms at 8 MHz, so refresh at 25 fps.
+spi_hz = 8_000_000
+frame_hz = 25
 
 [device.mic]
 part = "mp34dt01"

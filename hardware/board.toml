@@ -4,7 +4,9 @@ supply_v = 3.3
 [device.oled]
 part = "ssd1351"
 pins = { clk = 12, data = 11, cs = 10, dc = 14, reset = 21 }
-spi_hz = 16_000_000
+# Same as board-prototype.toml; raise both only after clean frames in every state.
+spi_hz = 8_000_000
+frame_hz = 25
 bus = "spi2"
 
 [device.mic]

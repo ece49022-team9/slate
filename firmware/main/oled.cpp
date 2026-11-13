@@ -18,8 +18,13 @@ static std::atomic<bool> stop_requested{false};
 static std::atomic<bool> stopped{false};
 
 static void draw(void*) {
-  // Preserve the original OLED's 30 ms cadence and animation timebase.
+  // The orb animates on a 30 ms timebase; the panel refreshes at OLED_FRAME_HZ,
+  // which must leave room to send a full frame at OLED_SPI_HZ (see board.toml).
   constexpr TickType_t frame_ticks = pdMS_TO_TICKS(30) > 0 ? pdMS_TO_TICKS(30) : 1;
+  constexpr TickType_t period_ticks =
+      pdMS_TO_TICKS(1000 / OLED_FRAME_HZ) > 0 ? pdMS_TO_TICKS(1000 / OLED_FRAME_HZ) : 1;
+  static_assert(DISPLAY_PIXELS * 16ull * OLED_FRAME_HZ * 100 <= OLED_SPI_HZ * 85ull,
+                "OLED_FRAME_HZ needs more than 85% of the SPI bandwidth at OLED_SPI_HZ");
   TickType_t next_frame = xTaskGetTickCount();
   uint32_t report_started = millis();
   uint32_t frames = 0;
@@ -43,7 +48,7 @@ static void draw(void*) {
       report_started = millis();
       frames = 0;
     }
-    vTaskDelayUntil(&next_frame, frame_ticks);
+    vTaskDelayUntil(&next_frame, period_ticks);
   }
   oled->fillScreen(0);
   SPI.end();

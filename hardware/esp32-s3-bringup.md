@@ -302,12 +302,14 @@ channel when released. With no external bias, release does not guarantee enable.
 Do not infer shutdown behavior from the temporary PCM5102 headphone wiring.
 Firmware cannot guarantee mute before boot without an appropriate hardware bias.
 
-OLED SPI uses the generated S3 pins. Existing drawing and orb logic and 30 ms
-frame schedule remain unchanged. The existing 16 MHz SPI setting is preserved;
-the validator warns that it exceeds the part inventory's 4.5 MHz specification.
-Validate signal integrity and reliable full-frame transfers on the actual board;
-reducing SPI speed would affect achievable frame rate and requires a deliberate
-follow-up decision.
+OLED SPI uses the generated S3 pins at 8 MHz. At 16 MHz the breadboard
+prototype corrupted frames whenever the orb was blue, magenta or white (the
+panel draws more current for those colors): fragments were shifted, sheared or
+wrong-colored. A full 128x128 frame takes about 33 ms at 8 MHz, so the panel
+refreshes at 25 fps (`frame_hz`); the orb keeps its 30 ms animation timebase.
+The validator still warns that 8 MHz exceeds the part inventory's 4.5 MHz
+specification. Raise `spi_hz` and `frame_hz` together, and only after clean
+frames in every state on the actual board.
 
 PWR_HOLD is never driven in bring-up. If the physical latch requires assertion
 to stay powered, independently power the board or verify the schematic and latch
