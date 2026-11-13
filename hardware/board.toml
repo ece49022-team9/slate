@@ -4,7 +4,7 @@ supply_v = 3.3
 [device.oled]
 part = "ssd1351"
 pins = { clk = 12, data = 11, cs = 10, dc = 14, reset = 21 }
-spi_hz = 16_000_000
+spi_hz = 4_000_000
 bus = "spi2"
 
 [device.mic]

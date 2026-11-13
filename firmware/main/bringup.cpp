@@ -421,6 +421,7 @@ static bool stop() {
   }
   ok = speaker_stop() && ok;
   if (ok) {
+    if (screen) display_set_state(IDLE);
     microphone = screen = false;
     mic_set_state(IDLE);
     deadline = 0;

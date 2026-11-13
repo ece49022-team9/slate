@@ -18,8 +18,8 @@ static std::atomic<bool> stop_requested{false};
 static std::atomic<bool> stopped{false};
 
 static void draw(void*) {
-  // Preserve the original OLED's 30 ms cadence and animation timebase.
-  constexpr TickType_t frame_ticks = pdMS_TO_TICKS(30) > 0 ? pdMS_TO_TICKS(30) : 1;
+  // Slowed from 30 ms to 80 ms per frame (4 MHz SPI needs ~65 ms per full frame) to test whether display glitching is SPI/refresh related.
+  constexpr TickType_t frame_ticks = pdMS_TO_TICKS(80) > 0 ? pdMS_TO_TICKS(80) : 1;
   TickType_t next_frame = xTaskGetTickCount();
   uint32_t report_started = millis();
   uint32_t frames = 0;
