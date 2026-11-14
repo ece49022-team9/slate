@@ -13,6 +13,7 @@ A portable voice assistant for everyday tasks. The ESP32 only records the microp
 | `server/slate/access/` | Accounts, pairing, permissions and credentials |
 | `web/` | Setup, approvals and user control |
 | `hardware/` | KiCad project and board sources |
+| `hardware/enclosure/` | Printable case: OpenSCAD source, STL exports and renders |
 
 One Python backend, deployed by [server/slate/cloud.py](server/slate/cloud.py). Keep model calls with the agent and permission checks in access. The web app never gets provider secrets.
 
