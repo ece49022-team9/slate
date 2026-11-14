@@ -4,7 +4,7 @@ from ctypes import c_float
 
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
-from slate.board import load
+from slate.board import BOARD, load
 from slate.breadboard import Breadboard, breadboard, build_image
 
 KEYS = {"left": "l", "right": "r", "mix": "m"}
@@ -57,7 +57,7 @@ async def record(
 
 def main() -> None:
     build_image()
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     rate = board["device"]["mic"]["sample_hz"]
     with asyncio.Runner() as runner:
         context = breadboard(connect_cloud=False)

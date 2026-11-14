@@ -4,7 +4,7 @@ FIRMWARE_ENV ?= esp32dev
 MODAL_PROFILE ?= sudarshan-1
 MODAL := env -u MODAL_TOKEN_ID -u MODAL_TOKEN_SECRET MODAL_PROFILE=$(MODAL_PROFILE)
 INPUT ?= .local/voice-check.wav
-ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART*)
+ESP32_PORTS := $(wildcard /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART* /dev/ttyUSB* /dev/ttyACM*)
 PORT ?= $(if $(filter 1,$(words $(ESP32_PORTS))),$(firstword $(ESP32_PORTS)))
 
 setup:
@@ -36,17 +36,17 @@ board:
 	uv run python -m slate.board
 
 firmware: board
-	uv tool run --from platformio==6.2.0 pio run -d firmware -e $(FIRMWARE_ENV)
+	uv tool run --from pioarduino==6.2.0 pio run -d firmware -e $(FIRMWARE_ENV)
 
 ports:
-	uv tool run --from platformio==6.2.0 pio device list
+	uv tool run --from pioarduino==6.2.0 pio device list
 
 flash: board
-	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make flash PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
-	uv tool run --from platformio==6.2.0 pio run -d firmware -t upload --upload-port "$(PORT)"
+	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make flash PORT=<port> (for example COM5 or /dev/ttyACM0)\n' "$(ESP32_PORTS)" >&2; exit 1)
+	uv tool run --from pioarduino==6.2.0 pio run -d firmware -e $(FIRMWARE_ENV) -t upload --upload-port "$(PORT)"
 
 provision:
-	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make provision PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
+	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make provision PORT=<port> (for example COM5 or /dev/ttyACM0)\n' "$(ESP32_PORTS)" >&2; exit 1)
 	@test -n "$(SSID)" || (printf 'Pass SSID=<wifi name> PASSWORD=<wifi password>\n' >&2; exit 1)
 	uv run python scripts/provision.py "$(PORT)" --ssid "$(SSID)" --password "$(PASSWORD)"
 
@@ -55,8 +55,8 @@ pair:
 	uv run python scripts/ble_setup.py --ssid "$(SSID)" --password "$(PASSWORD)"
 
 monitor:
-	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make monitor PORT=/dev/cu.<port>\n' "$(ESP32_PORTS)" >&2; exit 1)
-	uv tool run --from platformio==6.2.0 pio device monitor -d firmware -p "$(PORT)" -b 921600
+	@test -n "$(PORT)" || (printf 'Expected one ESP32 serial port; found: %s. Run make ports, then make monitor PORT=<port> (for example COM5 or /dev/ttyACM0)\n' "$(ESP32_PORTS)" >&2; exit 1)
+	uv tool run --from pioarduino==6.2.0 pio device monitor -d firmware -e $(FIRMWARE_ENV) -p "$(PORT)" -b 921600
 
 bench: flash
 	uv run python scripts/check_bench.py "$(PORT)"

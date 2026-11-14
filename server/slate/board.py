@@ -22,8 +22,8 @@ class Problem:
         return f"slate.board: {self.level}: {self.device}: {self.message}"
 
 
-def load() -> tuple[dict, dict]:
-    return tomllib.loads(BOARD.read_text()), tomllib.loads(PARTS.read_text())
+def load(path: Path = BOARD) -> tuple[dict, dict]:
+    return tomllib.loads(path.read_text()), tomllib.loads(PARTS.read_text())
 
 
 def check(board: dict, parts: dict) -> list[Problem]:
@@ -32,6 +32,7 @@ def check(board: dict, parts: dict) -> list[Problem]:
         return [Problem("error", "board", f"unknown MCU {board['mcu']}")]
     problems: list[Problem] = []
     used: dict[int, str] = {}
+    shared: dict[int, tuple] = {}
     for name, device in board["device"].items():
 
         def report(level: str, message: str, name: str = name) -> None:
@@ -52,15 +53,23 @@ def check(board: dict, parts: dict) -> list[Problem]:
             if gpio not in mcu["gpio"]:
                 report("error", f"{where}: {mcu['name']} has no GPIO{gpio}")
                 continue
-            if reason := mcu["reserved"].get(str(gpio)):
+            console = (
+                name == "console"
+                and {"usb_dm": 19, "usb_dp": 20, "uart_tx": 43, "uart_rx": 44}.get(pin)
+                == gpio
+            )
+            if (reason := mcu["reserved"].get(str(gpio))) and not console:
                 report("error", f"{where}: reserved for {reason}")
             if part["pins"].get(pin) != "out" and gpio in mcu["input_only"]:
                 report("error", f"{where}: input-only pin cannot drive {pin}")
             if reason := mcu["strapping"].get(str(gpio)):
                 report("warning", f"{where}: boot pin; {reason}")
-            if gpio in used:
+            bus = device.get("bus")
+            share = (bus, pin) if bus and pin in {"clk", "data", "sda", "scl"} else None
+            if gpio in used and not (share and shared.get(gpio) == share):
                 report("error", f"{where}: already used by {used[gpio]}")
             used[gpio] = f"{name}.{pin}"
+            shared[gpio] = share
         if device.get("spi_hz", 0) > part.get("spi_max_hz", float("inf")):
             report(
                 "warning",
@@ -105,6 +114,18 @@ def header(board: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def generated_header() -> str:
+    final, _ = load()
+    prototype, _ = load(BOARD.with_name("board-prototype.toml"))
+    return (
+        "#pragma once\n#ifdef SLATE_BOARD_S3\n"
+        + header(final)
+        + "#else\n"
+        + header(prototype)
+        + "#endif\n"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="slate.board")
     parser.add_argument(
@@ -112,12 +133,13 @@ def main() -> None:
     )
     args = parser.parse_args()
     board, parts = load()
-    problems = check(board, parts)
+    prototype, _ = load(BOARD.with_name("board-prototype.toml"))
+    problems = check(board, parts) + check(prototype, parts)
     for problem in problems:
         print(problem, file=sys.stderr)
     if any(problem.level == "error" for problem in problems):
         sys.exit("slate.board: fix the wiring errors above before building")
-    text = header(board)
+    text = generated_header()
     if args.check:
         if HEADER.read_text() != text:
             sys.exit("slate.board: firmware/main/board.h is stale; run make board")

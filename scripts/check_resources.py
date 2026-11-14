@@ -6,7 +6,7 @@ import subprocess
 import tomllib
 from datetime import UTC, datetime
 
-from slate.board import ROOT, load
+from slate.board import BOARD, ROOT, load
 from slate.breadboard import breadboard, build_image, tone
 from slate.link import Link, open_board
 
@@ -66,7 +66,7 @@ async def measure(link: Link, key: str, reports: int) -> dict:
 
 
 async def simulated(key: str, reports: int) -> dict:
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     rate = board["device"]["mic"]["sample_hz"]
     async with breadboard(connect_cloud=False) as bench:
         samples = tone(440, 12000, 2.5 * reports + 4, rate)
@@ -92,7 +92,7 @@ def factors() -> dict[str, float] | None:
 
 
 def check(target: str, report: dict, scale: dict[str, float] | None) -> list[str]:
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     mic = board["device"]["mic"]
     audio_us = 1_000_000 * BLOCK_SAMPLES // mic["sample_hz"]
     scale = scale or dict.fromkeys(TIMERS, 1.0)
@@ -134,7 +134,7 @@ def calibrate(real: dict, sim: dict) -> dict[str, float]:
     revision = subprocess.check_output(
         ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True
     ).strip()
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     CALIBRATION.write_text(
         f"# Measured {datetime.now(UTC).date()} on {board['mcu']} at {revision}: "
         "hardware average / QEMU average\n[timing]\n"
@@ -144,7 +144,7 @@ def calibrate(real: dict, sim: dict) -> dict[str, float]:
 
 
 async def run(args: argparse.Namespace) -> None:
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     key = "lr"[["left", "right"].index(board["device"]["mic"]["slot"])]
     failures = []
     if args.port:

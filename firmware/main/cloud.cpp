@@ -236,6 +236,7 @@ static void ethernet_event(void*, esp_event_base_t base, int32_t event, void* da
 }
 
 static bool start_ethernet() {
+#if CONFIG_ETH_USE_OPENETH
   if (!ethernet) {
     esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
     ethernet_netif = esp_netif_new(&netif_config);
@@ -272,6 +273,10 @@ static bool start_ethernet() {
   ethernet_started = result == ESP_OK;
   if (!ethernet_started) Serial.printf("slate.net: ethernet start failed %s\n", esp_err_to_name(result));
   return ethernet_started;
+#else
+  Serial.println("slate.net: simulator Ethernet unavailable; provision Wi-Fi on this board");
+  return false;
+#endif
 }
 
 static void connect_network() {

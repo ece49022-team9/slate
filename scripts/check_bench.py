@@ -4,7 +4,7 @@ import struct
 import sys
 import wave
 
-from slate.board import ROOT, load
+from slate.board import BOARD, ROOT, load
 from slate.link import Link, open_board
 
 PORT_LOG = ROOT / ".local/bench-serial.log"
@@ -55,7 +55,7 @@ async def listen(link: Link, key: str, seconds: float, sound: bool) -> list[int]
 
 
 async def run(port: str) -> None:
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     mic = board["device"]["mic"]
     rate = mic["sample_hz"]
     key = "lr"[["left", "right"].index(mic["slot"])]

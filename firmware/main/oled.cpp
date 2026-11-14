@@ -18,11 +18,13 @@ static std::atomic<bool> stop_requested{false};
 static std::atomic<bool> stopped{false};
 
 static void draw(void*) {
+  // Slowed from 30 ms to 80 ms per frame (4 MHz SPI needs ~65 ms per full frame) to test whether display glitching is SPI/refresh related.
+  constexpr TickType_t frame_ticks = pdMS_TO_TICKS(80) > 0 ? pdMS_TO_TICKS(80) : 1;
   TickType_t next_frame = xTaskGetTickCount();
   uint32_t report_started = millis();
   uint32_t frames = 0;
   while (!stop_requested.load()) {
-    uint32_t frame = xTaskGetTickCount() / pdMS_TO_TICKS(30);
+    uint32_t frame = xTaskGetTickCount() / frame_ticks;
     int64_t started = esp_timer_get_time();
     display_render(display_get_state(), frame, pixels);
     int64_t rendered = esp_timer_get_time();
@@ -41,9 +43,10 @@ static void draw(void*) {
       report_started = millis();
       frames = 0;
     }
-    vTaskDelayUntil(&next_frame, pdMS_TO_TICKS(30));
+    vTaskDelayUntil(&next_frame, frame_ticks);
   }
   oled->fillScreen(0);
+  SPI.end();
   stopped.store(true); // No further SPI operations after this acknowledgment.
   vTaskDelete(nullptr);
 }
@@ -55,6 +58,8 @@ bool oled_stop() {
 }
 
 void oled_start() {
+  stop_requested.store(false);
+  stopped.store(false);
   SPI.begin(OLED_CLK, -1, OLED_DATA, OLED_CS);
   static Adafruit_SSD1351 panel(DISPLAY_WIDTH, DISPLAY_HEIGHT, &SPI,
                                 OLED_CS, OLED_DC, OLED_RESET);
@@ -62,7 +67,21 @@ void oled_start() {
   oled->begin(OLED_SPI_HZ);
   oled->setRotation(0);
   oled->fillScreen(0);
+#ifdef SLATE_BRINGUP
+  oled->fillRect(0, 0, 42, 32, 0xf800);
+  oled->fillRect(42, 0, 43, 32, 0x07e0);
+  oled->fillRect(85, 0, 43, 32, 0x001f);
+  oled->setCursor(4, 48);
+  oled->setTextColor(0xffff);
+  oled->print("SLATE SSD1351");
+  delay(1000);
+#endif
   BaseType_t created = xTaskCreate(draw, "OLED", 4096, nullptr, 5, nullptr);
-  configASSERT(created == pdPASS);
+  if (created != pdPASS) {
+    ESP_LOGE("slate.oled", "Could not create display task");
+    oled->fillScreen(0);
+    SPI.end();
+    return;
+  }
   ESP_LOGI("slate.oled", "SSD1351 ready: 128x128 RGB565");
 }
