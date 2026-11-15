@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Slate · agent browser</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: #0e0f12; color: #d8dbe2; font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid #23262d; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: #555; flex: none; }
+  #dot.on { background: #3ddc84; box-shadow: 0 0 8px #3ddc84; }
+  #page { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #title { color: #fff; margin-right: 8px; }
+  #url { color: #8a90a0; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; padding: 14px; }
+  #screen { position: absolute; inset: 14px; }
+  #over { position: absolute; inset: 14px; pointer-events: none; }
+  #still:not([hidden]) ~ #over { display: none; }
+  .pill { position: absolute; z-index: 20; pointer-events: auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid oklch(1 0 0 / 6%); border-radius: 9999px; background: rgb(17 17 17); color: oklch(0.985 0 0); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Helvetica, Arial, sans-serif; font-size: 0.8125rem; line-height: 1.125rem; font-weight: 500; white-space: nowrap; cursor: pointer; outline: none; transition: color 150ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out, opacity 150ms ease-out; }
+  .pill:has(> svg) { padding: 0 10px; }
+  .pill:hover { background: linear-gradient(rgb(255 255 255 / 6%), rgb(255 255 255 / 6%)), rgb(17 17 17); }
+  .pill:active { background: linear-gradient(rgb(255 255 255 / 9%), rgb(255 255 255 / 9%)), rgb(17 17 17); }
+  .pill:focus-visible { outline: 1px solid oklch(0.65 0 0); outline-offset: -1px; }
+  .pill:disabled { pointer-events: none; opacity: 0.5; }
+  .pill[hidden] { display: none; }
+  .pill svg { width: 14px; height: 14px; flex: none; pointer-events: none; }
+  #take { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #release { left: 12px; bottom: 12px; font-size: 0.75rem; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #6b7080; pointer-events: none; }
+  #empty[hidden] { display: none; }
+  #still { position: absolute; inset: 0; display: flex; flex-direction: column; background: #0e0f12f0; padding: 14px; gap: 10px; }
+  #still[hidden] { display: none; }
+  #still .bar { display: flex; align-items: center; gap: 12px; }
+  #still .bar span { flex: 1; color: #fff; }
+  #still button { background: #23262d; color: #d8dbe2; border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  #picture { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  #frame { position: relative; max-width: 100%; max-height: 100%; }
+  #frame img { display: block; max-width: 100%; max-height: calc(100vh - 140px); border-radius: 6px; box-shadow: 0 6px 30px #0008; }
+  #box { position: absolute; border: 2px solid #f5a524; border-radius: 3px; pointer-events: none; }
+  #point { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #f5a52499; border: 2px solid #f5a524; pointer-events: none; }
+  aside { width: 340px; flex: none; border-left: 1px solid #23262d; display: flex; flex-direction: column; min-height: 0; }
+  aside h2 { margin: 0; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #8a90a0; text-transform: uppercase; letter-spacing: 0.06em; }
+  ol { list-style: none; margin: 0; padding: 0 8px 12px; overflow-y: auto; flex: 1; }
+  li { padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+  li:hover, li.shown { background: #1a1c22; }
+  li time { color: #6b7080; margin-right: 8px; font-variant-numeric: tabular-nums; }
+  li .error { color: #ff7b72; font-size: 12px; margin-top: 3px; word-break: break-all; }
+  li.nostill { cursor: default; }
+</style>
+</head>
+<body>
+<header>
+  <div id="dot"></div>
+  <div id="page"><span id="title">Connecting to the agent's browser…</span><span id="url"></span></div>
+</header>
+<main>
+  <div id="stage">
+    <div id="screen"></div>
+    <div id="empty">Waiting for the browser…</div>
+    <div id="still" hidden>
+      <div class="bar"><span id="caption"></span><button id="back">Back to live</button></div>
+      <div id="picture"><div id="frame"><img id="image" alt=""><div id="box" hidden></div><div id="point" hidden></div></div></div>
+    </div>
+    <div id="over">
+      <button id="take" class="pill" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.1 12 6"/><path d="m5.1 8-2.9-.8"/><path d="m6 12-1.9 2"/><path d="M7.2 2.2 8 5.1"/><path d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"/></svg>Take over</button>
+      <button id="release" class="pill" type="button" hidden>Release control</button>
+    </div>
+  </div>
+  <aside><h2>Actions</h2><ol id="actions"></ol></aside>
+</main>
+<script type="module">
+import { VoxlClient } from "/static/voxl.js";
+
+const screen = document.getElementById("screen");
+const take = document.getElementById("take");
+const release = document.getElementById("release");
+const over = document.getElementById("over");
+const list = document.getElementById("actions");
+let client = null;
+let live = false;
+let shown = null;
+let actions = [];
+let holdSocket = null;
+let holding = false;
+let heldElsewhere = false;
+
+function connectScreen() {
+  client = new VoxlClient(screen, `ws://${location.host}/screen`);
+  client.viewOnly = !holding;
+  client.addEventListener("drawn", () => {
+    document.getElementById("empty").hidden = true;
+    live = true;
+    fitOver();
+    showHold();
+  });
+  client.addEventListener("disconnect", () => {
+    document.getElementById("empty").hidden = false;
+    client = null;
+    live = false;
+    showHold();
+    setTimeout(connectScreen, 1500);
+  });
+}
+
+function showHold() {
+  take.hidden = !live || holdSocket !== null;
+  take.disabled = heldElsewhere;
+  take.title = heldElsewhere ? "Taken over in another view" : "";
+  release.hidden = !live || holdSocket === null;
+}
+
+function fitOver() {
+  const canvas = screen.querySelector("canvas");
+  if (!canvas) return;
+  const stage = over.parentElement.getBoundingClientRect();
+  const box = canvas.getBoundingClientRect();
+  Object.assign(over.style, {
+    inset: "auto",
+    left: `${box.left - stage.left}px`,
+    top: `${box.top - stage.top}px`,
+    width: `${box.width}px`,
+    height: `${box.height}px`,
+  });
+}
+
+new ResizeObserver(fitOver).observe(screen);
+
+function control() {
+  showHold();
+  if (!client) return;
+  client.viewOnly = !holding;
+  if (holding) client.focus();
+  else client.blur();
+}
+
+function takeOver() {
+  const socket = new WebSocket(`ws://${location.host}/hold`);
+  holdSocket = socket;
+  socket.onmessage = ({ data }) => {
+    if (data !== "held" || holdSocket !== socket) return;
+    holding = true;
+    control();
+  };
+  socket.onclose = () => {
+    if (holdSocket !== socket) return;
+    holdSocket = null;
+    holding = false;
+    control();
+  };
+  showHold();
+}
+
+function handBack() {
+  const socket = holdSocket;
+  holdSocket = null;
+  holding = false;
+  control();
+  socket.close();
+}
+
+take.addEventListener("click", takeOver);
+release.addEventListener("pointerdown", (event) => event.preventDefault());
+release.addEventListener("click", handBack);
+window.addEventListener("blur", () => holdSocket && handBack());
+document.addEventListener("visibilitychange", () => document.hidden && holdSocket && handBack());
+
+function quoted(text) {
+  return text ? `“${text}”` : "";
+}
+
+function sentence(action) {
+  const name = action.control?.name;
+  if (action.kind === "take over") return "You took over the browser";
+  if (action.kind === "hand back") return "You handed the browser back";
+  if (action.kind === "click") return name ? `Clicked ${name}` : "Clicked";
+  if (action.kind === "type") {
+    const typed = action.text ? `Typed ${quoted(action.text)}` : "Typed";
+    return name ? `${typed} into ${name}` : typed;
+  }
+  if (action.kind === "choose") {
+    const chosen = action.option ? `Chose ${quoted(action.option)}` : "Chose";
+    return name ? `${chosen} in ${name}` : chosen;
+  }
+  if (action.kind === "key") return `Pressed ${action.key}`;
+  if (action.kind === "open") return `Opened ${action.page}`;
+  return "Scrolled";
+}
+
+function problem(error) {
+  if (error.kind === "response") return `${error.method} ${error.url} → ${error.status}`;
+  if (error.kind === "request") return `${error.method} ${error.url} failed: ${error.reason}`;
+  if (error.kind === "crash") return "The page crashed";
+  return error.message;
+}
+
+function clock(at) {
+  return new Date(at).toLocaleTimeString([], { hour12: false });
+}
+
+function render(state) {
+  const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 4;
+  actions = state.actions;
+  list.replaceChildren(
+    ...actions.map((action) => {
+      const item = document.createElement("li");
+      item.dataset.id = action.id;
+      item.classList.toggle("shown", action.id === shown);
+      item.classList.toggle("nostill", !action.still);
+      const time = document.createElement("time");
+      time.textContent = clock(action.at);
+      item.append(time, sentence(action));
+      for (const error of state.errors.filter((each) => each.after === action.id)) {
+        const line = document.createElement("div");
+        line.className = "error";
+        line.textContent = problem(error);
+        item.append(line);
+      }
+      if (action.still) item.addEventListener("click", () => showStill(action));
+      return item;
+    }),
+  );
+  if (atBottom) list.scrollTop = list.scrollHeight;
+}
+
+function place(element, rect, image) {
+  const scale = image.clientWidth / image.naturalWidth;
+  Object.assign(element.style, {
+    left: `${rect.x * scale}px`,
+    top: `${rect.y * scale}px`,
+    width: rect.width === undefined ? "" : `${rect.width * scale}px`,
+    height: rect.height === undefined ? "" : `${rect.height * scale}px`,
+  });
+  element.hidden = false;
+}
+
+function showStill(action) {
+  shown = action.id;
+  const image = document.getElementById("image");
+  const box = document.getElementById("box");
+  const point = document.getElementById("point");
+  box.hidden = true;
+  point.hidden = true;
+  image.onload = () => {
+    if (action.box) place(box, action.box, image);
+    if (action.point) place(point, action.point, image);
+  };
+  image.src = `/stills/${action.id}`;
+  document.getElementById("caption").textContent = `${clock(action.at)}  ${sentence(action)}`;
+  document.getElementById("still").hidden = false;
+  for (const item of list.children) item.classList.toggle("shown", Number(item.dataset.id) === shown);
+}
+
+function hideStill() {
+  shown = null;
+  document.getElementById("still").hidden = true;
+  for (const item of list.children) item.classList.remove("shown");
+}
+
+document.getElementById("back").addEventListener("click", hideStill);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && shown !== null && !holding) hideStill();
+});
+
+function connectState() {
+  const socket = new WebSocket(`ws://${location.host}/state`);
+  socket.onmessage = ({ data }) => {
+    const state = JSON.parse(data);
+    document.getElementById("dot").classList.toggle("on", state.online);
+    document.getElementById("title").textContent = state.page ? state.page.title || "Untitled" : state.online ? "No open tab" : "The browser is offline";
+    document.getElementById("url").textContent = state.page ? state.page.url : "";
+    render(state);
+    heldElsewhere = state.held && !holding && holdSocket === null;
+    showHold();
+  };
+  socket.onclose = () => {
+    document.getElementById("dot").classList.remove("on");
+    setTimeout(connectState, 1000);
+  };
+}
+
+connectState();
+connectScreen();
+</script>
+</body>
+</html>
