@@ -46,15 +46,15 @@ With the cloud service deployed:
 
 ```sh
 make agent-check   # exact model/provider route and conversation recall
-make agent-e2e     # browser form, cross-session memory, simulated spoken turn
-make agent-status # latest receipts
+make agent-check ARGS="--browser --memory --voice"  # browser form, cross-session memory, simulated spoken turn
+make agent-check ARGS=--status                      # latest receipts
 ```
 
 The browser check reads a random code from a synthetic page, fills its form, and checks the resulting DOM independently. The memory check creates and removes a synthetic preference. The voice check feeds a shared WAV through QEMU's mic into the firmware, which streams it to the cloud over its own TLS WebSocket; the check reads the transcript, the reply, and the amount of speech the firmware received from its serial log. Reply WAVs and detailed traces stay in `.local/agent-runs`.
 
-`make agent-managed` checks the managed OpenAI Agents API directly with its key from `doppler run`. Managed browser tests use OpenAI's hosted desktop; Hermes uses our Modal browser. These are capability checks, not a controlled harness ranking.
+`doppler run -- uv run python scripts/check_managed.py --browser` checks the managed OpenAI Agents API directly with its key from `doppler run`. Managed browser tests use OpenAI's hosted desktop; Hermes uses our Modal browser. These are capability checks, not a controlled harness ranking.
 
-`make voice-profile` profiles three voice turns against the cloud with the shared spoken fixture, using a Python client that speaks the firmware's socket protocol. Run `make voice-deploy` after changing speech code. Receipts include connection and turn setup, STT queues and decoding, agent first visible text, CSM first acoustic frame and decoded PCM, and the first non-silent reply audio the client receives. `REPEATS=5` changes the sample count. Profiling is opt-in; normal speech uses the PCM streamer without CUDA timing.
+`make profile` profiles three voice turns against the cloud with the shared spoken fixture, using a Python client that speaks the firmware's socket protocol. Run `make voice-deploy` after changing speech code. Receipts include connection and turn setup, STT queues and decoding, agent first visible text, CSM first acoustic frame and decoded PCM, and the first non-silent reply audio the client receives. `ARGS="--repeats 5"` changes the sample count. Profiling is opt-in; normal speech uses the PCM streamer without CUDA timing.
 
 The device's clock and the server's clock are never subtracted from each other. End-to-audible runs from the client's end message to the first non-silent reply PCM it receives, so it includes the network both ways; server spans start when the server receives end. Generation and playback overlap, so the report does not subtract whole generation spans to estimate latency without inference. Provider queueing, prefill, and reasoning remain combined within agent TTFT. CSM's first acoustic frame is not playable audio. Compare initial and loaded-model calls separately; profiling can perturb execution.
 
@@ -67,12 +67,12 @@ Monty runs as a bounded subprocess of the device MCP server inside the cloud con
 `SLATE_DEVICE_MODE=modal make cloud-deploy` runs the same Python SDK in CPython 3.12 inside a Modal Sandbox with internet access. The sandbox calls the public device route itself, with the turn's scope as a bearer token; the scope stops working when the turn ends. Each scope gets a fresh interpreter in a warm sandbox; a spare is kept ready for the next voice turn. A timeout or cancellation terminates the whole sandbox. `SLATE_DEVICE_MODE=tools` selects the three separate MCP tools for comparison.
 
 ```sh
-make device-check         # real firmware commands and OLED SPI pixels
-make device-code-check    # Monty against QEMU through the HTTP device route
-make device-code-profile  # time tools and Monty; LAYER=agent for local Hermes turns
+make sim-check SIM_CHECKS=device  # real firmware commands and OLED SPI pixels
+make device-code-check            # Monty against QEMU through the HTTP device route
+make profile WHAT=device_code     # time tools and Monty; ARGS="--layer agent" for local Hermes turns
 ```
 
-The profile runs one composed task (set the orb, show text, read status) against QEMU firmware. `LAYER=exec` times each runtime in-process and through the MCP stdio boundary. `LAYER=modal` runs Monty inside a Modal container against an in-container fake device. `LAYER=agent` restarts the local Hermes once per mode in ABC/CBA order and times full turns with fresh sessions. Results append to the experiment log.
+The profile runs one composed task (set the orb, show text, read status) against QEMU firmware. `ARGS="--layer exec"` times each runtime in-process and through the MCP stdio boundary. `ARGS="--layer modal"` runs Monty inside a Modal container against an in-container fake device. `ARGS="--layer agent"` restarts the local Hermes once per mode in ABC/CBA order and times full turns with fresh sessions. Results append to the experiment log.
 
 The code-runtime check replaces the device socket with a fixture and verifies actual firmware state, pixels, partial failures, and expired scopes. Pressing Talk while a reply is in progress interrupts it: the client drops queued speech immediately, and the server revokes device access and cancels transcription, agent, and speech work before starting another turn. This is button-triggered interruption; automatic speech detection is not implemented. Managed final-answer deltas feed sentence synthesis; Hermes waits for its final answer because its run stream does not preserve the phase labels needed to safely speak deltas. Both paths stream CSM's decoded PCM. CSM uses its pinned upstream sampling defaults; reaching the generation limit without an end token remains an error.
 
@@ -92,13 +92,13 @@ We use two external suites:
 - [LongMemEval](https://github.com/xiaowu0162/LongMemEval): recall across timestamped conversations, updates, reasoning, and abstention. Use the cleaned V1 S dataset's complete histories with an isolated Hermes profile per question. The session-search arm uses Hermes's native search; full-context and no-memory arms show the retrieval gap. This pilot does not test learning memories through natural conversations.
 
 ```sh
-make eval-setup
-make eval-memory LIMIT=3
-make eval-tau
-make eval-tau-audit
+make eval ARGS=setup
+make eval                          # LongMemEval, three questions
+make eval ARGS="tau --task-id 18"
+make eval ARGS=tau-audit
 ```
 
-Memory runs freeze the sample, dataset, model, source, and judge. They use the pinned upstream answer rubric with a GPT-6.1 Sol Responses judge; this is a custom judge protocol, not an official leaderboard result. `make eval-tau` runs the same seeded airline task through Hermes's MCP tools and the managed Agents API's function handlers, with the official environment and outcome evaluator. `TASK=18` selects the task; the default is one seeded sample, one trial per harness. `make eval-tau-audit` separately audits all airline gold references. Small pilots establish the pipeline and expose failures; they do not establish performance on the full suites or pass^4 reliability.
+Memory runs freeze the sample, dataset, model, source, and judge. They use the pinned upstream answer rubric with a GPT-6.1 Sol Responses judge; this is a custom judge protocol, not an official leaderboard result. `make eval ARGS="tau --task-id 18"` runs the same seeded airline task through Hermes's MCP tools and the managed Agents API's function handlers, with the official environment and outcome evaluator. `TASK=18` selects the task; the default is one seeded sample, one trial per harness. `make eval ARGS=tau-audit` separately audits all airline gold references. Small pilots establish the pipeline and expose failures; they do not establish performance on the full suites or pass^4 reliability.
 
 ## Device connection
 
@@ -155,7 +155,7 @@ STT accepts mono 24 kHz, 16-bit PCM WAV files up to 120 seconds. TTS returns the
 The target is the original ESP32, on an ESP32-WROOM-32 dev board. The `esp32dev` image uses its Bluetooth radio. The `sim` image runs the same application with the NimBLE host connected over UART1 to the simulator:
 
 ```sh
-make firmware   # build for the board
+make firmware   # build for the ESP32-S3 board; FIRMWARE_ENV=esp32dev for the WROOM-32 prototype
 make firmware FIRMWARE_ENV=sim # build for QEMU
 make flash      # write it to the board
 make monitor    # serial console at 921600 baud
@@ -174,7 +174,7 @@ The setup service is `5a7e0001-6a1b-4c3e-9f5d-8b2c1e0d4a10`. Write one UTF-8 lin
 
 Send `!setup` over serial to reopen setup. The board reboots into setup if its controller memory has already been released; ESP-IDF cannot restore that memory during the same boot. The simulator reopens setup directly. Once network and cloud settings are saved, setup sends `done`, stops NimBLE, and returns the board's controller memory to the heap. Cloud operation then continues without a reboot. A configured board also releases controller memory at boot.
 
-`make flash` and `make monitor` pick the board automatically when exactly one USB serial port is present. If several are connected, run `make ports` and pass `PORT=/dev/cu.<port>`. Over serial, send `0` through `5` for idle, listen, mute, transcribe, respond, or error; `l`, `r`, or `m` (while idle) to pick the left mic, right mic, or their mix; `a` or `x` to turn audio streaming on or off; `t` to play a one-second 440 Hz speaker test without blocking the mic or display; and `c` to start or end a live call. In listen, the firmware prints the mic's sample count, RMS, and peak every half second. With streaming on, it also sends the filtered mic audio as binary frames: a zero byte, a two-byte little-endian length, then 16-bit samples. Text never contains a zero byte, so the host can tell them apart. The ROM's boot messages use 115200 baud and look garbled at 921600.
+`make flash` and `make monitor` pick the board automatically when exactly one USB serial port is present. If several are connected, pass `PORT=/dev/cu.<port>`. Over serial, send `0` through `5` for idle, listen, mute, transcribe, respond, or error; `l`, `r`, or `m` (while idle) to pick the left mic, right mic, or their mix; `a` or `x` to turn audio streaming on or off; `t` to play a one-second 440 Hz speaker test without blocking the mic or display; and `c` to start or end a live call. In listen, the firmware prints the mic's sample count, RMS, and peak every half second. With streaming on, it also sends the filtered mic audio as binary frames: a zero byte, a two-byte little-endian length, then 16-bit samples. Text never contains a zero byte, so the host can tell them apart. The ROM's boot messages use 115200 baud and look garbled at 921600.
 
 The firmware reaches the cloud on its own. Provisioning is stored in flash and sent over serial: `!net wifi <ssid> <password>` on the board or `!net eth` in QEMU, then `!cloud <wss URL> <device token>`. `make provision SSID=<name> PASSWORD=<password>` sends both to a connected board using `.local/cloud.json`; names and passwords with spaces are not supported yet. Above the network driver the code is the same on both: TLS pinned to the ISRG roots, the WebSocket client, and the protocol above, in its own FreeRTOS task. Entering listen sends `start` and streams the selected mic; leaving it for transcribe sends `end`. The firmware logs `slate.transcript:`, `slate.reply:`, and `slate.reply.audio:`, and plays the reply speech on the speaker.
 
@@ -199,10 +199,10 @@ QEMU boots the exact image `make flash` writes. Python plays the parts on the br
 - [check_breadboard.py](scripts/check_breadboard.py): two identical runs; the idle orb is drawn; a 440 Hz tone on the mic's slot reaches the meter within 5% RMS; the other slot stays silent; the orb grows and brightens while it hears sound; the panel runs at about 33 fps.
 - [check_mic.py](scripts/check_mic.py): Hypothesis generates stereo audio for each channel. The streamed output must match an independent DC-filter calculation within one step, replay identically, and start clean after a muted turn. Failures are shrunk and saved for replay.
 - [check_display.py](scripts/check_display.py): all six state colors, a blank panel on mute, a centered orb that fits the panel, smooth breathing, and 15 generated state sequences. It saves a frame to `.local/display-listen.png`.
-- [check_speaker.py](scripts/check_speaker.py): a full second of 440 Hz stereo output through I2S1 DMA in the dedicated and normal firmware, followed by silence; checks channel agreement, frequency, and amplitude, then saves `.local/speaker.wav`. Run it alone with `make sim-speaker-check`.
+- [check_speaker.py](scripts/check_speaker.py): a full second of 440 Hz stereo output through I2S1 DMA in the dedicated and normal firmware, followed by silence; checks channel agreement, frequency, and amplitude, then saves `.local/speaker.wav`. Run it alone with `make sim-check SIM_CHECKS=speaker`.
 - [check_resources.py](scripts/check_resources.py): while listening to a tone, the firmware's `slate.perf` report must show a frame (render plus SPI) within 30 ms, each 20 ms audio block processed in time, at least 32 KB of heap left with a 16 KB free block, and 512 bytes of stack left in every task.
 
-QEMU runs the same 520 KB SRAM map, the WROOM-32's 4 MB flash, and no PSRAM, so heap and stack limits are the real ones. Its CPU is not cycle-accurate: every instruction costs 4 ns, with no flash cache misses or wait states. `make calibrate-sim` runs the same workload on the board and in QEMU and writes the hardware/QEMU timing ratios to `firmware/sim_calibration.toml`; the simulator check scales its timings by those ratios. Until then it reports timing as uncalibrated. `make bench` applies the same budgets to the board's own report.
+QEMU runs the same 520 KB SRAM map, the WROOM-32's 4 MB flash, and no PSRAM, so heap and stack limits are the real ones. Its CPU is not cycle-accurate: every instruction costs 4 ns, with no flash cache misses or wait states. `make bench CALIBRATE=1` runs the same workload on the board and in QEMU and writes the hardware/QEMU timing ratios to `firmware/sim_calibration.toml`; the simulator check scales its timings by those ratios. Until then it reports timing as uncalibrated. `make bench` applies the same budgets to the board's own report.
 
 `make sim` serves a breadboard view at [localhost:8010](http://127.0.0.1:8010). It draws the board and parts from `board.toml` with the wiring checker's warnings, animates each wire when its pin toggles or SPI bytes flow, and shows the live panel and the serial console. You can type keys, switch states, play a 440 Hz tone into the mic, or stream your computer's microphone into it. Click **Enable speaker audio** to hear firmware output through your computer, or **Test speaker output** to capture and play the full test tone. Speaker mute and volume are independent of mic input. Type `c` in the serial box to start or end a live call; the firmware streams the mic for the whole call and plays the call's speech on the speaker. Serial output goes to `.local/board-serial.log` and QEMU's own output to `.local/qemu.log`.
 
@@ -214,7 +214,7 @@ To send audio through the simulated firmware, the cloud agent, and the real spee
 make sim-voice
 ```
 
-`make duplex-profile` compares live calls with push to talk on the simulated firmware: the time from the end of the spoken question to Slate's first sound and to its answer, and, with "Wait, stop." spoken over a longer answer, how long Slate keeps talking. `ECHO=0.6` adds the speaker echo. `make cost-profile` runs the same 15-turn conversation through both and prices it; run the service with `SLATE_PROFILE=1` for the speech-model timings. Both use the deployed service, or `API_URL=http://127.0.0.1:8000` for one on the Mac, which the firmware reaches at 10.0.2.2. Results go to `experiments/progress.jsonl`.
+`make profile WHAT=live` compares live calls with push to talk on the simulated firmware: the time from the end of the spoken question to Slate's first sound and to its answer, and, with "Wait, stop." spoken over a longer answer, how long Slate keeps talking. `ARGS="--echo 0.6"` adds the speaker echo. `make profile WHAT=cost` runs the same 15-turn conversation through both and prices it; run the service with `SLATE_PROFILE=1` for the speech-model timings. Both use the deployed service, or `ARGS="--api-url http://127.0.0.1:8000"` for one on the Mac, which the firmware reaches at 10.0.2.2. Results go to `experiments/progress.jsonl`.
 
 Pass `INPUT=path/to/speech.wav` to use a different recording. The WAV must be 16-bit at 16, 24, or 48 kHz and at most 119 seconds. A stereo WAV fills both mic slots; a mono WAV fills the board's mic slot. `--channel` on the underlying Python command picks left (default), right, or mix. The command boots QEMU, waits for the firmware to connect to the cloud, plays the WAV into its mic model while holding listen, and prints the transcript, the reply, and how much speech the firmware received. Haptics are not started until their pins are confirmed.
 
