@@ -62,5 +62,10 @@ async def device_socket(socket: WebSocket) -> None:
         await socket.close(4400, "Send hello first")
         return
     session = await socket.app.state.voice.connect(socket, hello)
-    logger.info("Device %s connected at %s Hz", session.id, hello.rate)
+    logger.info(
+        "Device %s connected at %s Hz with %s audio",
+        session.id,
+        hello.rate,
+        hello.codec,
+    )
     await session.serve()

@@ -45,6 +45,7 @@ image = (
         "curl",
         "git",
         "libffi-dev",
+        "libopus0",
         "procps",
         "ripgrep",
     )

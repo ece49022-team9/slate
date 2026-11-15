@@ -4,8 +4,9 @@ import re
 import time
 from pathlib import Path
 
-from slate.voice.audio import read_wav
-from slate.voice.client import speak, transcribe
+from slate.voice import scribe
+from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE, read_wav
+from slate.voice.client import moshi_stream, speak, transcribe
 from slate.voice.device import VoiceResult, simulate
 from slate.voice.firmware import FirmwareTurn, board_firmware, simulate_firmware
 
@@ -36,12 +37,31 @@ def show_firmware_turn(result: FirmwareTurn) -> None:
         )
 
 
+async def timed_stt(path: Path, engine: str) -> None:
+    pcm = read_wav(path.read_bytes())
+    frame = SAMPLE_RATE * SAMPLE_BYTES // 50
+    ended = 0
+
+    async def chunks():
+        nonlocal ended
+        begin = time.monotonic()
+        for index, offset in enumerate(range(0, len(pcm), frame)):
+            yield pcm[offset : offset + frame]
+            await asyncio.sleep(max(0, begin + (index + 1) / 50 - time.monotonic()))
+        ended = time.monotonic_ns()
+
+    stream = scribe.transcribe_stream if engine == "scribe" else moshi_stream
+    async for piece in stream(chunks()):
+        print(piece, end="", flush=True)
+    print()
+    waited = (time.monotonic_ns() - ended) / 1e6
+    print(f"slate.stt: {engine} final {waited:.0f} ms after the audio ended")
+
+
 async def run(args: argparse.Namespace) -> None:
     started = time.monotonic()
     if args.command == "stt":
-        async for piece in transcribe(read_wav(args.input.read_bytes())):
-            print(piece, end="", flush=True)
-        print()
+        await timed_stt(args.input, args.engine)
     elif args.command == "tts":
         save_audio(args.output, await speak(args.text, args.max_seconds))
     elif args.command == "simulate":
@@ -71,8 +91,11 @@ async def run(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="slate.voice")
     commands = parser.add_subparsers(dest="command", required=True)
-    stt = commands.add_parser("stt", help="Transcribe a mono 24 kHz PCM WAV")
+    stt = commands.add_parser(
+        "stt", help="Transcribe a mono 24 kHz PCM WAV at speaking pace"
+    )
     stt.add_argument("input", type=Path)
+    stt.add_argument("--engine", choices=["moshi", "scribe"], default="moshi")
     tts = commands.add_parser("tts", help="Generate a spoken WAV")
     tts.add_argument("text")
     tts.add_argument("--output", type=Path, default=Path(".local/speech.wav"))
