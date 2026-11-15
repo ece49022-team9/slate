@@ -1,13 +1,18 @@
 import asyncio
+import os
 import time
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import aclosing
 
 import modal
 
+from slate.voice import scribe
 from slate.voice.audio import read_wav
 
 QUEUE_BATCH = 256
+STT = os.getenv("SLATE_STT", "moshi")
+if STT not in ("moshi", "scribe"):
+    raise ValueError(f"slate.voice: SLATE_STT must be moshi or scribe, not {STT!r}")
 
 
 async def drain(queue: modal.Queue) -> AsyncIterator:
@@ -57,6 +62,15 @@ async def transcribe(pcm: bytes) -> AsyncIterator[str]:
 
 
 async def transcribe_stream(
+    audio: AsyncIterable[bytes], *, timings: dict | None = None
+) -> AsyncIterator[str]:
+    engine = scribe.transcribe_stream if STT == "scribe" else moshi_stream
+    async with aclosing(engine(audio, timings=timings)) as stream:
+        async for piece in stream:
+            yield piece
+
+
+async def moshi_stream(
     audio: AsyncIterable[bytes], *, timings: dict | None = None
 ) -> AsyncIterator[str]:
     marks = {"requested": time.monotonic_ns()} if timings is not None else None

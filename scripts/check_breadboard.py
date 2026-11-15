@@ -3,7 +3,7 @@ import hashlib
 import math
 
 from check_speaker import check_silence
-from slate.board import load
+from slate.board import BOARD, load
 from slate.breadboard import breadboard, build_image, tone
 
 COLORS = [0xFFFF, 0x07E0, 0, 0x001F, 0xFFE0, 0xF81F]
@@ -76,7 +76,7 @@ async def run(rate: int) -> tuple[str, str]:
 
 def main() -> None:
     build_image()
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     rate = board["device"]["mic"]["sample_hz"]
     summary, first = asyncio.run(run(rate))
     build_image()

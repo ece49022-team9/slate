@@ -1,0 +1,1926 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brandon Snider <brandon@snider.so>
+Date: Wed, 4 Nov 2026 18:09:29 -0800
+Subject: [PATCH 1/4] Serve an embedded stream: --agent-api,
+ --clipboard-images, --density, --bare, and versioned scripts
+
+---
+ src/desktop.rs |  4 +++-
+ src/lib.rs     | 13 +++++++++++++
+ src/server.rs  | 41 ++++++++++++++++++++++++++++++++++-------
+ 3 files changed, 50 insertions(+), 8 deletions(-)
+
+diff --git a/src/desktop.rs b/src/desktop.rs
+index ff920ba..968d978 100644
+--- a/src/desktop.rs
++++ b/src/desktop.rs
+@@ -48,6 +48,8 @@ impl ClipboardHandle {
+ pub struct ClipboardMode {
+     pub to_server: bool,
+     pub to_client: bool,
++    /// Images as well as text.
++    pub images: bool,
+ }
+ 
+ struct Atoms {
+@@ -192,7 +194,7 @@ pub fn spawn(
+                                 // Text wins when both are offered (rich text copies carry both).
+                                 let want = if offered.contains(&atoms.utf8) {
+                                     Some(atoms.utf8)
+-                                } else if offered.contains(&atoms.png) {
++                                } else if mode.images && offered.contains(&atoms.png) {
+                                     Some(atoms.png)
+                                 } else if offered.contains(&u32::from(AtomEnum::STRING)) {
+                                     Some(u32::from(AtomEnum::STRING))
+diff --git a/src/lib.rs b/src/lib.rs
+index fc45c6c..8eff341 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -176,9 +176,12 @@ async fn serve(a: HashMap<String, String>) {
+         .get("enable-clipboard")
+         .map(|s| s.as_str())
+         .unwrap_or("true");
++    // --clipboard-images=false: the clipboard carries text alone.
++    let clip_images = truthy(a.get("clipboard-images"), true);
+     let clip_mode = desktop::ClipboardMode {
+         to_server: matches!(clip, "true" | "in"),
+         to_client: matches!(clip, "true" | "out"),
++        images: clip_images,
+     };
+     let audio_on = truthy(a.get("audio-enabled"), true);
+ 
+@@ -329,6 +332,13 @@ async fn serve(a: HashMap<String, String>) {
+                 serde_json::json!({ "scale": resize_scale }),
+             );
+         }
++        // --density: desktop pixels per point (2 for a desktop drawn at 2x), which the
++        // page shows at one point per CSS pixel where the window has room.
++        extra.insert("density".into(), range_max(a.get("density"), 1.0).into());
++        // --bare: the page shows the screen alone, with no toolbar or status text.
++        if truthy(a.get("bare"), false) {
++            extra.insert("bare".into(), true.into());
++        }
+     }
+     // --favicon: the tab's icon (default: voxl's own).
+     let (favicon, favicon_type) = server::favicon(a.get("favicon").map(|s| s.as_str()))
+@@ -344,6 +354,9 @@ async fn serve(a: HashMap<String, String>) {
+         mic,
+         resize: resize_on,
+         read_only,
++        // --agent-api=false: no /screenshot, /record or /wait.
++        agent_api: truthy(a.get("agent-api"), true),
++        clip_images,
+         // GET /screenshot, /record; --max-record-seconds caps a recording's length.
+         recorder: record::Recorder::new(
+             hub.clone(),
+diff --git a/src/server.rs b/src/server.rs
+index 9344529..11346e8 100644
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -26,6 +26,10 @@ pub struct AppState {
+     pub resize: bool,
+     /// Viewers only watch: input, clipboard writes and the microphone are refused (--read-only).
+     pub read_only: bool,
++    /// Screenshots, recordings and /wait are served (--agent-api).
++    pub agent_api: bool,
++    /// The clipboard carries images as well as text (--clipboard-images).
++    pub clip_images: bool,
+     pub recorder: Arc<crate::record::Recorder>,
+     /// The web client's page, with its title filled in (`index_html`).
+     pub index: Bytes,
+@@ -48,9 +52,24 @@ pub fn index_html(title: &str) -> Bytes {
+             c => escaped.push(c),
+         }
+     }
+-    Bytes::from(include_str!("../web/index.html").replace("{{title}}", &escaped))
++    // The scripts' URLs name this build, so a cache in front of voxl (Cloudflare keeps
++    // scripts for hours whatever voxl says) never serves another build's.
++    let build = BUNDLES
++        .iter()
++        .flat_map(|b| b.iter())
++        .fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3));
++    Bytes::from(
++        include_str!("../web/index.html")
++            .replace("{{title}}", &escaped)
++            .replace("src=\"client.js\"", &format!("src=\"client.js?v={build:016x}\"")),
++    )
+ }
+ 
++const BUNDLES: [&[u8]; 2] = [
++    include_bytes!(concat!(env!("OUT_DIR"), "/web/client.js")),
++    include_bytes!(concat!(env!("OUT_DIR"), "/web/worker.js")),
++];
++
+ /// The page's icon (--favicon): that file's bytes and content type, or voxl's own icon.
+ pub fn favicon(path: Option<&str>) -> Result<(Bytes, &'static str), String> {
+     let Some(path) = path else {
+@@ -148,7 +167,11 @@ pub fn router(state: AppState) -> Router {
+     let wait_routes = Router::new()
+         .route("/wait", get(crate::wait::wait))
+         .with_state(state.hub.clone());
+-    Router::new()
++    let stats_routes = Router::new()
++        .route("/stats", get(stats))
++        .with_state(state.clone());
++    let agent_api = state.agent_api;
++    let app = Router::new()
+         .route("/", get(index))
+         .route("/index.html", get(index))
+         .route("/client.js", bundled!("client.js"))
+@@ -158,12 +181,14 @@ pub fn router(state: AppState) -> Router {
+         .route("/favicon.ico", get(favicon_route))
+         .route("/inter.woff2", asset!("inter.woff2", "font/woff2"))
+         .route("/healthz", get(|| async { "ok" }))
+-        .route("/stats", get(stats))
+         .route("/ws", get(ws_handler))
+         .with_state(state)
+-        .merge(file_routes)
+-        .merge(record_routes)
+-        .merge(wait_routes)
++        .merge(file_routes);
++    if agent_api {
++        app.merge(record_routes).merge(wait_routes).merge(stats_routes)
++    } else {
++        app
++    }
+ }
+ 
+ async fn stats(State(s): State<AppState>) -> Response {
+@@ -194,6 +219,8 @@ async fn stats(State(s): State<AppState>) -> Response {
+         "damage_events": crate::capture::DAMAGE_EVENTS.load(Ordering::Relaxed),
+         "damage_wait_us_total": st.damage_wait_us.load(Ordering::Relaxed),
+         "send_lat_us_total": st.send_lat_us.load(Ordering::Relaxed),
++        "patches": st.patches.load(Ordering::Relaxed),
++        "patch_bytes": st.patch_bytes.load(Ordering::Relaxed),
+         "clients": clients,
+     });
+     (
+@@ -259,7 +286,7 @@ async fn handle_socket(socket: WebSocket, s: AppState) {
+             // microphone audio), so a read-only viewer's are all dropped.
+             Message::Binary(_) if s.read_only => {}
+             // 0x11: clipboard image (PNG) pasted on the client.
+-            Message::Binary(b) if b.first() == Some(&0x11) && b.len() > 1 => {
++            Message::Binary(b) if b.first() == Some(&0x11) && b.len() > 1 && s.clip_images => {
+                 if let Some(tx) = s.hub.input.lock().as_ref() {
+                     let _ = tx.send(InputEvent::Clipboard(crate::desktop::ClipContent::Image(
+                         b[1..].to_vec(),
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brandon Snider <brandon@snider.so>
+Date: Wed, 4 Nov 2026 18:09:29 -0800
+Subject: [PATCH 2/4] Lossless still parts: blocks still for
+ --lossless-still-ms go as PNG, each frame led by its damage
+
+---
+ src/hub.rs      |   3 +
+ src/lib.rs      |   6 +
+ src/lossless.rs | 352 ++++++++++++++++++++++++++++++++++++++++++++++++
+ src/video.rs    |  65 ++++++++-
+ 4 files changed, 423 insertions(+), 3 deletions(-)
+ create mode 100644 src/lossless.rs
+
+diff --git a/src/hub.rs b/src/hub.rs
+index 8a362cb..53231cc 100644
+--- a/src/hub.rs
++++ b/src/hub.rs
+@@ -232,6 +232,9 @@ pub struct Stats {
+     pub refines: AtomicU64,
+     pub damage_wait_us: AtomicU64,
+     pub send_lat_us: AtomicU64,
++    /// Lossless patch rounds and the bytes they sent (lossless.rs).
++    pub patches: AtomicU64,
++    pub patch_bytes: AtomicU64,
+ }
+ 
+ pub struct Hub {
+diff --git a/src/lib.rs b/src/lib.rs
+index 8eff341..b6545ed 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -21,6 +21,7 @@ mod hub;
+ #[cfg(target_os = "linux")]
+ mod input;
+ mod login;
++mod lossless;
+ #[cfg(target_os = "macos")]
+ mod mac;
+ mod mic;
+@@ -171,7 +172,9 @@ async fn serve(a: HashMap<String, String>) {
+         // small updates encode a few ms slower on one thread.
+         adaptive_threads: truthy(a.get("adaptive-threads"), false),
+         coalesce: std::time::Duration::from_micros(range_max(a.get("coalesce-us"), 0.0) as u64),
++        lossless_still_ms: range_max(a.get("lossless-still-ms"), 0.0) as u32,
+     };
++    let lossless = vcfg.lossless_still_ms > 0;
+     let clip = a
+         .get("enable-clipboard")
+         .map(|s| s.as_str())
+@@ -332,6 +335,9 @@ async fn serve(a: HashMap<String, String>) {
+                 serde_json::json!({ "scale": resize_scale }),
+             );
+         }
++        if lossless {
++            extra.insert("lossless".into(), true.into());
++        }
+         // --density: desktop pixels per point (2 for a desktop drawn at 2x), which the
+         // page shows at one point per CSS pixel where the window has room.
+         extra.insert("density".into(), range_max(a.get("density"), 1.0).into());
+diff --git a/src/lossless.rs b/src/lossless.rs
+new file mode 100644
+index 0000000..97217b6
+--- /dev/null
++++ b/src/lossless.rs
+@@ -0,0 +1,352 @@
++//! Lossless still frames (--lossless-still-ms). Blocks that changed and then stayed still
++//! are sent once as PNG beside the H.264 stream, so a still screen shows its true pixels:
++//! no 4:2:0 chroma, no quantization. Each video frame is preceded by the rectangles it
++//! changed (a damage message); the client copies a decoded frame only into those, so a
++//! lossless block stays on screen until its pixels change again.
++//!
++//! Ordering: a patch is taken from the capture buffer in the capture thread, encoded on a
++//! thread of its own, and sent only once every frame captured before it has been sent and
++//! none of its blocks changed since, so it never lands on top of newer pixels.
++
++use crate::hub::{Hub, Out};
++use bytes::Bytes;
++use parking_lot::Mutex;
++use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
++use std::sync::{mpsc, Arc};
++use std::time::{Duration, Instant};
++
++/// Server: a frame's damage. Type, flags (1 = the whole screen), frame id (u32), count
++/// (u16), then count rectangles of x, y, w, h (u16 each, pixels).
++pub const DAMAGE: u8 = 0x06;
++/// Server: a lossless patch. Type, reserved, x, y, w, h (u16 each, pixels), then a PNG.
++pub const PATCH: u8 = 0x05;
++const PATCH_HEADER: usize = 10;
++const BLOCK: usize = 16;
++
++/// A rectangle of 16-pixel blocks.
++#[derive(Clone, Copy, Debug)]
++pub struct Blocks {
++    pub x: usize,
++    pub y: usize,
++    pub w: usize,
++    pub h: usize,
++}
++
++/// Rectangles covering the set blocks of a block map: runs along each row, joined with
++/// the run below when they span the same columns.
++pub fn rects(map: &[u8], cols: usize) -> Vec<Blocks> {
++    let mut out: Vec<Blocks> = Vec::new();
++    // Rectangles that end on the row above, by their columns, to extend downward.
++    let mut open: Vec<usize> = Vec::new();
++    for (y, row) in map.chunks(cols).enumerate() {
++        let mut next_open = Vec::new();
++        let mut x = 0;
++        while x < row.len() {
++            if row[x] == 0 {
++                x += 1;
++                continue;
++            }
++            let x0 = x;
++            while x < row.len() && row[x] != 0 {
++                x += 1;
++            }
++            let w = x - x0;
++            match open
++                .iter()
++                .find(|&&i| out[i].x == x0 && out[i].w == w && out[i].y + out[i].h == y)
++            {
++                Some(&i) => {
++                    out[i].h += 1;
++                    next_open.push(i);
++                }
++                None => {
++                    out.push(Blocks { x: x0, y, w, h: 1 });
++                    next_open.push(out.len() - 1);
++                }
++            }
++        }
++        open = next_open;
++    }
++    out
++}
++
++/// What the capture, encode and patch threads share.
++pub struct Shared {
++    /// The capture sequence number of the latest frame, and of the frame each block last
++    /// changed in.
++    state: Mutex<(u32, Vec<u32>)>,
++    /// The sequence number of the last frame the encode thread sent (or found nothing to send in).
++    pub sent: AtomicU32,
++    pub cols: usize,
++    pub width: usize,
++    pub height: usize,
++}
++
++impl Shared {
++    /// Notes a captured frame and the blocks it changed (every block, without a map), and
++    /// returns its sequence number.
++    pub fn capture(&self, dirty: Option<&[u8]>) -> u32 {
++        let mut s = self.state.lock();
++        s.0 += 1;
++        let seq = s.0;
++        match dirty {
++            Some(d) => {
++                for (c, &x) in s.1.iter_mut().zip(d) {
++                    if x != 0 {
++                        *c = seq;
++                    }
++                }
++            }
++            None => s.1.fill(seq),
++        }
++        seq
++    }
++
++    /// A damage message for frame `frame`: the rectangles of `dirty`, or the whole screen.
++    pub fn damage(&self, frame: u32, dirty: Option<&[u8]>) -> Bytes {
++        let list = dirty.map(|d| rects(d, self.cols)).unwrap_or_default();
++        let mut m = Vec::with_capacity(8 + list.len() * 8);
++        m.push(DAMAGE);
++        m.push(dirty.is_none() as u8);
++        m.extend_from_slice(&frame.to_be_bytes());
++        m.extend_from_slice(&(list.len().min(u16::MAX as usize) as u16).to_be_bytes());
++        for r in list.iter().take(u16::MAX as usize) {
++            let (x, y, w, h) = self.pixels(r);
++            for v in [x, y, w, h] {
++                m.extend_from_slice(&(v as u16).to_be_bytes());
++            }
++        }
++        Bytes::from(m)
++    }
++
++    /// A block rectangle in pixels, cut to the screen.
++    fn pixels(&self, r: &Blocks) -> (usize, usize, usize, usize) {
++        let (x, y) = (r.x * BLOCK, r.y * BLOCK);
++        let w = (r.w * BLOCK).min(self.width - x);
++        let h = (r.h * BLOCK).min(self.height - y);
++        (x, y, w, h)
++    }
++}
++
++/// The capture thread's side: which blocks changed since their last patch, and when.
++pub struct Tracker {
++    pub shared: Arc<Shared>,
++    epoch: Instant,
++    changed_ms: Vec<u32>,
++    pending: Vec<bool>,
++    still_ms: u32,
++    /// A round of patches is being encoded or waits to be sent.
++    busy: Arc<AtomicBool>,
++    patch_tx: mpsc::Sender<Round>,
++    retry_rx: mpsc::Receiver<Blocks>,
++}
++
++/// One round of patches: the pixels of each rectangle (RGB) as of capture `seq`.
++struct Round {
++    seq: u32,
++    parts: Vec<(Blocks, Vec<u8>)>,
++}
++
++impl Tracker {
++    /// Starts the patch thread for a `width` x `height` screen.
++    pub fn new(width: usize, height: usize, still_ms: u32, hub: Arc<Hub>) -> Self {
++        let cols = width.div_ceil(BLOCK);
++        let blocks = cols * height.div_ceil(BLOCK);
++        let shared = Arc::new(Shared {
++            state: Mutex::new((0, vec![0; blocks])),
++            sent: AtomicU32::new(0),
++            cols,
++            width,
++            height,
++        });
++        let busy = Arc::new(AtomicBool::new(false));
++        let (patch_tx, patch_rx) = mpsc::channel();
++        let (retry_tx, retry_rx) = mpsc::channel();
++        let (s, b) = (shared.clone(), busy.clone());
++        std::thread::Builder::new()
++            .name("lossless".into())
++            .spawn(move || patch_loop(patch_rx, s, hub, retry_tx, b))
++            .unwrap();
++        Tracker {
++            shared,
++            epoch: Instant::now(),
++            changed_ms: vec![0; blocks],
++            pending: vec![true; blocks],
++            still_ms,
++            busy,
++            patch_tx,
++            retry_rx,
++        }
++    }
++
++    fn now(&self) -> u32 {
++        self.epoch.elapsed().as_millis() as u32
++    }
++
++    /// Blocks a captured frame changed (every block, without a map) wait for a patch.
++    pub fn mark(&mut self, dirty: Option<&[u8]>) {
++        let now = self.now();
++        for i in 0..self.pending.len() {
++            if dirty.is_none_or(|d| d[i] != 0) {
++                self.pending[i] = true;
++                self.changed_ms[i] = now;
++            }
++        }
++    }
++
++    /// Milliseconds until the next waiting block has been still long enough, if any waits.
++    pub fn next_due_ms(&self) -> Option<u32> {
++        // A round in flight wakes the capture thread as it ends.
++        if self.busy.load(Ordering::Acquire) {
++            return None;
++        }
++        let now = self.now();
++        self.pending
++            .iter()
++            .zip(&self.changed_ms)
++            .filter(|(&p, _)| p)
++            .map(|(_, &c)| (c + self.still_ms).saturating_sub(now))
++            .min()
++    }
++
++    /// Sends a round of patches for the blocks that have been still long enough, taking
++    /// their pixels from the capture buffer `px` (BGRX, `stride` bytes a row).
++    pub fn tick(&mut self, px: &[u8], stride: usize) {
++        while let Ok(r) = self.retry_rx.try_recv() {
++            let now = self.now();
++            for y in r.y..r.y + r.h {
++                for x in r.x..r.x + r.w {
++                    let i = y * self.shared.cols + x;
++                    if !self.pending[i] {
++                        self.pending[i] = true;
++                        self.changed_ms[i] = now;
++                    }
++                }
++            }
++        }
++        if self.busy.load(Ordering::Acquire) {
++            return;
++        }
++        let now = self.now();
++        let mut due = vec![0u8; self.pending.len()];
++        let mut any = false;
++        for i in 0..due.len() {
++            if self.pending[i] && now.saturating_sub(self.changed_ms[i]) >= self.still_ms {
++                due[i] = 1;
++                self.pending[i] = false;
++                any = true;
++            }
++        }
++        if !any {
++            return;
++        }
++        let seq = self.shared.state.lock().0;
++        let parts = rects(&due, self.shared.cols)
++            .into_iter()
++            .map(|r| {
++                let (x, y, w, h) = self.shared.pixels(&r);
++                let mut rgb = Vec::with_capacity(w * h * 3);
++                for row in y..y + h {
++                    let line = &px[row * stride + x * 4..row * stride + (x + w) * 4];
++                    for p in line.chunks_exact(4) {
++                        rgb.extend_from_slice(&[p[2], p[1], p[0]]);
++                    }
++                }
++                (r, rgb)
++            })
++            .collect();
++        self.busy.store(true, Ordering::Release);
++        if self.patch_tx.send(Round { seq, parts }).is_err() {
++            self.busy.store(false, Ordering::Release);
++        }
++    }
++}
++
++fn patch_loop(
++    rx: mpsc::Receiver<Round>,
++    shared: Arc<Shared>,
++    hub: Arc<Hub>,
++    retry: mpsc::Sender<Blocks>,
++    busy: Arc<AtomicBool>,
++) {
++    while let Ok(round) = rx.recv() {
++        let msgs: Vec<(Blocks, Option<Bytes>)> = round
++            .parts
++            .into_iter()
++            .map(|(r, rgb)| {
++                let (x, y, w, h) = shared.pixels(&r);
++                (r, encode(x, y, w, h, &rgb))
++            })
++            .collect();
++        // Every frame captured before these pixels goes out first.
++        let deadline = Instant::now() + Duration::from_secs(1);
++        while shared.sent.load(Ordering::Acquire).wrapping_sub(round.seq) > u32::MAX / 2
++            && Instant::now() < deadline
++        {
++            std::thread::sleep(Duration::from_millis(2));
++        }
++        let caught_up = shared.sent.load(Ordering::Acquire).wrapping_sub(round.seq) <= u32::MAX / 2;
++        {
++            // Held while sending, so no frame is marked between the check and the send.
++            let state = shared.state.lock();
++            let clients: Vec<_> = hub
++                .video_clients()
++                .into_iter()
++                .filter(|c| c.started.load(Ordering::Relaxed))
++                .collect();
++            for (r, msg) in msgs {
++                let unchanged = (r.y..r.y + r.h).all(|y| {
++                    (r.x..r.x + r.w).all(|x| state.1[y * shared.cols + x] <= round.seq)
++                });
++                match msg {
++                    Some(m) if caught_up && unchanged => {
++                        hub.stats.patch_bytes.fetch_add(m.len() as u64, Ordering::Relaxed);
++                        for c in &clients {
++                            c.send(Out::Bin(m.clone()));
++                        }
++                    }
++                    _ => {
++                        let _ = retry.send(r);
++                    }
++                }
++            }
++            hub.stats.patches.fetch_add(1, Ordering::Relaxed);
++        }
++        busy.store(false, Ordering::Release);
++        hub.wake();
++    }
++}
++
++/// A patch message: the rectangle's pixels as an RGB PNG.
++fn encode(x: usize, y: usize, w: usize, h: usize, rgb: &[u8]) -> Option<Bytes> {
++    let mut out = vec![0u8; PATCH_HEADER];
++    out[0] = PATCH;
++    for (i, v) in [x, y, w, h].into_iter().enumerate() {
++        out[2 + i * 2..4 + i * 2].copy_from_slice(&(v as u16).to_be_bytes());
++    }
++    let mut enc = png::Encoder::new(&mut out, w as u32, h as u32);
++    enc.set_color(png::ColorType::Rgb);
++    enc.set_depth(png::BitDepth::Eight);
++    enc.set_compression(png::Compression::Fast);
++    let mut wr = enc.write_header().ok()?;
++    wr.write_image_data(rgb).ok()?;
++    wr.finish().ok()?;
++    Some(Bytes::from(out))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn rects_join_rows_of_the_same_span() {
++        let map = [
++            0, 1, 1, 0, //
++            0, 1, 1, 0, //
++            1, 0, 0, 1, //
++        ];
++        let r = rects(&map, 4);
++        let spans: Vec<_> = r.iter().map(|b| (b.x, b.y, b.w, b.h)).collect();
++        assert_eq!(spans, vec![(1, 0, 2, 2), (0, 2, 1, 1), (3, 2, 1, 1)]);
++    }
++}
+diff --git a/src/video.rs b/src/video.rs
+index 50af6dc..2c61b90 100644
+--- a/src/video.rs
++++ b/src/video.rs
+@@ -27,6 +27,8 @@ pub struct VideoConfig {
+     pub coalesce: Duration,
+     pub stripes: u32,
+     pub adaptive_threads: bool,
++    /// Send blocks still this long losslessly (lossless.rs); 0: off.
++    pub lossless_still_ms: u32,
+ }
+ 
+ struct Job {
+@@ -42,6 +44,9 @@ struct Job {
+     mb_dirty: Option<Arc<Vec<u8>>>,
+     captured_at: Instant,
+     marker_ms: i64,
++    /// Capture sequence number (lossless.rs), and the blocks this capture changed (None: all).
++    seq: u32,
++    damage: Option<Arc<Vec<u8>>>,
+ }
+ 
+ fn union(a: Option<Band>, b: Band) -> Band {
+@@ -60,6 +65,7 @@ struct Pipeline {
+     job_tx: mpsc::SyncSender<Job>,
+     ret_rx: mpsc::Receiver<(usize, Box<I420>)>,
+     encode: std::thread::JoinHandle<()>,
++    lossless: Option<crate::lossless::Tracker>,
+ }
+ 
+ /// Runs the pipeline. With a `Screen` (dynamic resolution), a client's size request
+@@ -82,8 +88,9 @@ pub fn spawn(
+                 job_tx,
+                 ret_rx,
+                 encode,
++                lossless,
+             } = p;
+-            if let Err(e) = capture_loop(&mut cap, cfg.clone(), hub.clone(), job_tx, ret_rx) {
++            if let Err(e) = capture_loop(&mut cap, cfg.clone(), hub.clone(), job_tx, ret_rx, lossless) {
+                 #[cfg(target_os = "linux")]
+                 let resized = cap.geometry_changed();
+                 #[cfg(not(target_os = "linux"))]
+@@ -167,9 +174,13 @@ fn build(cfg: &VideoConfig, hub: &Arc<Hub>) -> Result<Pipeline, String> {
+     *hub.stripes.lock() = layout;
+     let hub2 = hub.clone();
+     let (crf, po_crf) = (cfg.crf, cfg.paintover_crf);
++    let lossless = (cfg.lossless_still_ms > 0).then(|| {
++        crate::lossless::Tracker::new(w as usize, h as usize, cfg.lossless_still_ms, hub.clone())
++    });
++    let shared = lossless.as_ref().map(|l| l.shared.clone());
+     let encode = std::thread::Builder::new()
+         .name("encode".into())
+-        .spawn(move || encode_loop(stripes, job_rx, ret_tx, hub2, crf, po_crf))
++        .spawn(move || encode_loop(stripes, job_rx, ret_tx, hub2, crf, po_crf, shared))
+         .unwrap();
+     // New geometry (and a keyframe) for clients already connected; no-op at startup.
+     hub.restart_clients();
+@@ -178,6 +189,7 @@ fn build(cfg: &VideoConfig, hub: &Arc<Hub>) -> Result<Pipeline, String> {
+         job_tx,
+         ret_rx,
+         encode,
++        lossless,
+     })
+ }
+ 
+@@ -462,6 +474,7 @@ fn capture_loop(
+     hub: Arc<Hub>,
+     job_tx: mpsc::SyncSender<Job>,
+     ret_rx: mpsc::Receiver<(usize, Box<I420>)>,
++    mut lossless: Option<crate::lossless::Tracker>,
+ ) -> Result<(), String> {
+     let (w, h) = (cap.width as usize, cap.height as usize);
+     let mut pool: Vec<Option<Box<I420>>> = vec![
+@@ -530,6 +543,14 @@ fn capture_loop(
+         let want_key = clients
+             .iter()
+             .any(|c| c.needs_keyframe.load(Ordering::Relaxed));
++        if let Some(l) = lossless.as_mut() {
++            if want_key {
++                l.mark(None);
++            }
++            if let Some((px, stride)) = cap.bgrx() {
++                l.tick(px, stride);
++            }
++        }
+         if !had_clients {
+             had_clients = true;
+             // Our shm copy may be stale: re-grab everything once.
+@@ -548,6 +569,10 @@ fn capture_loop(
+                     .saturating_sub(last_motion.elapsed().as_millis() as u64) as i32
+                     + 1
+             };
++            let timeout = match lossless.as_ref().and_then(|l| l.next_due_ms()) {
++                Some(d) => timeout.min(d as i32 + 1),
++                None => timeout,
++            };
+             wait_any(&[cap.fd(), hub.waker.waitable()], timeout);
+             continue;
+         }
+@@ -601,6 +626,8 @@ fn capture_loop(
+             Some(m) => refiner.mark(m),
+             None => refiner.mark_all(),
+         }
++        // What this capture changed, for lossless patches (before refinement adds to the map).
++        let damage = mb_dirty.clone().map(Arc::new);
+         if cap.damaged {
+             band = cap.take_damage()?;
+             if let Some(b) = band {
+@@ -664,7 +691,12 @@ fn capture_loop(
+             last_motion = Instant::now();
+             paintover_left = cfg.paintover_burst;
+             // Piggyback sharpening of blocks that have gone still on this frame.
+-            refine = if want_key { None } else { refiner.due() };
++            // Lossless patches sharpen still blocks instead.
++            refine = if want_key || lossless.is_some() {
++                None
++            } else {
++                refiner.due()
++            };
+             refine.is_some()
+         } else if paintover_due {
+             paintover_left -= 1;
+@@ -711,6 +743,14 @@ fn capture_loop(
+         };
+         last_capture = t0;
+         next_idx = 1 - idx;
++        let damage = if want_key { None } else { damage };
++        let seq = match lossless.as_mut() {
++            Some(l) => {
++                l.mark(damage.as_deref().map(|d| d.as_slice()));
++                l.shared.capture(damage.as_deref().map(|d| d.as_slice()))
++            }
++            None => 0,
++        };
+         if job_tx
+             .send(Job {
+                 buf,
+@@ -722,6 +762,8 @@ fn capture_loop(
+                 band,
+                 captured_at: origin,
+                 marker_ms,
++                seq,
++                damage,
+             })
+             .is_err()
+         {
+@@ -986,7 +1028,17 @@ fn encode_loop(
+     hub: Arc<Hub>,
+     crf: f32,
+     po_crf: f32,
++    lossless: Option<Arc<crate::lossless::Shared>>,
+ ) {
++    /// Notes each job as sent once the loop is done with it, for lossless patches' ordering.
++    struct Sent<'a>(&'a Option<Arc<crate::lossless::Shared>>, u32);
++    impl Drop for Sent<'_> {
++        fn drop(&mut self) {
++            if let Some(l) = self.0 {
++                l.sent.store(self.1, Ordering::Release);
++            }
++        }
++    }
+     let epoch = Instant::now();
+     let mut frame_id: u32 = 0;
+     let n = stripes_in.len();
+@@ -1009,6 +1061,7 @@ fn encode_loop(
+         })
+         .collect();
+     while let Ok(job) = rx.recv() {
++        let _sent = Sent(&lossless, job.seq);
+         let t0 = Instant::now();
+         let selected: Vec<bool> = stripes
+             .iter()
+@@ -1114,6 +1167,9 @@ fn encode_loop(
+                 Bytes::from(out)
+             })
+             .collect();
++        let damage = lossless
++            .as_ref()
++            .map(|l| l.damage(frame_id, job.damage.as_deref().map(|d| d.as_slice())));
+         let now = Instant::now();
+         for c in hub.video_clients() {
+             if !c.started.load(Ordering::Relaxed) {
+@@ -1137,6 +1193,9 @@ fn encode_loop(
+                     bytes: total,
+                 });
+             }
++            if let Some(d) = &damage {
++                c.send(Out::Bin(d.clone()));
++            }
+             for m in &msgs {
+                 c.send(Out::Bin(m.clone()));
+             }
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brandon Snider <brandon@snider.so>
+Date: Wed, 4 Nov 2026 18:09:29 -0800
+Subject: [PATCH 3/4] Rate control: congestion is a standing queue, the least
+ ack delay over 500 ms, not an average Wi-Fi bursts fill
+
+---
+ src/hub.rs   | 36 ++++++++++++++++++++++++++++--------
+ src/video.rs |  3 ++-
+ 2 files changed, 30 insertions(+), 9 deletions(-)
+
+diff --git a/src/hub.rs b/src/hub.rs
+index 53231cc..15aaa39 100644
+--- a/src/hub.rs
++++ b/src/hub.rs
+@@ -5,7 +5,7 @@ use parking_lot::Mutex;
+ use std::collections::VecDeque;
+ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+ use std::sync::Arc;
+-use std::time::Instant;
++use std::time::{Duration, Instant};
+ use tokio::sync::mpsc;
+ 
+ pub enum Out {
+@@ -36,11 +36,29 @@ pub struct Client {
+ }
+ 
+ /// Send->ack delay tracking: `base` is the (slowly expiring) minimum, the excess over
+-/// it is queueing somewhere on the path (network buffers or a slow decoder).
++/// it is queueing somewhere on the path (network buffers or a slow decoder). `queue_ms` is
++/// the least excess of the last `STANDING`, a queue that stands: Wi-Fi and other bursty
++/// links delay some acks by hundreds of milliseconds and deliver the rest at once, which an
++/// average reads as congestion (57% of a Mac's acks on Wi-Fi), where a queue the stream
++/// itself built keeps every ack late.
+ pub struct DelayEst {
+     pub base_ms: f64,
+     pub base_at: Instant,
+     pub queue_ms: f64,
++    recent: VecDeque<(Instant, f64)>,
++}
++
++const STANDING: Duration = Duration::from_millis(500);
++
++impl DelayEst {
++    pub fn new() -> Self {
++        DelayEst {
++            base_ms: f64::MAX,
++            base_at: Instant::now(),
++            queue_ms: 0.0,
++            recent: VecDeque::new(),
++        }
++    }
+ }
+ 
+ pub struct RateEst {
+@@ -77,7 +95,13 @@ impl Client {
+                 e.base_at = Instant::now();
+             }
+             let qd = ms - e.base_ms;
+-            e.queue_ms = e.queue_ms * 0.7 + qd * 0.3;
++            let now = Instant::now();
++            e.recent.push_back((now, qd));
++            while e.recent.front().is_some_and(|&(at, _)| now - at > STANDING) {
++                e.recent.pop_front();
++            }
++            e.queue_ms = e.recent.iter().map(|&(_, q)| q).fold(f64::MAX, f64::min);
++            log::trace!(target: "voxl::ack", "{} {:.1} {:.1} {:.1}", self.id, ms, e.base_ms, e.queue_ms);
+         }
+         let mut d = self.delivered.lock();
+         d.bytes += acked;
+@@ -310,11 +334,7 @@ impl Hub {
+             }),
+             needs_keyframe: AtomicBool::new(true),
+             started: AtomicBool::new(false),
+-            delay: Mutex::new(DelayEst {
+-                base_ms: f64::MAX,
+-                base_at: Instant::now(),
+-                queue_ms: 0.0,
+-            }),
++            delay: Mutex::new(DelayEst::new()),
+         });
+         self.clients.lock().push(c.clone());
+         c
+diff --git a/src/video.rs b/src/video.rs
+index 2c61b90..f280e5c 100644
+--- a/src/video.rs
++++ b/src/video.rs
+@@ -281,7 +281,8 @@ impl RateCtl {
+                 0 => 40,
+                 r => r,
+             } as f64;
+-            if q > 30.0 || age as f64 > rtt + 80.0 {
++            // A frame unacknowledged for long is a backlog too, past what a burst explains.
++            if q > 30.0 || age as f64 > (rtt * 3.0).max(500.0) {
+                 congested = true;
+                 let r = c.delivered.lock().rate_bps / 1000.0;
+                 if r > 0.0 {
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brandon Snider <brandon@snider.so>
+Date: Wed, 4 Nov 2026 18:09:29 -0800
+Subject: [PATCH 4/4] voxl's page: a WebGL 2 renderer that draws lossless parts
+ and damage, 1:1 or Lanczos, at the desktop's density; its icon only the one
+ --favicon names, linked with its type, and nothing of voxl's or Tembo's a
+ viewer sees
+
+---
+ src/lib.rs                   |   6 +-
+ src/server.rs                |  27 +--
+ web/index.html               |   8 +-
+ web/src/client/app.ts        |   2 +
+ web/src/client/main.ts       |  41 +++--
+ web/src/client/video.ts      | 139 ++++++---------
+ web/src/protocol.ts          |  16 ++
+ web/src/render.ts            | 332 +++++++++++++++++++++++++++++++++++
+ web/src/types/dom-extra.d.ts |   1 +
+ web/src/worker.ts            | 136 ++++++++++++--
+ 10 files changed, 580 insertions(+), 128 deletions(-)
+ create mode 100644 web/src/render.ts
+
+diff --git a/src/lib.rs b/src/lib.rs
+index b6545ed..172a844 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -346,7 +346,7 @@ async fn serve(a: HashMap<String, String>) {
+             extra.insert("bare".into(), true.into());
+         }
+     }
+-    // --favicon: the tab's icon (default: voxl's own).
++    // --favicon: the tab's icon (default: none, the browser's own).
+     let (favicon, favicon_type) = server::favicon(a.get("favicon").map(|s| s.as_str()))
+         .unwrap_or_else(|e| {
+             log::error!("{e}");
+@@ -370,8 +370,8 @@ async fn serve(a: HashMap<String, String>) {
+         ),
+         // --title: the browser tab's title.
+         index: server::index_html(
+-            a.get("title")
+-                .map_or("Voxl Computer Stream", |t| t.as_str()),
++            a.get("title").map_or("Desktop", |t| t.as_str()),
++            (!favicon.is_empty()).then_some(favicon_type),
+         ),
+         favicon,
+         favicon_type,
+diff --git a/src/server.rs b/src/server.rs
+index 11346e8..e48f8f5 100644
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -4,7 +4,7 @@ use crate::hub::{Client, Hub, Out};
+ use crate::input::InputEvent;
+ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+ use axum::extract::State;
+-use axum::http::header;
++use axum::http::{header, StatusCode};
+ use axum::response::{IntoResponse, Response};
+ use axum::routing::get;
+ use axum::Router;
+@@ -40,7 +40,8 @@ pub struct AppState {
+ 
+ /// The web client's page, titled `title` (--title): the browser tab, and the name of
+ /// the app if a viewer installs it.
+-pub fn index_html(title: &str) -> Bytes {
++/// The page, titled `title`, its icon linked where --favicon gives one, of type `icon`.
++pub fn index_html(title: &str, icon: Option<&str>) -> Bytes {
+     let mut escaped = String::with_capacity(title.len());
+     for c in title.chars() {
+         match c {
+@@ -61,6 +62,12 @@ pub fn index_html(title: &str) -> Bytes {
+     Bytes::from(
+         include_str!("../web/index.html")
+             .replace("{{title}}", &escaped)
++            .replace(
++                "{{icon}}",
++                &icon.map_or(String::new(), |t| {
++                    format!("<link rel=\"icon\" href=\"favicon.ico\" type=\"{t}\" />")
++                }),
++            )
+             .replace("src=\"client.js\"", &format!("src=\"client.js?v={build:016x}\"")),
+     )
+ }
+@@ -70,13 +77,11 @@ const BUNDLES: [&[u8]; 2] = [
+     include_bytes!(concat!(env!("OUT_DIR"), "/web/worker.js")),
+ ];
+ 
+-/// The page's icon (--favicon): that file's bytes and content type, or voxl's own icon.
++/// The page's icon (--favicon): that file's bytes and content type, or none, so the page shows
++/// the browser's own.
+ pub fn favicon(path: Option<&str>) -> Result<(Bytes, &'static str), String> {
+     let Some(path) = path else {
+-        return Ok((
+-            Bytes::from_static(include_bytes!("../web/favicon.ico")),
+-            "image/x-icon",
+-        ));
++        return Ok((Bytes::new(), "image/x-icon"));
+     };
+     let ctype = match Path::new(path)
+         .extension()
+@@ -100,6 +105,9 @@ pub fn favicon(path: Option<&str>) -> Result<(Bytes, &'static str), String> {
+ }
+ 
+ async fn favicon_route(State(s): State<AppState>) -> Response {
++    if s.favicon.is_empty() {
++        return StatusCode::NOT_FOUND.into_response();
++    }
+     (
+         [
+             (header::CONTENT_TYPE, s.favicon_type),
+@@ -530,9 +538,8 @@ mod tests {
+ 
+     #[test]
+     fn favicon_uses_file_extension_for_content_type() {
+-        let (bytes, content_type) = favicon(None).unwrap();
+-        assert_eq!(content_type, "image/x-icon");
+-        assert!(!bytes.is_empty());
++        let (bytes, _) = favicon(None).unwrap();
++        assert!(bytes.is_empty());
+ 
+         let dir = std::env::temp_dir().join(format!("voxl-favicon-{}", std::process::id()));
+         std::fs::create_dir_all(&dir).unwrap();
+diff --git a/web/index.html b/web/index.html
+index 0f87033..7ecc2c6 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -8,7 +8,7 @@
+ 		<!-- The server fills in the title (index_html in src/server.rs). -->
+ 		<meta name="application-name" content="{{title}}" />
+ 		<meta name="apple-mobile-web-app-title" content="{{title}}" />
+-		<link rel="icon" href="favicon.ico" />
++		{{icon}}
+ 		<link
+ 			rel="preload"
+ 			href="inter.woff2"
+@@ -17,7 +17,7 @@
+ 			crossorigin />
+ 		<title>{{title}}</title>
+ 		<style>
+-			/* Inter (latin subset of the variable font), as used by the Tembo app. */
++			/* Inter (latin subset of the variable font). */
+ 			@font-face {
+ 				font-family: 'Inter';
+ 				src: url(inter.woff2) format('woff2');
+@@ -25,7 +25,7 @@
+ 				font-style: normal;
+ 				font-display: swap;
+ 			}
+-			/* Dark theme tokens from the Tembo UI package (packages/ui/src/styles/globals.css). */
++			/* Dark theme tokens. */
+ 			:root {
+ 				--surface-raised: #212121;
+ 				--surface-secondary: #383838;
+@@ -77,7 +77,7 @@
+ 				-webkit-font-smoothing: antialiased;
+ 			}
+ 			#surface {
+-				position: relative;
++				position: absolute;
+ 				outline: none;
+ 				touch-action: none;
+ 			}
+diff --git a/web/src/client/app.ts b/web/src/client/app.ts
+index 429f035..4bb0bea 100644
+--- a/web/src/client/app.ts
++++ b/web/src/client/app.ts
+@@ -22,6 +22,8 @@ export interface App {
+ 	desk: { w: number; h: number };
+ 	/** On-screen CSS pixels per desktop pixel. */
+ 	view: { scale: number };
++	/** Desktop pixels per point, from the server's hello. */
++	density: number;
+ }
+ 
+ export function el<T extends HTMLElement = HTMLElement>(id: string): T {
+diff --git a/web/src/client/main.ts b/web/src/client/main.ts
+index 2f3c5cc..1d4f605 100644
+--- a/web/src/client/main.ts
++++ b/web/src/client/main.ts
+@@ -40,7 +40,7 @@ function main() {
+ 	// plain HTTP from another machine can't decode the stream whatever the browser.
+ 	if (!window.isSecureContext) {
+ 		statusEl.textContent =
+-			'voxl needs HTTPS or localhost: browsers only decode video on secure pages. Serve it over HTTPS, or forward the port and open localhost.';
++			'This page needs HTTPS: browsers decode video only on secure pages.';
+ 		return;
+ 	}
+ 	if (!('VideoDecoder' in window) || !canvas.transferControlToOffscreen) {
+@@ -52,7 +52,14 @@ function main() {
+ 	const wsUrl = new URL('ws', location.href);
+ 	wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+ 	wsUrl.search = location.search;
+-	const worker = new Worker('worker.js' + location.search);
++	// This build's worker, by the version the page's script was loaded with (server.rs).
++	const build = new URL(
++		(document.currentScript as HTMLScriptElement).src
++	).searchParams.get('v');
++	const workerUrl = new URL('worker.js', location.href);
++	workerUrl.search = location.search;
++	if (build) workerUrl.searchParams.set('v', build);
++	const worker = new Worker(workerUrl.href);
+ 	const post = (m: ToWorker, transfer: Transferable[] = []) =>
+ 		worker.postMessage(m, transfer);
+ 	const app: App = {
+@@ -78,13 +85,11 @@ function main() {
+ 		inIframe: window !== window.top,
+ 		desk: { w: 0, h: 0 },
+ 		view: { scale: 1 },
++		density: 1,
+ 	};
+ 
+ 	const cursor = createCursor(app);
+-	const useVideo =
+-		params.get('present') !== 'canvas' &&
+-		typeof MediaStreamTrackGenerator !== 'undefined';
+-	const video = createVideo(app, canvas, useVideo, cursor.apply);
++	const video = createVideo(app, canvas, cursor.apply);
+ 	const clipboard = createClipboard(app);
+ 	const audio = createAudio(app);
+ 	// Browsers only allow audio and clipboard writes after a user gesture.
+@@ -101,7 +106,7 @@ function main() {
+ 
+ 	const offscreen = canvas.transferControlToOffscreen();
+ 	post(
+-		{ t: 'init', canvas: offscreen, url: wsUrl.href, presentToMain: useVideo },
++		{ t: 'init', canvas: offscreen, url: wsUrl.href, presentToMain: false },
+ 		[offscreen]
+ 	);
+ 
+@@ -128,16 +133,17 @@ function main() {
+ 	worker.addEventListener('message', (e: MessageEvent<FromWorker>) => {
+ 		const m = e.data;
+ 		switch (m.t) {
+-			case 'frames':
+-				video.present(m.parts);
+-				break;
+ 			case 'hello':
+ 				app.desk.w = m.w;
+ 				app.desk.h = m.h;
++				app.density = m.density || 1;
++				if (m.bare) {
++					app.tools.style.display = 'none';
++					statusEl.style.visibility = 'hidden';
++				}
+ 				app.remoteMac = m.os === 'macos';
+ 				app.readOnly = !!m.readOnly;
+ 				app.tools.classList.toggle('read-only', app.readOnly);
+-				video.build(m.stripes && m.stripes.length ? m.stripes : [[0, m.h]]);
+ 				video.layout();
+ 				files.setup(m.files);
+ 				mic.setup(!!m.mic && !app.readOnly);
+@@ -177,9 +183,22 @@ function main() {
+ 			case 'log':
+ 				console.warn('[voxl]', m.s);
+ 				break;
++			case 'grabbed':
++				grabbed?.(m);
++				grabbed = null;
++				break;
+ 		}
+ 	});
+ 
++	// The screen's pixels as drawn, for checking them against the desktop's.
++	let grabbed: ((m: { w: number; h: number; px: ArrayBuffer }) => void) | null =
++		null;
++	window.voxlGrab = () =>
++		new Promise((resolve) => {
++			grabbed = resolve;
++			post({ t: 'grab' });
++		});
++
+ 	// Autoplay may be allowed (iframe allow="autoplay"); try right away.
+ 	audio.start();
+ }
+diff --git a/web/src/client/video.ts b/web/src/client/video.ts
+index 5acb668..d6c3b17 100644
+--- a/web/src/client/video.ts
++++ b/web/src/client/video.ts
+@@ -1,106 +1,67 @@
+-// Presenting decoded frames and fitting the desktop to the window.
+-import type { Stripe, StripeFrame } from '../protocol';
++// Fitting the desktop to the window. The worker draws the screen at the canvas's device
++// pixels (render.ts), so the canvas is sized and placed on whole device pixels: at one
++// desktop point per CSS pixel where the window has room (the desktop's own pixels, or
++// whole multiples of them), else as large as fits.
+ import type { App } from './app';
+ 
+-interface StripeOut {
+-	video: HTMLVideoElement;
+-	writer: WritableStreamDefaultWriter<VideoFrame>;
+-	writing: boolean;
+-	next: VideoFrame | null;
+-}
+-
+-/**
+- * Prefer handing decoded frames to a <video> via MediaStreamTrackGenerator: the
+- * compositor scans YUV out directly instead of rasterizing into a 2D canvas. One
+- * <video> per encoded stripe, stacked; the worker hands over every stripe of a frame
+- * in one message so they are written to their tracks together.
+- */
+-// At most one write in flight per track; a newer frame replaces a waiting one.
+-function write(o: StripeOut, frame: VideoFrame) {
+-	if (o.writing) {
+-		o.next?.close();
+-		o.next = frame;
+-		return;
+-	}
+-	o.writing = true;
+-	o.writer
+-		.write(frame)
+-		.catch(() => {})
+-		.finally(() => {
+-			o.writing = false;
+-			const next = o.next;
+-			if (next) {
+-				o.next = null;
+-				write(o, next);
+-			}
+-		});
+-}
+-
+-const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+-
+ export function createVideo(
+ 	app: App,
+ 	canvas: HTMLCanvasElement,
+-	useVideo: boolean,
+ 	onLayout: () => void
+ ) {
+-	let outs: StripeOut[] = [];
+-	let stripes: Stripe[] = [[0, 1]];
+-	if (useVideo) canvas.style.display = 'none';
+-
+-	function build(list: Stripe[]) {
+-		stripes = list;
+-		for (const o of outs) o.video.remove();
+-		outs = [];
+-		if (!useVideo) return;
+-		for (const [y, h] of list) {
+-			const gen = new MediaStreamTrackGenerator({ kind: 'video' });
+-			const video = document.createElement('video');
+-			video.className = 'stripe';
+-			video.muted = true;
+-			video.autoplay = true;
+-			video.playsInline = true;
+-			video.disablePictureInPicture = true;
+-			video.style.top = `${(y / app.desk.h) * 100}%`;
+-			video.style.height = `${(h / app.desk.h) * 100}%`;
+-			video.srcObject = new MediaStream([gen]);
+-			app.surface.appendChild(video);
+-			video.play().catch(() => {});
+-			outs.push({
+-				video,
+-				writer: gen.writable.getWriter(),
+-				writing: false,
+-				next: null,
+-			});
+-		}
+-	}
+-
+-	function present(parts: StripeFrame[]) {
+-		for (const p of parts) {
+-			const o = outs[p.i];
+-			if (o) write(o, p.frame);
+-			else p.frame.close();
+-		}
++	let posted = '';
++	function post(w: number, h: number) {
++		const key = `${w}x${h}`;
++		if (key === posted) return;
++		posted = key;
++		app.post({ t: 'view', w, h });
+ 	}
+ 
+ 	function layout() {
+ 		const { w: dw, h: dh } = app.desk;
+ 		if (!dw) return;
+-		const vw = window.innerWidth,
+-			vh = window.innerHeight;
+ 		const dpr = window.devicePixelRatio || 1;
+-		// Snap the height so every stripe boundary lands on a whole device pixel;
+-		// otherwise the stacked stripe layers show hairline seams.
+-		const q = dh / stripes.reduce((g, [y]) => gcd(g, y), dh);
+-		const devH = Math.max(
+-			q,
+-			Math.floor(((Math.min(vw / dw, vh / dh) || 1) * dh * dpr) / q) * q
+-		);
+-		app.view.scale = devH / dpr / dh;
+-		app.surface.style.width = `${dw * app.view.scale}px`;
+-		app.surface.style.height = `${dh * app.view.scale}px`;
++		// Device pixels: the window, and per desktop pixel at one point per CSS pixel.
++		const vw = Math.floor(window.innerWidth * dpr),
++			vh = Math.floor(window.innerHeight * dpr);
++		const natural = dpr / (app.density || 1);
++		const fits = Math.min(vw / dw, vh / dh);
++		let s = Math.min(natural, fits);
++		// Nearly a whole multiple of the desktop's pixels: exactly that, a little smaller.
++		if (s >= 1 && s - Math.floor(s) < 0.06) s = Math.floor(s);
++		const w = Math.max(1, Math.round(dw * s)),
++			h = Math.max(1, Math.round(dh * s));
++		const x = Math.floor((vw - w) / 2),
++			y = Math.floor((vh - h) / 2);
++		const st = app.surface.style;
++		st.left = `${x / dpr}px`;
++		st.top = `${y / dpr}px`;
++		st.width = `${w / dpr}px`;
++		st.height = `${h / dpr}px`;
++		app.view.scale = w / dpr / dw;
++		post(w, h);
+ 		onLayout();
+ 	}
+ 
+-	return { build, present, layout };
++	// The canvas's size in device pixels as the browser lays it out, where it says.
++	try {
++		new ResizeObserver((entries) => {
++			const box = entries[0]?.devicePixelContentBoxSize?.[0];
++			if (box) post(box.inlineSize, box.blockSize);
++		}).observe(canvas, { box: 'device-pixel-content-box' });
++	} catch {}
++	// Moving to a screen of another density.
++	let mq: MediaQueryList | null = null;
++	const watchDensity = () => {
++		mq?.removeEventListener('change', onDensity);
++		mq = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
++		mq.addEventListener('change', onDensity);
++	};
++	function onDensity() {
++		watchDensity();
++		layout();
++	}
++	watchDensity();
++
++	return { layout };
+ }
+diff --git a/web/src/protocol.ts b/web/src/protocol.ts
+index 1c62231..9a620b2 100644
+--- a/web/src/protocol.ts
++++ b/web/src/protocol.ts
+@@ -13,6 +13,11 @@ export const Bin = {
+ 	Cursor: 0x03,
+ 	/** Server: clipboard image (PNG). */
+ 	ClipImage: 0x04,
++	/** Server: lossless patch: x, y, w, h (u16 each, after a reserved byte), then a PNG. */
++	Patch: 0x05,
++	/** Server: the rectangles the next frame changed: flags (1 = all), frame (u32),
++	 * count (u16), then count x, y, w, h (u16 each). */
++	Damage: 0x06,
+ 	/** Client: clipboard image (PNG). */
+ 	ClipImageUp: 0x11,
+ 	/** Client: microphone Opus packet. */
+@@ -45,6 +50,12 @@ export interface Hello {
+ 	readOnly?: boolean;
+ 	/** Dynamic resolution: desktop pixels per CSS pixel of the viewer's window. */
+ 	resize?: { scale: number };
++	/** Lossless patches and damage messages come with the frames. */
++	lossless?: boolean;
++	/** Desktop pixels per point: the page shows one point per CSS pixel where it fits. */
++	density?: number;
++	/** Shows the screen alone: no toolbar, no status text. */
++	bare?: boolean;
+ }
+ 
+ /** JSON text messages from the server. */
+@@ -125,6 +136,7 @@ export type FromWorker =
+ 	| { t: 'cursor'; buf: ArrayBuffer }
+ 	| { t: 'clipImage'; buf: ArrayBuffer }
+ 	| { t: 'log'; s: string }
++	| { t: 'grabbed'; w: number; h: number; px: ArrayBuffer }
+ 	| Stats
+ 	| Exclude<ServerMessage, { t: 'ping' } | { t: 'close' }>;
+ 
+@@ -134,6 +146,10 @@ export type ToWorker =
+ 	| { t: 'send'; d: string }
+ 	| { t: 'sendBin'; d: ArrayBuffer }
+ 	| { t: 'video'; on: boolean }
++	/** The canvas's size in device pixels. */
++	| { t: 'view'; w: number; h: number }
++	/** Send back the screen's pixels (`grabbed`). */
++	| { t: 'grab' }
+ 	| { t: 'audioPort'; port: MessagePort };
+ 
+ /** Worker -> desktop audio worklet: one decoded chunk, planar. */
+diff --git a/web/src/render.ts b/web/src/render.ts
+new file mode 100644
+index 0000000..1010933
+--- /dev/null
++++ b/web/src/render.ts
+@@ -0,0 +1,332 @@
++// The screen as the worker draws it with WebGL2: a texture of the desktop at its own
++// size, which decoded frames are copied into where they changed and lossless patches
++// are written into, drawn onto the canvas at the view's device pixels: pixel for pixel
++// at whole multiples, else through a separable Lanczos-3 filter, which keeps text edges
++// that the browser's bilinear scaling of a <video> or canvas would blur.
++
++export interface Rect {
++	x: number;
++	y: number;
++	w: number;
++	h: number;
++}
++
++const QUAD = `#version 300 es
++in vec2 p;
++void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
++
++// Frame rows and patch rows go into the texture top row first, as the desktop's: the
++// texture's row y is the desktop's row y, and a pass into it writes row y at
++// gl_FragCoord.y = y + 0.5. Only the canvas, whose row 0 is its bottom, is flipped.
++const COPY = `#version 300 es
++precision highp float;
++uniform highp sampler2D src;
++uniform ivec2 at;
++out vec4 color;
++void main() { color = texelFetch(src, ivec2(gl_FragCoord.xy) - at, 0); }`;
++
++const WHOLE = `#version 300 es
++precision highp float;
++uniform highp sampler2D src;
++uniform int k;
++uniform int rows;
++out vec4 color;
++void main() {
++	ivec2 o = ivec2(gl_FragCoord.xy);
++	color = texelFetch(src, ivec2(o.x / k, (rows - 1 - o.y) / k), 0);
++}`;
++
++// One axis of Lanczos-3: an output pixel at o reads the source around (o + 0.5) / scale
++// - 0.5, its kernel widened by 1 / scale when shrinking so every source pixel counts.
++const LANCZOS = `#version 300 es
++precision highp float;
++uniform highp sampler2D src;
++uniform float scale;
++uniform int vertical;
++uniform int rows;
++uniform int last;
++out vec4 color;
++float lanczos(float x) {
++	x = abs(x);
++	if (x < 1e-5) return 1.0;
++	if (x >= 3.0) return 0.0;
++	float p = 3.14159265 * x;
++	return 3.0 * sin(p) * sin(p / 3.0) / (p * p);
++}
++void main() {
++	ivec2 o = ivec2(gl_FragCoord.xy);
++	if (vertical == 1) o.y = rows - 1 - o.y;
++	float c = (float(vertical == 1 ? o.y : o.x) + 0.5) / scale - 0.5;
++	float shrink = min(scale, 1.0);
++	float reach = 3.0 / shrink;
++	int i0 = int(floor(c - reach)) + 1;
++	int i1 = int(floor(c + reach));
++	vec4 sum = vec4(0.0);
++	float wsum = 0.0;
++	for (int i = i0; i <= i1; i++) {
++		float w = lanczos((float(i) - c) * shrink);
++		int j = clamp(i, 0, last);
++		sum += w * texelFetch(src, vertical == 1 ? ivec2(o.x, j) : ivec2(j, o.y), 0);
++		wsum += w;
++	}
++	color = clamp(sum / wsum, 0.0, 1.0);
++}`;
++
++type Program = {
++	p: WebGLProgram;
++	u: Record<string, WebGLUniformLocation | null>;
++};
++
++export class Renderer {
++	private gl: WebGL2RenderingContext;
++	private copy: Program;
++	private whole: Program;
++	private lanczos: Program;
++	private quad: WebGLBuffer;
++	private rects: WebGLBuffer;
++	private screen: WebGLTexture | null = null;
++	private screenFb: WebGLFramebuffer | null = null;
++	private frameTex: WebGLTexture;
++	private between: WebGLTexture | null = null;
++	private betweenFb: WebGLFramebuffer | null = null;
++	private betweenSize = [0, 0];
++	private floatTargets: boolean;
++	private src = [0, 0];
++	private view = [0, 0];
++
++	static create(canvas: OffscreenCanvas): Renderer | null {
++		const gl = canvas.getContext('webgl2', {
++			alpha: false,
++			antialias: false,
++			depth: false,
++			stencil: false,
++			premultipliedAlpha: false,
++			preserveDrawingBuffer: false,
++			desynchronized: true,
++		}) as WebGL2RenderingContext | null;
++		return gl ? new Renderer(gl, canvas) : null;
++	}
++
++	private constructor(
++		gl: WebGL2RenderingContext,
++		private canvas: OffscreenCanvas
++	) {
++		this.gl = gl;
++		this.floatTargets = !!gl.getExtension('EXT_color_buffer_float');
++		this.copy = this.program(COPY, ['src', 'at']);
++		this.whole = this.program(WHOLE, ['src', 'k', 'rows']);
++		this.lanczos = this.program(LANCZOS, [
++			'src',
++			'scale',
++			'vertical',
++			'rows',
++			'last',
++		]);
++		this.quad = gl.createBuffer()!;
++		gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
++		gl.bufferData(
++			gl.ARRAY_BUFFER,
++			new Float32Array([-1, -1, 3, -1, -1, 3]),
++			gl.STATIC_DRAW
++		);
++		this.rects = gl.createBuffer()!;
++		this.frameTex = this.texture();
++		gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
++		gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
++		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
++		gl.disable(gl.BLEND);
++		gl.disable(gl.DEPTH_TEST);
++	}
++
++	private program(fragment: string, uniforms: string[]): Program {
++		const gl = this.gl;
++		const p = gl.createProgram()!;
++		for (const [type, src] of [
++			[gl.VERTEX_SHADER, QUAD],
++			[gl.FRAGMENT_SHADER, fragment],
++		] as const) {
++			const s = gl.createShader(type)!;
++			gl.shaderSource(s, src);
++			gl.compileShader(s);
++			if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
++				throw new Error('shader: ' + gl.getShaderInfoLog(s));
++			gl.attachShader(p, s);
++		}
++		gl.bindAttribLocation(p, 0, 'p');
++		gl.linkProgram(p);
++		if (!gl.getProgramParameter(p, gl.LINK_STATUS))
++			throw new Error('program: ' + gl.getProgramInfoLog(p));
++		const u: Program['u'] = {};
++		for (const n of uniforms) u[n] = gl.getUniformLocation(p, n);
++		return { p, u };
++	}
++
++	private texture(): WebGLTexture {
++		const gl = this.gl;
++		const t = gl.createTexture()!;
++		gl.bindTexture(gl.TEXTURE_2D, t);
++		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
++		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
++		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
++		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
++		return t;
++	}
++
++	private target(
++		w: number,
++		h: number,
++		float: boolean
++	): [WebGLTexture, WebGLFramebuffer] {
++		const gl = this.gl;
++		const t = this.texture();
++		gl.texStorage2D(gl.TEXTURE_2D, 1, float ? gl.RGBA16F : gl.RGBA8, w, h);
++		const fb = gl.createFramebuffer()!;
++		gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
++		gl.framebufferTexture2D(
++			gl.FRAMEBUFFER,
++			gl.COLOR_ATTACHMENT0,
++			gl.TEXTURE_2D,
++			t,
++			0
++		);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
++		return [t, fb];
++	}
++
++	/** The desktop's size: a new, black screen texture. */
++	setSource(w: number, h: number) {
++		const gl = this.gl;
++		if (this.src[0] === w && this.src[1] === h) return;
++		if (this.screen) gl.deleteTexture(this.screen);
++		if (this.screenFb) gl.deleteFramebuffer(this.screenFb);
++		[this.screen, this.screenFb] = this.target(w, h, false);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, this.screenFb);
++		gl.clearColor(0, 0, 0, 1);
++		gl.clear(gl.COLOR_BUFFER_BIT);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
++		this.src = [w, h];
++	}
++
++	/** The canvas's size in device pixels. */
++	setView(w: number, h: number) {
++		const c = this.canvas;
++		if (c.width !== w || c.height !== h) {
++			c.width = w;
++			c.height = h;
++		}
++		this.view = [w, h];
++	}
++
++	/** Copies a decoded frame (a stripe at row `y`) into the screen: where `rects` say
++	 * it changed, or all of it. */
++	frame(frame: VideoFrame, y: number, rects: Rect[] | null) {
++		const gl = this.gl;
++		if (!this.screenFb) return;
++		const fw = frame.displayWidth,
++			fh = frame.displayHeight;
++		const area = rects ?? [{ x: 0, y, w: fw, h: fh }];
++		// Cut to the stripe and the screen; clip space spans the screen texture.
++		const [sw, sh] = this.src;
++		const v: number[] = [];
++		for (const r of area) {
++			const x0 = Math.max(r.x, 0),
++				y0 = Math.max(r.y, y),
++				x1 = Math.min(r.x + r.w, fw, sw),
++				y1 = Math.min(r.y + r.h, y + fh, sh);
++			if (x1 <= x0 || y1 <= y0) continue;
++			const a = (x0 / sw) * 2 - 1,
++				b = (y0 / sh) * 2 - 1,
++				c = (x1 / sw) * 2 - 1,
++				d = (y1 / sh) * 2 - 1;
++			v.push(a, b, c, b, a, d, a, d, c, b, c, d);
++		}
++		if (!v.length) return;
++		gl.bindTexture(gl.TEXTURE_2D, this.frameTex);
++		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, this.screenFb);
++		gl.viewport(0, 0, sw, sh);
++		gl.useProgram(this.copy.p);
++		gl.uniform1i(this.copy.u.src, 0);
++		gl.uniform2i(this.copy.u.at, 0, y);
++		gl.activeTexture(gl.TEXTURE0);
++		gl.bindTexture(gl.TEXTURE_2D, this.frameTex);
++		gl.bindBuffer(gl.ARRAY_BUFFER, this.rects);
++		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.STREAM_DRAW);
++		gl.enableVertexAttribArray(0);
++		gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
++		gl.drawArrays(gl.TRIANGLES, 0, v.length / 2);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
++	}
++
++	/** Writes a lossless patch's pixels into the screen at (x, y). */
++	patch(image: ImageBitmap, x: number, y: number) {
++		const gl = this.gl;
++		if (!this.screen) return;
++		gl.bindTexture(gl.TEXTURE_2D, this.screen);
++		gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, image);
++	}
++
++	/** Draws the screen onto the canvas at its size. */
++	present() {
++		const gl = this.gl;
++		const [sw, sh] = this.src;
++		const [vw, vh] = this.view;
++		if (!this.screen || !vw || !vh) return;
++		gl.activeTexture(gl.TEXTURE0);
++		gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
++		gl.enableVertexAttribArray(0);
++		gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
++		const k = vw / sw;
++		if (Number.isInteger(k) && k === vh / sh) {
++			gl.bindFramebuffer(gl.FRAMEBUFFER, null);
++			gl.viewport(0, 0, vw, vh);
++			gl.useProgram(this.whole.p);
++			gl.uniform1i(this.whole.u.src, 0);
++			gl.uniform1i(this.whole.u.k, k);
++			gl.uniform1i(this.whole.u.rows, vh);
++			gl.bindTexture(gl.TEXTURE_2D, this.screen);
++			gl.drawArrays(gl.TRIANGLES, 0, 3);
++			return;
++		}
++		// Across, into a texture as wide as the view and as tall as the screen; then down.
++		if (this.betweenSize[0] !== vw || this.betweenSize[1] !== sh) {
++			if (this.between) gl.deleteTexture(this.between);
++			if (this.betweenFb) gl.deleteFramebuffer(this.betweenFb);
++			[this.between, this.betweenFb] = this.target(vw, sh, this.floatTargets);
++			this.betweenSize = [vw, sh];
++		}
++		gl.useProgram(this.lanczos.p);
++		gl.uniform1i(this.lanczos.u.src, 0);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, this.betweenFb);
++		gl.viewport(0, 0, vw, sh);
++		gl.uniform1f(this.lanczos.u.scale, vw / sw);
++		gl.uniform1i(this.lanczos.u.vertical, 0);
++		gl.uniform1i(this.lanczos.u.rows, sh);
++		gl.uniform1i(this.lanczos.u.last, sw - 1);
++		gl.bindTexture(gl.TEXTURE_2D, this.screen);
++		gl.drawArrays(gl.TRIANGLES, 0, 3);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
++		gl.viewport(0, 0, vw, vh);
++		gl.uniform1f(this.lanczos.u.scale, vh / sh);
++		gl.uniform1i(this.lanczos.u.vertical, 1);
++		gl.uniform1i(this.lanczos.u.rows, vh);
++		gl.uniform1i(this.lanczos.u.last, sh - 1);
++		gl.bindTexture(gl.TEXTURE_2D, this.between);
++		gl.drawArrays(gl.TRIANGLES, 0, 3);
++	}
++
++	get size(): [number, number] {
++		return [this.src[0], this.src[1]];
++	}
++
++	/** The screen's pixels (RGBA, top row first), for checking them against the desktop's. */
++	read(): Uint8Array {
++		const gl = this.gl;
++		const [sw, sh] = this.src;
++		const out = new Uint8Array(sw * sh * 4);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, this.screenFb);
++		gl.readPixels(0, 0, sw, sh, gl.RGBA, gl.UNSIGNED_BYTE, out);
++		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
++		return out;
++	}
++}
+diff --git a/web/src/types/dom-extra.d.ts b/web/src/types/dom-extra.d.ts
+index e605a17..b0db13b 100644
+--- a/web/src/types/dom-extra.d.ts
++++ b/web/src/types/dom-extra.d.ts
+@@ -22,4 +22,5 @@ interface Navigator {
+ interface Window {
+ 	fps: number;
+ 	voxlStats: unknown;
++	voxlGrab: () => Promise<{ w: number; h: number; px: ArrayBuffer }>;
+ }
+diff --git a/web/src/worker.ts b/web/src/worker.ts
+index 242f895..63ac551 100644
+--- a/web/src/worker.ts
++++ b/web/src/worker.ts
+@@ -1,7 +1,10 @@
+ // Owns the WebSocket, decodes H.264 with WebCodecs and paints straight onto an
+-// OffscreenCanvas the moment each frame is decoded (no rAF queueing), or hands the
+-// frames to the page when it presents them through <video>.
++// OffscreenCanvas the moment each frame is decoded (no rAF queueing): with WebGL2
++// through render.ts, which scales the screen to the view's device pixels itself, else
++// with a 2D context at the desktop's size. Lossless patches and the frames' damage
++// (lossless.rs on the server) are applied in the order they were sent.
+ import { Bin, cmd, parseVideoHeader, VIDEO_HEADER_BYTES } from './protocol';
++import { Renderer, type Rect } from './render';
+ import type {
+ 	FromWorker,
+ 	PcmChunk,
+@@ -20,6 +23,17 @@ let ws: WebSocket | null = null;
+ let url = '';
+ let canvas: OffscreenCanvas | null = null;
+ let ctx: OffscreenCanvasRenderingContext2D | null = null;
++let renderer: Renderer | null = null;
++let lossless = false;
++/** Each frame's damage, by frame id, until the frame is drawn: null for all of it. */
++const damages = new Map<number, Rect[] | null>();
++/** A lossless patch, drawn once its PNG is decoded and every frame before it is. */
++interface Patch {
++	x: number;
++	y: number;
++	image: ImageBitmap | null;
++	done: boolean;
++}
+ let audioDecoder: AudioDecoder | null = null;
+ let audioPort: MessagePort | null = null;
+ let audioTs = 0;
+@@ -44,8 +58,8 @@ interface PendingFrame {
+ let layout: Stripe[] = [];
+ const stripes: StripeState[] = [];
+ const frames = new Map<number, PendingFrame>();
+-/** Frame ids awaiting presentation, oldest first. */
+-const order: number[] = [];
++/** Frame ids and patches awaiting presentation, oldest first. */
++const order: (number | Patch)[] = [];
+ let kfRequested = 0;
+ const st = {
+ 	frames: 0,
+@@ -93,6 +107,12 @@ function connect() {
+ 			case Bin.ClipImage:
+ 				post({ t: 'clipImage', buf: e.data }, [e.data]);
+ 				break;
++			case Bin.Damage:
++				onDamage(b);
++				break;
++			case Bin.Patch:
++				onPatch(b);
++				break;
+ 		}
+ 	});
+ }
+@@ -115,11 +135,12 @@ function onText(s: string) {
+ 		return;
+ 	}
+ 	if (m.t === 'hello' && canvas) {
+-		if (canvas.width !== m.w || canvas.height !== m.h) {
++		lossless = !!m.lossless;
++		if (renderer) renderer.setSource(m.w, m.h);
++		else if (canvas.width !== m.w || canvas.height !== m.h) {
+ 			canvas.width = m.w;
+ 			canvas.height = m.h;
+ 		}
+-		ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+ 		layout = m.stripes && m.stripes.length ? m.stripes : [[0, m.h]];
+ 		resetDecoder();
+ 	}
+@@ -136,7 +157,9 @@ function resetDecoder() {
+ 	stripes.length = 0;
+ 	for (const f of frames.values()) for (const g of f.got) g.frame.close();
+ 	frames.clear();
++	for (const o of order) if (typeof o !== 'number') o.image?.close();
+ 	order.length = 0;
++	damages.clear();
+ }
+ 
+ function requestKeyframe() {
+@@ -205,14 +228,29 @@ function makeDecoder(i: number, codec: string): VideoDecoder {
+ 	return dec;
+ }
+ 
+-/** Present every complete frame at the head of the queue. */
++/** Present every complete frame and decoded patch at the head of the queue. */
+ function flush() {
++	let drew = false;
+ 	while (order.length) {
+-		const id = order[0];
++		const head = order[0];
++		if (typeof head !== 'number') {
++			if (!head.done) break;
++			order.shift();
++			if (head.image) {
++				if (renderer) renderer.patch(head.image, head.x, head.y);
++				else if (ctx && !noDraw) ctx.drawImage(head.image, head.x, head.y);
++				head.image.close();
++				drew = true;
++			}
++			continue;
++		}
++		const id = head;
+ 		const f = frames.get(id);
+-		if (f && f.got.length < f.need) return;
++		if (f && f.got.length < f.need) break;
+ 		order.shift();
+ 		frames.delete(id);
++		const rects = damages.get(id) ?? null;
++		damages.delete(id);
+ 		if (!f) continue;
+ 		if (f.got.length) {
+ 			if (presentToMain)
+@@ -222,14 +260,69 @@ function flush() {
+ 				);
+ 			else
+ 				for (const g of f.got) {
+-					if (ctx && !noDraw) ctx.drawImage(g.frame, 0, g.y);
++					if (noDraw) {
++					} else if (renderer) renderer.frame(g.frame, g.y, rects);
++					else if (ctx) {
++						ctx.save();
++						if (rects) {
++							ctx.beginPath();
++							for (const r of rects) ctx.rect(r.x, r.y, r.w, r.h);
++							ctx.clip();
++						}
++						ctx.drawImage(g.frame, 0, g.y);
++						ctx.restore();
++					}
+ 					g.frame.close();
+ 				}
++			drew = true;
+ 		}
+ 		send(cmd.ack(id));
+ 		st.frames++;
+ 		st.decodeMs += performance.now() - f.t0;
+ 	}
++	if (drew && renderer && !noDraw) renderer.present();
++}
++
++const u16 = (b: Uint8Array, i: number) => (b[i] << 8) | b[i + 1];
++
++function onDamage(b: Uint8Array) {
++	if (!lossless) return;
++	const frame = ((b[2] << 24) | (b[3] << 16) | (b[4] << 8) | b[5]) >>> 0;
++	if (b[1] & 1) {
++		damages.set(frame, null);
++		return;
++	}
++	const rects: Rect[] = [];
++	for (let i = 0, n = u16(b, 6); i < n; i++) {
++		const o = 8 + i * 8;
++		rects.push({
++			x: u16(b, o),
++			y: u16(b, o + 2),
++			w: u16(b, o + 4),
++			h: u16(b, o + 6),
++		});
++	}
++	damages.set(frame, rects);
++}
++
++function onPatch(b: Uint8Array) {
++	st.bytes += b.length;
++	const p: Patch = { x: u16(b, 2), y: u16(b, 4), image: null, done: false };
++	order.push(p);
++	createImageBitmap(new Blob([b.subarray(10)], { type: 'image/png' }), {
++		premultiplyAlpha: 'none',
++		colorSpaceConversion: 'none',
++	})
++		.then((image) => {
++			if (order.includes(p)) p.image = image;
++			else image.close();
++			return undefined;
++		})
++		.catch(() => {})
++		.finally(() => {
++			p.done = true;
++			flush();
++		});
+ }
+ 
+ function onVideo(b: Uint8Array) {
+@@ -359,9 +452,30 @@ self.addEventListener('message', (e: MessageEvent<ToWorker>) => {
+ 			canvas = m.canvas;
+ 			url = m.url;
+ 			presentToMain = m.presentToMain;
+-			ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
++			try {
++				renderer = presentToMain ? null : Renderer.create(canvas);
++			} catch (err) {
++				post({ t: 'log', s: 'WebGL2 renderer failed: ' + err });
++			}
++			if (!renderer)
++				ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+ 			connect();
+ 			break;
++		case 'view':
++			if (renderer) {
++				renderer.setView(m.w, m.h);
++				renderer.present();
++			}
++			break;
++		case 'grab':
++			if (renderer) {
++				const px = renderer.read();
++				const [w, h] = renderer.size;
++				post({ t: 'grabbed', w, h, px: px.buffer as ArrayBuffer }, [
++					px.buffer as ArrayBuffer,
++				]);
++			}
++			break;
+ 		case 'send':
+ 			send(m.d);
+ 			break;

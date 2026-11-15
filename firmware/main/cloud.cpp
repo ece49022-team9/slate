@@ -4,6 +4,7 @@
 #include <Preferences.h>
 #include <WebSocketsClient.h>
 #include <WiFi.h>
+#include <algorithm>
 #include <atomic>
 #include <time.h>
 #include "esp_eth.h"
@@ -11,6 +12,7 @@
 #include "esp_netif.h"
 #include "nvs.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/queue.h"
 #include "cloud.h"
 #include "ble_setup.h"
@@ -19,12 +21,15 @@
 #include "mic.h"
 #include "perf.h"
 #include "speaker.h"
+#ifdef SLATE_BOARD_S3
+#include <opus.h>
+#endif
 
 struct CloudEvent {
   SlateState state;
   bool toggle_live;
-  uint16_t count;
-  int16_t samples[MIC_FRAME_SAMPLES];
+  uint16_t bytes;
+  uint8_t audio[MIC_FRAME_SAMPLES * sizeof(int16_t)];
 };
 
 struct Provision {
@@ -174,6 +179,12 @@ static void receive_text(uint8_t* payload, size_t length) {
   }
 }
 
+static void note_reply_audio() {
+  static uint32_t last_audio;
+  if (millis() - last_audio > 700) Serial.println("slate.speaker: reply audio");
+  last_audio = millis();
+}
+
 static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
   if (type == WStype_CONNECTED) {
     connected = true;
@@ -183,9 +194,12 @@ static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
     Serial.println("slate.cloud: connected");
     JsonDocument hello;
     hello["type"] = "hello";
-    hello["mcu"] = "esp32-wroom-32";
+    hello["mcu"] = BOARD_MCU;
     hello["rate"] = MIC_SAMPLE_HZ;
     hello["speaker_rate"] = SPEAKER_RATE;
+#ifdef SLATE_BOARD_S3
+    hello["codec"] = "opus";
+#endif
     send_json(hello);
     if (slate_get_state() == SLATE_LISTEN) {
       active_turn = recording = true;
@@ -208,8 +222,10 @@ static void socket_event(WStype_t type, uint8_t* payload, size_t length) {
     receive_text(payload, length);
   } else if (type == WStype_BIN) {
     if (live.load()) {
+      note_reply_audio();
       speaker_play(payload, length);
     } else if (active_turn || slate_get_state() == SLATE_RESPOND) {
+      note_reply_audio();
       reply_bytes += length;
       speaker_play(payload, length);
       if (finish_at) finish_at = millis() + 1000;
@@ -236,6 +252,7 @@ static void ethernet_event(void*, esp_event_base_t base, int32_t event, void* da
 }
 
 static bool start_ethernet() {
+#if CONFIG_ETH_USE_OPENETH
   if (!ethernet) {
     esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
     ethernet_netif = esp_netif_new(&netif_config);
@@ -272,6 +289,10 @@ static bool start_ethernet() {
   ethernet_started = result == ESP_OK;
   if (!ethernet_started) Serial.printf("slate.net: ethernet start failed %s\n", esp_err_to_name(result));
   return ethernet_started;
+#else
+  Serial.println("slate.net: simulator Ethernet unavailable; provision Wi-Fi on this board");
+  return false;
+#endif
 }
 
 static void connect_network() {
@@ -290,6 +311,7 @@ static void connect_network() {
     start_ethernet();
   } else if (mode == "wifi" && ssid.length()) {
     WiFi.mode(WIFI_STA);
+    WiFi.setTxPower(WIFI_POWER_15dBm);
     WiFi.setAutoReconnect(true);
     WiFi.begin(ssid.c_str(), password.c_str());
   }
@@ -337,6 +359,18 @@ static void provision(char* line) {
     socket.disconnect();
     ready.store(false);
     ble_setup_start();
+    return;
+  }
+  if (!strcmp(line, "net scan")) {
+    WiFi.disconnect();
+    int found = WiFi.scanNetworks();
+    Serial.printf("slate.net: scan found %d networks\n", found);
+    for (int i = 0; i < found; ++i) {
+      Serial.printf("slate.net: ssid=\"%s\" rssi=%d channel=%d\n", WiFi.SSID(i).c_str(),
+                    WiFi.RSSI(i), WiFi.channel(i));
+    }
+    WiFi.scanDelete();
+    if (mode == "wifi" && ssid.length()) WiFi.begin(ssid.c_str(), password.c_str());
     return;
   }
   if (!strcmp(line, "net eth")) {
@@ -421,7 +455,7 @@ static bool configure_socket() {
   socket.setExtraHeaders("");
   socket.setAuthorization(("Bearer " + token).c_str());
   socket.setReconnectInterval(retry_ms);
-  socket.enableHeartbeat(15000, 3000, 2);
+  socket.enableHeartbeat(15000, 10000, 3);
   return true;
 }
 
@@ -447,16 +481,16 @@ static void cloud_task(void* starter) {
     Serial.printf("slate.net: provisioning load failed %s\n", esp_err_to_name(result));
   }
   ble_setup_boot(!url.length() || !token.length());
-  WiFi.onEvent([](arduino_event_id_t event) {
+  WiFi.onEvent([](arduino_event_id_t event, arduino_event_info_t info) {
     if (use_ethernet.load()) return;
     if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
       network_up.store(true);
-      Serial.printf("slate.net: up %s\n", WiFi.localIP().toString().c_str());
+      Serial.printf("slate.net: up %s rssi=%d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
       String status = "net up " + WiFi.localIP().toString();
       ble_setup_status(status.c_str());
     } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
       network_up.store(false);
-      Serial.println("slate.net: down");
+      Serial.printf("slate.net: down reason=%u\n", info.wifi_sta_disconnected.reason);
       ble_setup_status("net down");
     }
   });
@@ -502,7 +536,7 @@ static void cloud_task(void* starter) {
           send_type("live");
           Serial.println("slate.live: requested");
         }
-      } else if (live.load() && !event.count) {
+      } else if (live.load() && !event.bytes) {
         if (event.state == IDLE) {
           speaker_flush();
           send_type("hangup");
@@ -510,8 +544,8 @@ static void cloud_task(void* starter) {
           slate_request_state(IDLE);
           Serial.println("slate.live: hangup");
         }
-      } else if (event.count) {
-        if ((recording || live.load()) && !socket.sendBIN(reinterpret_cast<uint8_t*>(event.samples), event.count * sizeof(int16_t))) {
+      } else if (event.bytes) {
+        if ((recording || live.load()) && !socket.sendBIN(event.audio, event.bytes)) {
           Serial.println("slate.cloud: audio send failed");
         }
       } else if (event.state == SLATE_LISTEN) {
@@ -542,10 +576,81 @@ static void cloud_task(void* starter) {
   }
 }
 
+static void backpressure() {
+  static uint32_t last_drop;
+  if (millis() - last_drop >= 1000) {
+    Serial.println("slate.cloud: microphone backpressure");
+    last_drop = millis();
+  }
+}
+
+static void send_audio(const uint8_t* audio, size_t bytes) {
+  if (uxQueueSpacesAvailable(events) < 3) {
+    backpressure();
+    return;
+  }
+  CloudEvent event = {};
+  event.bytes = bytes;
+  memcpy(event.audio, audio, bytes);
+  if (xQueueSend(events, &event, 0) != pdTRUE) Serial.println("slate.cloud: audio queue full");
+}
+
+#ifdef SLATE_BOARD_S3
+static QueueHandle_t frames;
+static OpusEncoder* encoder;
+
+static void encode(void*) {
+  int16_t frame[MIC_FRAME_SAMPLES];
+  uint8_t packet[MIC_FRAME_SAMPLES * sizeof(int16_t)];
+  uint32_t encoded = 0;
+  for (;;) {
+    xQueueReceive(frames, frame, portMAX_DELAY);
+    int bytes = opus_encode(encoder, frame, MIC_FRAME_SAMPLES, packet, sizeof(packet));
+    if (bytes > 0) send_audio(packet, bytes);
+    else Serial.printf("slate.cloud: opus encode failed %d\n", bytes);
+    if (++encoded == 100) {
+      Serial.printf("slate.cloud: opus %d bytes per 20 ms, stack left %u\n", bytes,
+                    unsigned(uxTaskGetStackHighWaterMark(nullptr)));
+    }
+  }
+}
+
+static void start_encoder() {
+  int error = OPUS_OK;
+  encoder = opus_encoder_create(MIC_SAMPLE_HZ, 1, OPUS_APPLICATION_VOIP, &error);
+  configASSERT(error == OPUS_OK);
+  opus_encoder_ctl(encoder, OPUS_SET_BITRATE(24000));
+  opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(3));
+  frames = xQueueCreateWithCaps(50, sizeof(int16_t) * MIC_FRAME_SAMPLES, MALLOC_CAP_SPIRAM);
+  configASSERT(frames);
+  configASSERT(xTaskCreatePinnedToCoreWithCaps(encode, "Opus", 32768, nullptr, 2, nullptr, 1,
+                                               MALLOC_CAP_SPIRAM) == pdPASS);
+}
+
+static void queue_frame(const int16_t* samples, size_t count) {
+  static int16_t pending[MIC_FRAME_SAMPLES];
+  static size_t pending_count;
+  while (count) {
+    size_t take = std::min(count, MIC_FRAME_SAMPLES - pending_count);
+    memcpy(pending + pending_count, samples, take * sizeof(int16_t));
+    pending_count += take;
+    samples += take;
+    count -= take;
+    if (pending_count == MIC_FRAME_SAMPLES) {
+      if (xQueueSend(frames, pending, 0) != pdTRUE) backpressure();
+      pending_count = 0;
+    }
+  }
+}
+#endif
+
 void cloud_start() {
-  events = xQueueCreate(10, sizeof(CloudEvent));
+  events = xQueueCreateWithCaps(100, sizeof(CloudEvent), MALLOC_CAP_SPIRAM);
   provisions = xQueueCreate(2, sizeof(Provision));
   configASSERT(events && provisions);
+#ifdef SLATE_BOARD_S3
+  start_encoder();
+#endif
   configASSERT(xTaskCreatePinnedToCore(cloud_task, "Cloud", 8192, xTaskGetCurrentTaskHandle(), 1, nullptr, 0) == pdPASS);
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 }
@@ -574,18 +679,11 @@ void cloud_state(SlateState state) {
 
 void cloud_audio(const int16_t* samples, size_t count) {
   if (!ready.load() || (!live.load() && slate_get_state() != SLATE_LISTEN) || !count || count > MIC_FRAME_SAMPLES) return;
-  if (uxQueueSpacesAvailable(events) < 3) {
-    static uint32_t last_drop;
-    if (millis() - last_drop >= 1000) {
-      Serial.println("slate.cloud: microphone backpressure");
-      last_drop = millis();
-    }
-    return;
-  }
-  CloudEvent event = {};
-  event.count = count;
-  memcpy(event.samples, samples, count * sizeof(int16_t));
-  if (xQueueSend(events, &event, 0) != pdTRUE) Serial.println("slate.cloud: audio queue full");
+#ifdef SLATE_BOARD_S3
+  queue_frame(samples, count);
+#else
+  send_audio(reinterpret_cast<const uint8_t*>(samples), count * sizeof(int16_t));
+#endif
 }
 
 void cloud_toggle_live() {

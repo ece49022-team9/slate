@@ -45,6 +45,16 @@ def socket_url(url: str) -> str:
     return url.rstrip("/") + "/api/device/socket"
 
 
+def wifi_command(ssid: str, password: str) -> str:
+    fields = []
+    for value in (ssid, password):
+        quote = "'" if '"' in value else '"'
+        if quote in value:
+            raise ValueError("Wi-Fi names and passwords cannot use both quote marks")
+        fields.append(quote + value + quote)
+    return "net wifi " + " ".join(fields)
+
+
 def trim_transport_silence(pcm: bytes) -> bytes:
     first = last = None
     for index, (sample,) in enumerate(struct.iter_unpack("<h", pcm)):

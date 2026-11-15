@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { VoiceConnection, type Approval, type VoiceState } from './voice'
+import { VoiceConnection, type Approval, type Call, type VoiceState } from './voice'
 
 const labels: Record<VoiceState, string> = {
   offline: 'Microphone disconnected',
@@ -21,6 +21,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [tool, setTool] = useState('')
   const [approval, setApproval] = useState<Approval>()
+  const [call, setCall] = useState<Call>({ state: 'idle', heard: '', said: '' })
 
   useEffect(() => {
     const cancel = () => {
@@ -44,13 +45,14 @@ export default function App() {
     }, setReply, setAudioBlocked, setError, (name, request) => {
       setTool(name)
       setApproval(request)
-    })
+    }, setCall)
     connection.current = client
     void client.connect()
   }
 
   const canTalk = state === 'ready' || state === 'starting' || state === 'recording' || state === 'transcribing' || state === 'responding'
   const busy = state === 'starting' || state === 'recording' || state === 'transcribing' || state === 'responding'
+  const calling = call.state !== 'idle'
 
   return (
     <main>
@@ -69,7 +71,7 @@ export default function App() {
           )}
           <button
             className={`talk ${state === 'recording' ? 'active' : ''}`}
-            disabled={!canTalk}
+            disabled={!canTalk || calling}
             aria-label="Hold to talk"
             aria-pressed={state === 'recording'}
             onPointerDown={(event) => {
@@ -97,9 +99,14 @@ export default function App() {
             {state === 'recording' ? 'Listening…' : 'Talk'}
           </button>
           {busy && <button className="secondary" onClick={() => void connection.current?.cancel()}>Cancel</button>}
+          {canTalk && !busy && (
+            <button className={calling ? 'secondary' : ''} onClick={() => void (calling ? connection.current?.hangUp() : connection.current?.startCall())}>
+              {call.state === 'live' ? 'End call' : call.state === 'connecting' ? 'Connecting…' : 'Call'}
+            </button>
+          )}
           {audioBlocked && <button className="secondary" onClick={() => void connection.current?.enableAudio()}>Enable reply audio</button>}
         </div>
-        <p className="hint">Audio is sent only while you hold Talk. Hold Talk during a reply to interrupt it.</p>
+        <p className="hint">Audio is sent only while you hold Talk or during a call. Hold Talk during a reply to interrupt it; on a call, just talk.</p>
         {error && <p role="alert" className="error">{error}</p>}
         {tool && <p role="status">Using {tool}…</p>}
         {approval && (
@@ -111,6 +118,13 @@ export default function App() {
           </section>
         )}
       </section>
+      {calling && (
+        <section aria-label="Call" className="transcript">
+          <h2>Call</h2>
+          <p aria-live="polite">{call.said.trim() || (call.state === 'live' ? 'Slate is listening.' : 'Connecting the call…')}</p>
+          <p>{call.heard.trim()}</p>
+        </section>
+      )}
       <section aria-label="Reply" className="transcript">
         <h2>Slate</h2>
         <p aria-live="polite">{reply || 'Slate’s reply will appear here.'}</p>

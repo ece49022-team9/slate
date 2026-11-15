@@ -17,6 +17,7 @@ SOURCE = ROOT / ".local/hermes"
 PROFILE = Path(os.environ.get("SLATE_HERMES_HOME", ROOT / ".local/hermes-home"))
 CONFIG = ROOT / "experiments/agent.toml"
 GUARD = ROOT / "hermes/slate-guard"
+GUARD_HOOK_SECONDS = 600
 BROWSER = ROOT / ".local/browser.json"
 ARCHIVE = ROOT / ".local/hermes-source.tar.gz"
 TOOLSETS = [
@@ -57,7 +58,9 @@ def configure_tools(config: dict) -> None:
         browser["cdp_url"] = json.loads(BROWSER.read_text())["cdp_url"]
     else:
         browser.pop("cdp_url", None)
-    enabled = config.setdefault("plugins", {}).setdefault("enabled", [])
+    plugins = config.setdefault("plugins", {})
+    plugins["hook_callback_timeout"] = GUARD_HOOK_SECONDS
+    enabled = plugins.setdefault("enabled", [])
     if "slate-guard" not in enabled:
         enabled.append("slate-guard")
     server = config.setdefault("mcp_servers", {}).setdefault("slate-device", {})

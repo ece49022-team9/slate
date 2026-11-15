@@ -66,12 +66,13 @@ bool mic_submit(const int16_t* stereo, size_t frames) {
     float output = input - previous_input + 0.995f * previous_output;
     previous_input = input;
     previous_output = output;
+    output *= MIC_GAIN;
     if (output > 32767) output = 32767;
     if (output < -32768) output = -32768;
     mono[i] = static_cast<int16_t>(output);
     energy += int64_t(mono[i]) * mono[i];
   }
-  display_submit_audio(std::sqrt(float(energy) / frames));
+  display_submit_audio(std::sqrt(float(energy) / frames) / MIC_GAIN);
   size_t sent = xStreamBufferSend(buffer, mono, bytes, 0);
   configASSERT(sent == bytes);
   xSemaphoreGive(lock);
