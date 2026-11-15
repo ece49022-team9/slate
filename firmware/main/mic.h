@@ -6,6 +6,11 @@
 
 constexpr size_t MIC_FRAME_SAMPLES = 320;
 constexpr size_t MIC_BUFFER_SAMPLES = 16000;
+#ifdef SLATE_BOARD_S3
+constexpr unsigned MIC_GAIN = 4;
+#else
+constexpr unsigned MIC_GAIN = 1;
+#endif
 
 enum class MicChannel : uint8_t { LEFT, RIGHT, MIX };
 

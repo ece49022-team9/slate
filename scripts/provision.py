@@ -3,7 +3,7 @@ import asyncio
 
 from slate.board import ROOT
 from slate.link import open_board
-from slate.voice.device import cloud, socket_url
+from slate.voice.device import cloud, socket_url, wifi_command
 
 
 async def provision(port: str, ssid: str, password: str) -> None:
@@ -11,7 +11,7 @@ async def provision(port: str, ssid: str, password: str) -> None:
     link, reader = await open_board(port, ROOT / ".local/bench-serial.log")
     try:
         online = asyncio.ensure_future(link.wait_for("slate.net: up", 30))
-        link.type(f"!net wifi {ssid} {password}\n")
+        link.type(f"!{wifi_command(ssid, password)}\n")
         print(f"slate.provision: {(await online).strip()}")
         connected = asyncio.ensure_future(link.wait_for("slate.cloud: connected", 30))
         link.type(f"!cloud {socket_url(url)} {token}\n")
@@ -28,8 +28,6 @@ def main() -> None:
     parser.add_argument("--ssid", required=True)
     parser.add_argument("--password", required=True)
     args = parser.parse_args()
-    if " " in args.ssid or " " in args.password:
-        parser.error("Wi-Fi names and passwords with spaces are not supported yet")
     asyncio.run(provision(args.port, args.ssid, args.password))
 
 

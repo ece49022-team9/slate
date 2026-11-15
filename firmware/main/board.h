@@ -1,14 +1,14 @@
 #pragma once
 #ifdef SLATE_BOARD_S3
 #pragma once
-// Generated from hardware/board.toml by make board
 constexpr char BOARD_MCU[] = "esp32-s3-wroom-1-n16r8";
 constexpr int OLED_CLK = 12;
 constexpr int OLED_DATA = 11;
 constexpr int OLED_CS = 10;
 constexpr int OLED_DC = 14;
 constexpr int OLED_RESET = 21;
-constexpr unsigned OLED_SPI_HZ = 4000000;
+constexpr unsigned OLED_SPI_HZ = 16000000;
+constexpr unsigned OLED_FRAME_HZ = 33;
 constexpr int MIC_CLK = 4;
 constexpr int MIC_DATA = 5;
 constexpr unsigned MIC_SAMPLE_HZ = 16000;
@@ -37,14 +37,14 @@ constexpr int CONSOLE_BOOT = 0;
 #endif
 #else
 #pragma once
-// Generated from hardware/board.toml by make board
 constexpr char BOARD_MCU[] = "esp32-wroom-32";
 constexpr int OLED_CLK = 18;
 constexpr int OLED_DATA = 23;
 constexpr int OLED_CS = 5;
 constexpr int OLED_DC = 16;
 constexpr int OLED_RESET = 17;
-constexpr unsigned OLED_SPI_HZ = 16000000;
+constexpr unsigned OLED_SPI_HZ = 8000000;
+constexpr unsigned OLED_FRAME_HZ = 25;
 constexpr int MIC_CLK = 26;
 constexpr int MIC_DATA = 36;
 constexpr unsigned MIC_SAMPLE_HZ = 16000;

@@ -4,7 +4,8 @@ supply_v = 3.3
 [device.oled]
 part = "ssd1351"
 pins = { clk = 18, data = 23, cs = 5, dc = 16, reset = 17 }
-spi_hz = 16_000_000
+spi_hz = 8_000_000
+frame_hz = 25
 
 [device.mic]
 part = "mp34dt01"
@@ -16,7 +17,6 @@ sample_hz = 16_000
 part = "max98357a"
 pins = { bclk = 14, lrclk = 25, din = 27 }
 
-# Power hardware is opt-in; GPIO15 is a strapping pin.
 [device.power]
 part = "slate-power"
 enabled = false

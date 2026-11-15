@@ -1,6 +1,25 @@
+import subprocess
 from pathlib import Path
 
 Import("env")
+
+PIO_CORE = "6.2.0"
+
+python = env.subst("$PYTHONEXE")
+installed = subprocess.run(
+    [python, "-c", "import platformio; print(platformio.__version__)"],
+    capture_output=True,
+    text=True,
+).stdout.strip()
+if installed and installed != PIO_CORE:
+    pinned = subprocess.run(
+        [python, "-m", "uv", "pip", "install", "--quiet", f"--python={python}",
+         f"pioarduino=={PIO_CORE}"]
+    )
+    if pinned.returncode:
+        print(f"slate.sdk: could not pin pioarduino {PIO_CORE} over {installed}")
+    else:
+        print(f"slate.sdk: pinned the build environment's pioarduino to {PIO_CORE}")
 
 header = (
     Path(env.subst("$PROJECT_DIR"))

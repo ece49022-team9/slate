@@ -71,7 +71,6 @@ void pdm_start() {
   config.slot_cfg.slot_mask = I2S_PDM_SLOT_BOTH;
   config.gpio_cfg.clk = static_cast<gpio_num_t>(MIC_CLK);
   config.gpio_cfg.din = static_cast<gpio_num_t>(MIC_DATA);
-  // 16 kHz * 64 = 1.024 MHz PDM clock, supported by MP34DT01.
   config.clk_cfg.dn_sample_mode = I2S_PDM_DSR_8S;
   error = i2s_channel_init_pdm_rx_mode(receiver, &config);
   if (error == ESP_OK) error = i2s_channel_enable(receiver);
@@ -81,7 +80,7 @@ void pdm_start() {
     receiver = nullptr;
     return;
   }
-  BaseType_t created = xTaskCreate(capture, "PDM", 4096, nullptr, 6, nullptr);
+  BaseType_t created = xTaskCreate(capture, "PDM", 8192, nullptr, 6, nullptr);
   if (created != pdPASS) {
     ESP_LOGE("slate.pdm", "Could not create capture task");
     i2s_channel_disable(receiver);

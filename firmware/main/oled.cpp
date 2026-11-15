@@ -18,8 +18,11 @@ static std::atomic<bool> stop_requested{false};
 static std::atomic<bool> stopped{false};
 
 static void draw(void*) {
-  // Slowed from 30 ms to 80 ms per frame (4 MHz SPI needs ~65 ms per full frame) to test whether display glitching is SPI/refresh related.
-  constexpr TickType_t frame_ticks = pdMS_TO_TICKS(80) > 0 ? pdMS_TO_TICKS(80) : 1;
+  constexpr TickType_t frame_ticks = pdMS_TO_TICKS(30) > 0 ? pdMS_TO_TICKS(30) : 1;
+  constexpr TickType_t period_ticks =
+      pdMS_TO_TICKS(1000 / OLED_FRAME_HZ) > 0 ? pdMS_TO_TICKS(1000 / OLED_FRAME_HZ) : 1;
+  static_assert(DISPLAY_PIXELS * 16ull * OLED_FRAME_HZ * 100 <= OLED_SPI_HZ * 85ull,
+                "OLED_FRAME_HZ needs more than 85% of the SPI bandwidth at OLED_SPI_HZ");
   TickType_t next_frame = xTaskGetTickCount();
   uint32_t report_started = millis();
   uint32_t frames = 0;
@@ -43,11 +46,14 @@ static void draw(void*) {
       report_started = millis();
       frames = 0;
     }
-    vTaskDelayUntil(&next_frame, frame_ticks);
+    const TickType_t now = xTaskGetTickCount();
+    next_frame += period_ticks;
+    if (int32_t(next_frame - now) < 1) next_frame = now + 1;
+    vTaskDelay(next_frame - now);
   }
   oled->fillScreen(0);
   SPI.end();
-  stopped.store(true); // No further SPI operations after this acknowledgment.
+  stopped.store(true);
   vTaskDelete(nullptr);
 }
 
@@ -76,7 +82,7 @@ void oled_start() {
   oled->print("SLATE SSD1351");
   delay(1000);
 #endif
-  BaseType_t created = xTaskCreate(draw, "OLED", 4096, nullptr, 5, nullptr);
+  BaseType_t created = xTaskCreatePinnedToCore(draw, "OLED", 4096, nullptr, 1, nullptr, 1);
   if (created != pdPASS) {
     ESP_LOGE("slate.oled", "Could not create display task");
     oled->fillScreen(0);

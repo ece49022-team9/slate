@@ -4,13 +4,9 @@
 #include <cstring>
 #include <glcdfont.c>
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "display.h"
 
 static std::atomic<SlateState> current_state{SLATE_ERROR};
-static SlateState displayed_state = SLATE_ERROR;
-static SlateState candidate_state = SLATE_ERROR;
-static TickType_t candidate_since = 0;
 static std::atomic<unsigned> revision{0};
 static std::atomic<unsigned> audio_level{0};
 static portMUX_TYPE config_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -43,34 +39,17 @@ void display_snapshot(DisplayConfig& value) {
 }
 
 void display_set_state(SlateState state) {
-  // Repeated state updates must not reset the smoothed LISTEN level.
   if (current_state.load() == state) return;
   audio_level.store(0);
   current_state.store(state);
   revision.fetch_add(1);
 }
 
-SlateState display_get_state() {
-  constexpr TickType_t state_buffer = pdMS_TO_TICKS(150) > 0 ? pdMS_TO_TICKS(150) : 1;
-  const SlateState requested = current_state.load();
-  if (requested == displayed_state) {
-    candidate_state = displayed_state;
-    return displayed_state;
-  }
-
-  const TickType_t now = xTaskGetTickCount();
-  if (requested != candidate_state) {
-    candidate_state = requested;
-    candidate_since = now;
-  } else if (now - candidate_since >= state_buffer) {
-    displayed_state = candidate_state;
-  }
-  return displayed_state;
-}
+SlateState display_get_state() { return current_state.load(); }
 unsigned display_revision() { return revision.load(); }
 
 void display_submit_audio(float rms) {
-  unsigned target = rms > 60.0f ? std::min(1000u, unsigned((rms - 60.0f) * 2.0f)) : 0;
+  unsigned target = rms > 60.0f ? std::min(1000u, unsigned((rms - 60.0f) * 5.0f)) : 0;
   unsigned previous = audio_level.load();
   audio_level.store(target > previous ? (3 * target + previous) / 4
                                       : (target + 7 * previous) / 8);

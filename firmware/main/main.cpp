@@ -16,7 +16,6 @@
 
 static std::atomic<bool> speaker_test_running{false};
 
-// Application-specific cleanup, polled while loop() remains quiescent.
 static void finish_shutdown() {
   static bool requested = false;
   static bool finished = false;
@@ -28,11 +27,10 @@ static void finish_shutdown() {
   }
   if (uint32_t(millis() - requested_at) >= 3000) {
     Serial.println("power: shutdown cleanup timed out; power retained");
-    finished = true; // A failed shutdown, not permission to release the latch.
+    finished = true;
     return;
   }
 #ifndef SLATE_SPEAKER_TEST
-  // Request both tasks to stop even if one has not acknowledged yet.
   bool capture_stopped = pdm_stop();
   bool display_stopped = oled_stop();
   if (!capture_stopped || !display_stopped) return;
@@ -73,6 +71,10 @@ static void play_speaker_test(void*) {
 
 void setup() {
   power_start();
+#if ARDUINO_USB_CDC_ON_BOOT && ARDUINO_USB_MODE
+  Serial.setTxBufferSize(4096);
+  Serial.setTxTimeoutMs(0);
+#endif
   Serial.begin(921600);
   mic_start();
   slate_start();

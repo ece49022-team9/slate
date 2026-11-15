@@ -16,7 +16,6 @@
 #include "speaker.h"
 #include "oled.h"
 
-// Local state controller: no cloud, power, I2C, haptics or SD initialization.
 static SlateState state = IDLE;
 void slate_start() {}
 SlateState slate_get_state() { return state; }
@@ -35,8 +34,6 @@ static uint64_t energy;
 static uint32_t samples, peak;
 static float min_rms = INFINITY, max_rms;
 
-// The IDF event task only copies observations; the bring-up loop owns state and
-// serial output. No driver or network initialization occurs before a command.
 struct WifiEvent {
   enum Kind { SCAN, DISCONNECTED, GOT_IP, LOST_IP, STOPPED } kind;
   uint16_t reason;
@@ -52,7 +49,7 @@ static uint16_t wifi_last_reason;
 struct BleCommand { char line[241]; };
 static QueueHandle_t ble_commands;
 static uint32_t ble_pings;
-static bool mcu_heartbeat; // Quiet after the initial boot report; enable on demand.
+static bool mcu_heartbeat;
 static void mcu();
 
 static void wipe(void* data, size_t length) {
@@ -102,7 +99,6 @@ static void wifi_event(void*, esp_event_base_t base, int32_t id, void* data) {
 }
 static bool wifi_enable() {
   if (!wifi_initialized) {
-    // Network.begin supplies the shared netif/event loop, without starting Wi-Fi.
     if (!Network.begin()) {
       Serial.println("slate.wifi: ERROR network stack initialization failed");
       return false;
@@ -149,7 +145,7 @@ static void wifi_disconnect() {
   if (wifi_scanning) wifi_ok(esp_wifi_scan_stop(), "stop scan");
   if (!wifi_ok(esp_wifi_stop(), "stop")) return;
   wifi_scanning = wifi_connecting = wifi_has_ip = wifi_enabled = false;
-  wifi_stopping = true; // Wait for STOPPED before allowing another start.
+  wifi_stopping = true;
   esp_wifi_clear_ap_list();
   wifi_config_t empty{};
   if (wifi_ok(esp_wifi_set_config(WIFI_IF_STA, &empty), "clear RAM credentials"))
@@ -195,7 +191,6 @@ static void wifi_poll() {
         esp_wifi_clear_ap_list();
         continue;
       }
-      // Bound memory and serial work even in a crowded environment.
       wifi_ap_record_t records[24];
       uint16_t total = 0, count = 24;
       esp_wifi_scan_get_ap_num(&total);
@@ -229,8 +224,6 @@ static void wifi_poll() {
     Serial.println("slate.wifi: ERROR event queue overflow; stopping radio, retry command");
     bool already_stopped = !wifi_enabled;
     wifi_disconnect();
-    // Only bypass the STOPPED barrier if that event was previously dropped.
-    // A new stop above has queue space and must complete before another start.
     if (already_stopped) wifi_stopping = false;
   }
   if ((wifi_scanning || wifi_connecting) && int32_t(millis() - wifi_deadline) >= 0) {
@@ -240,8 +233,6 @@ static void wifi_poll() {
   }
 }
 
-// Quoted fields support spaces and escaped quotes/backslashes. Parsed in place
-// and wiped after dispatch; credentials are never printed or stored in NVS.
 static char* wifi_field(char*& cursor, bool& valid) {
   while (*cursor == ' ' || *cursor == '\t') ++cursor;
   if (!*cursor) return nullptr;
@@ -320,8 +311,6 @@ static void wifi_command(char* line) {
   }
 }
 
-// GATT writes run in NimBLE's host task. Only enqueue here; the bring-up loop
-// owns Wi-Fi and serial state, so phone writes never block the BLE host.
 static bool ble_receive(const char* line) {
   BleCommand command{};
   strlcpy(command.line, line, sizeof(command.line));
@@ -332,7 +321,6 @@ static bool ble_receive(const char* line) {
 static void ble_poll() {
   if (!ble_commands) return;
   BleCommand command;
-  // One command per iteration keeps mic and serial service responsive.
   if (xQueueReceive(ble_commands, &command, 0) != pdTRUE) return;
   if (ble_setup_active()) {
     if (!strcmp(command.line, "ping")) {
@@ -366,7 +354,6 @@ static void bringup_command(char* line) {
     return;
   }
   if (!strcmp(line, "mcu status")) { mcu(); return; }
-  // Leave the established Wi-Fi parser and its quoted credentials intact.
   if (strncmp(line, "ble", 3) || (line[3] && line[3] != ' ' && line[3] != '\t')) {
     wifi_command(line);
     return;
@@ -390,7 +377,6 @@ static void bringup_command(char* line) {
     Serial.printf("slate.ble: test pings=%lu; provisioning is RAM-only in bring-up\n", static_cast<unsigned long>(ble_pings));
   } else if (!strcmp(command, "stop")) {
     ble_setup_finish();
-    // Drain and wipe pending credentials, rather than executing after stop.
     BleCommand pending;
     while (ble_commands && xQueueReceive(ble_commands, &pending, 0) == pdTRUE) wipe(&pending, sizeof(pending));
     ble_setup_report();
@@ -454,7 +440,6 @@ static void run(char key) {
     speaker_start();
     Serial.printf("slate.test: I2S1 Philips stereo 16000 Hz %s\n", speaker_ready() ? "initialized" : "ERROR");
     if (speaker_ready()) speaker_test();
-    // Combined mode retains I2S1 while capture and display continue.
     if (key == 's') { delay(50); stop(); return; }
   }
   deadline = continuous ? 0 : millis() + 10000;
@@ -464,6 +449,10 @@ static void run(char key) {
   Serial.println(continuous ? "slate.test: continuous demo; x stops" : "slate.test: running for 10 seconds; x stops early");
 }
 void setup() {
+#if ARDUINO_USB_CDC_ON_BOOT && ARDUINO_USB_MODE
+  Serial.setTxBufferSize(4096);
+  Serial.setTxTimeoutMs(0);
+#endif
   Serial.begin(921600);
   delay(1500);
   mic_start();
@@ -484,7 +473,6 @@ void loop() {
   static size_t command_length;
   static bool command_open, command_overflow;
   static uint32_t command_activity;
-  // Bound serial work so a pasted line cannot starve capture or Wi-Fi polling.
   for (unsigned budget = 64; budget && Serial.available(); --budget) {
     char key = Serial.read();
     if (command_open) {
@@ -512,7 +500,7 @@ void loop() {
   if (command_open && !command_overflow && millis() - command_activity >= 30000) {
     wipe(command, sizeof(command));
     command_length = 0;
-    command_overflow = true; // Discard until newline; never interpret credential bytes as keys.
+    command_overflow = true;
     Serial.println("slate.test: ERROR incomplete command timed out; send Enter to clear");
   }
   if (microphone) {

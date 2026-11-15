@@ -98,6 +98,7 @@ async def open_board(port: str, log: Path) -> tuple[Link, asyncio.Task]:
     try:
         board = writer.transport.serial
         board.dtr = False
+        await asyncio.sleep(0.1)
         board.rts = True
         await asyncio.sleep(0.15)
         board.rts = False

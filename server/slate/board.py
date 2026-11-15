@@ -97,7 +97,6 @@ def check(board: dict, parts: dict) -> list[Problem]:
 def header(board: dict) -> str:
     lines = [
         "#pragma once",
-        "// Generated from hardware/board.toml by make board",
         f'constexpr char BOARD_MCU[] = "{board["mcu"]}";',
     ]
     for name, device in board["device"].items():

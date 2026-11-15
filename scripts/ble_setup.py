@@ -4,7 +4,7 @@ import asyncio
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from slate.voice.device import cloud, socket_url
+from slate.voice.device import cloud, socket_url, wifi_command
 
 SERVICE = "5a7e0001-6a1b-4c3e-9f5d-8b2c1e0d4a10"
 COMMAND = "5a7e0002-6a1b-4c3e-9f5d-8b2c1e0d4a10"
@@ -34,7 +34,7 @@ async def set_up(ssid: str, password: str, scan_seconds: float) -> None:
         await client.start_notify(
             STATUS, lambda _, data: statuses.put_nowait(bytes(data).decode())
         )
-        for line in (f"net wifi {ssid} {password}", f"cloud {socket_url(url)} {token}"):
+        for line in (wifi_command(ssid, password), f"cloud {socket_url(url)} {token}"):
             await client.write_gatt_char(COMMAND, line.encode(), response=True)
         async with asyncio.timeout(SETUP_SECONDS):
             while (status := await statuses.get()) != "done":
@@ -50,8 +50,6 @@ def main() -> None:
     parser.add_argument("--password", required=True)
     parser.add_argument("--scan-seconds", type=float, default=15)
     args = parser.parse_args()
-    if " " in args.ssid or " " in args.password:
-        parser.error("Wi-Fi names and passwords with spaces are not supported yet")
     asyncio.run(set_up(args.ssid, args.password, args.scan_seconds))
 
 
