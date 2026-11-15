@@ -18,7 +18,7 @@ One Python backend, deployed by [server/slate/cloud.py](server/slate/cloud.py). 
 
 ## Setup
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Node 24](https://nodejs.org/), then:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), [Node 24](https://nodejs.org/), and Opus (`brew install opus` on macOS, `libopus0` on Debian or Ubuntu), then:
 
 ```sh
 make setup
