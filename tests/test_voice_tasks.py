@@ -7,8 +7,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from slate.events import EventBus
 from slate.tasks.manager import TaskManager
-from slate.tasks.store import TaskStore
+from slate.tasks.store import CredentialRef, TaskStore
 from slate.voice.audio import SAMPLE_RATE
+from slate.voice.live import ALLOWED, BACKEND_CONTEXT, ok_question
 from slate.voice.session import Hello, VoiceSession
 
 RUN = "run_1"
@@ -334,6 +335,75 @@ class VoiceTaskTests(unittest.IsolatedAsyncioTestCase):
         session.announce = AsyncMock()
         await asyncio.wait_for(session.report_background(), 2)
         self.assertEqual(self.store.get(task.id).state.value, "succeeded")
+        await session.close()
+
+    def call(self, session):
+        call = Mock(ok=None, say=Mock())
+        session.call = call
+        return call
+
+    async def hand_off(self, session, words, call):
+        async def progress(event):
+            if event["type"] == "approval.request":
+                call.ok = (event["run_id"], event["request_id"])
+
+        return asyncio.create_task(session.handoff(BACKEND_CONTEXT + words, progress))
+
+    async def test_spoken_ok_on_a_call_goes_through_the_task_store(self):
+        agent = ScriptedAgent(asks_to_pay)
+        session = self.session(agent)
+        call = self.call(session)
+        work = await self.hand_off(session, "Pay my electric bill", call)
+        approval = await self.pending()
+        self.assertEqual(self.store.get(approval.task_id).title, "Pay my electric bill")
+        await session.answer(*call.ok, "once")
+        reply, _ = await asyncio.wait_for(work, 2)
+        self.assertEqual(reply, "Paid.")
+        self.assertEqual(agent.choices, ["once"])
+        closed = self.store.get_approval(approval.id)
+        self.assertEqual((closed.status, closed.decided_by), ("approved", "voice"))
+        self.assertEqual(self.store.get(approval.task_id).state.value, "succeeded")
+        await session.close()
+
+    async def test_web_answer_on_a_call_closes_the_spoken_question(self):
+        agent = ScriptedAgent(asks_to_pay)
+        session = self.session(agent)
+        call = self.call(session)
+        work = await self.hand_off(session, "Pay my electric bill", call)
+        approval = await self.pending()
+        self.assertEqual(call.ok, (RUN, REQUEST))
+        self.manager.decide(approval.id, True, actor="web")
+        await asyncio.wait_for(work, 2)
+        self.assertEqual(agent.choices, ["once"])
+        self.assertIsNone(call.ok)
+        call.say.assert_called_once_with(ALLOWED)
+        await session.close()
+
+    async def test_credential_question_is_spoken_on_a_call(self):
+        session = self.session(ScriptedAgent())
+        call = self.call(session)
+        session.turn = turn = Mock(id="turn_1")
+        session.track(turn, "Pay my electric bill")
+        task_id = session.turn_tasks["turn_1"]
+        credential = Mock(id="cred_1", service="visa", kind="card", label="Main")
+        self.manager.describe_credential = lambda cid: CredentialRef(
+            cid, "visa", "Main"
+        )
+        asked = asyncio.create_task(
+            session.ask_for_credential(
+                turn, task_id, credential, "pay $84", "https://pay.example"
+            )
+        )
+        async with asyncio.timeout(2):
+            while call.ok is None:
+                await asyncio.sleep(0.01)
+        summary = "Fill your visa card (Main) on https://pay.example to pay $84"
+        call.say.assert_called_once_with(ok_question(summary))
+        run_id, approval_id = call.ok
+        self.assertEqual(run_id, "slate")
+        await session.answer(run_id, approval_id, "once")
+        self.assertTrue(await asyncio.wait_for(asked, 2))
+        self.assertEqual(self.store.get_approval(approval_id).decided_by, "voice")
         await session.close()
 
     async def test_without_a_task_manager_approvals_go_straight_to_the_agent(self):

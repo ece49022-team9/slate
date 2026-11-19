@@ -77,8 +77,9 @@ def build_server(*, mode: str | None = None) -> MCPServer:
     @server.tool(
         name="list_credentials",
         description=(
-            "List the user's saved logins, cards and tokens for the active scope: "
-            "id, service, label and kind. Never returns secret values."
+            "List the user's saved logins and cards that Slate can fill into a "
+            "web page for the active scope: id, service, label, kind and the "
+            "site a login belongs to. Never returns secret values."
         ),
     )
     async def list_credentials(scope: str) -> list[dict[str, Any]]:
@@ -87,22 +88,25 @@ def build_server(*, mode: str | None = None) -> MCPServer:
     @server.tool(
         name="use_credential",
         description=(
-            "Get one saved credential's values for the active scope's task. "
-            "If the user has not allowed it for this task, Slate asks them first "
-            "and waits up to two minutes. Give a short purpose they will "
-            "recognize, like 'pay the October electric bill'. Type the values "
-            "only where they are needed; never say, show or store them."
+            "Ask Slate for one saved login or card for the page open in your "
+            "browser. Pass that page's address as site and a short purpose the "
+            "user will recognize, like 'pay the October electric bill'. If the "
+            "user has not allowed it for this task, Slate asks them first and "
+            "waits up to two minutes. You get a browser vault handle, never the "
+            "secret: with the login or checkout form open, call "
+            "browser_vault_fill with the handle. For a login, type the returned "
+            "identifier into the username field yourself."
         ),
         structured_output=True,
     )
     async def use_credential(
-        scope: str, credential_id: str, purpose: str
+        scope: str, credential_id: str, site: str, purpose: str
     ) -> dict[str, Any]:
         return await credentials(
             "POST",
             f"/{credential_id}/use",
             scope,
-            json={"purpose": purpose},
+            json={"purpose": purpose, "site": site},
             timeout=CREDENTIAL_SECONDS,
         )
 

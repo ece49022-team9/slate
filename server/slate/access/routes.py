@@ -14,8 +14,11 @@ from slate.access.credentials import (
     BadSecret,
     CredentialNotFound,
     CredentialStore,
+    origin_of,
 )
 from slate.access.devices import DeviceStore
+from slate.access.fill import VAULT_KINDS, CannotFill, Releases, check_fillable
+from slate.agent.vault import VaultError
 
 logger = logging.getLogger("slate.access")
 BROWSER_PROTOCOL = "slate"
@@ -73,11 +76,13 @@ class NewCredential(Body):
     kind: str
     secret: dict[str, str]
     username: str | None = Field(default=None, min_length=1, max_length=120)
+    origin: str | None = Field(default=None, min_length=1, max_length=2048)
 
 
 class CredentialNames(Body):
     label: str | None = Field(default=None, min_length=1, max_length=120)
     username: str | None = Field(default=None, min_length=1, max_length=120)
+    origin: str | None = Field(default=None, min_length=1, max_length=2048)
 
 
 class NewSecret(Body):
@@ -113,8 +118,13 @@ def credentials(request: Request) -> CredentialStore:
     return request.app.state.credentials
 
 
+def releases(request: Request) -> Releases:
+    return request.app.state.releases
+
+
 Devices = Annotated[DeviceStore, Depends(devices)]
 Credentials = Annotated[CredentialStore, Depends(credentials)]
+Held = Annotated[Releases, Depends(releases)]
 
 
 @router.post("/devices", status_code=201)
@@ -164,6 +174,7 @@ def add_credential(
             label=body.label,
             kind=body.kind,
             username=body.username,
+            origin=body.origin,
             secret=body.secret,
         ).to_dict()
     except BadSecret as bad:
@@ -195,9 +206,15 @@ def rename(
     store: Credentials,
 ) -> dict[str, Any]:
     found(store, credential_id)
-    return store.rename(
-        credential_id, label=body.label, username=body.username
-    ).to_dict()
+    try:
+        return store.rename(
+            credential_id,
+            label=body.label,
+            username=body.username,
+            origin=body.origin,
+        ).to_dict()
+    except BadSecret as bad:
+        raise HTTPException(422, str(bad)) from None
 
 
 @router.put("/credentials/{credential_id}/secret")
@@ -221,6 +238,7 @@ def delete(credential_id: str, store: Credentials) -> None:
 
 class CredentialUse(Body):
     purpose: str = Field(min_length=1, max_length=200)
+    site: str = Field(min_length=1, max_length=2048)
 
 
 agent_router = APIRouter(prefix="/agent", tags=["agent"])
@@ -246,8 +264,12 @@ ActiveTurn = Annotated[tuple[Any, Any, str], Depends(active_turn)]
 @agent_router.get("/credentials")
 def available(store: Credentials, turn: ActiveTurn) -> list[dict[str, Any]]:
     return [
-        {key: item.to_dict()[key] for key in ("id", "service", "label", "kind")}
+        {
+            key: item.to_dict()[key]
+            for key in ("id", "service", "label", "kind", "origin")
+        }
         for item in store.all()
+        if item.kind in VAULT_KINDS
     ]
 
 
@@ -256,6 +278,7 @@ async def use(
     credential_id: str,
     body: Annotated[CredentialUse, parsed(CredentialUse)],
     store: Credentials,
+    held: Held,
     turn: ActiveTurn,
 ) -> dict[str, Any]:
     session, active, task_id = turn
@@ -264,10 +287,18 @@ async def use(
     except CredentialNotFound:
         raise HTTPException(404, "This credential does not exist") from None
     try:
+        site = origin_of(body.site)
+        check_fillable(credential, site)
+    except (BadSecret, CannotFill) as bad:
+        raise HTTPException(422, str(bad)) from None
+    allowed = held.site(task_id, credential_id)
+    if allowed is not None and allowed != site:
+        raise HTTPException(403, f"The user allowed this credential on {allowed} only")
+    try:
         secret = store.use(credential_id, task_id=task_id, purpose=body.purpose)
     except AccessDenied as denied:
         if denied.reason != "not_granted" or not await session.ask_for_credential(
-            active, task_id, credential, body.purpose
+            active, task_id, credential, body.purpose, site
         ):
             raise HTTPException(
                 403, f"The user did not allow this credential ({denied.reason})"
@@ -278,9 +309,20 @@ async def use(
             raise HTTPException(
                 403, f"The user did not allow this credential ({again.reason})"
             ) from None
-    logger.info("Released credential %s to task %s", credential_id, task_id)
+    try:
+        handle = await held.fill(task_id, credential, secret, site)
+    except CannotFill as bad:
+        raise HTTPException(422, str(bad)) from None
+    except VaultError as error:
+        logger.warning("Credential %s not put in the vault: %s", credential_id, error)
+        raise HTTPException(503, f"Slate could not prepare the fill: {error}") from None
     return {
-        "credential_id": secret.credential_id,
-        "username": secret.username,
-        "values": secret.values,
+        "handle": handle,
+        "kind": VAULT_KINDS[credential.kind],
+        "origin": site,
+        "identifier": credential.username if credential.kind == "password" else None,
+        "next": (
+            "Call browser_vault_fill with this handle while the form is open on "
+            f"{site}. You never see the secret."
+        ),
     }

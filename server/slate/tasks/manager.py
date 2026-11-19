@@ -3,7 +3,7 @@ import time
 from collections.abc import Callable, Sequence
 
 from slate.events import EventBus
-from slate.tasks.machine import Event, State
+from slate.tasks.machine import TERMINAL, Event, State
 from slate.tasks.store import (
     PENDING,
     Approval,
@@ -32,6 +32,7 @@ class TaskManager:
         self.describe_credential = describe_credential
         self.timers: dict[str, asyncio.TimerHandle] = {}
         self.waiters: dict[str, asyncio.Future[Approval]] = {}
+        self.finished: list[Callable[[str], None]] = []
 
     def recover(self) -> None:
         now = self.clock()
@@ -189,3 +190,6 @@ class TaskManager:
 
     def _publish_task(self, task: Task) -> None:
         self.bus.publish("task.updated", task.to_dict(), session_id=task.session_id)
+        if task.state in TERMINAL:
+            for hook in self.finished:
+                hook(task.id)

@@ -16,6 +16,7 @@ from opuslib_next import Decoder, OpusError
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from slate.access.credentials import Credential
+from slate.access.fill import SPOKEN_KINDS
 from slate.agent import create_agent
 from slate.agent.agent import BACKGROUND_PROMPT
 from slate.device import DeviceCommand, DeviceSDK, agent_context
@@ -25,7 +26,15 @@ from slate.tasks.manager import TaskManager
 from slate.tasks.store import ApprovalClosed, TaskNotFound
 from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE
 from slate.voice.client import speak_stream, transcribe_stream
-from slate.voice.live import LiveCall, Progress, outcome
+from slate.voice.live import (
+    ALLOWED,
+    BACKEND_CONTEXT,
+    DECLINED,
+    LiveCall,
+    Progress,
+    ok_question,
+    outcome,
+)
 from slate.voice.reply import Sentences
 from slate.voice.turn import Turn
 
@@ -236,18 +245,46 @@ class VoiceSession:
             decided_by=approval.decided_by,
         )
         choice = "once" if approval.status == "approved" else "deny"
+        self.answered_elsewhere(run_id, request_id, choice)
         try:
             await self.agent.approve(run_id, request_id, choice)
         except (ValueError, httpx.HTTPError) as error:
             logger.info("Approval %s was not delivered: %s", approval_id, error)
 
+    def answered_elsewhere(self, run_id: str, request_id: str, choice: str) -> None:
+        call = self.call
+        if call is None or call.ok != (run_id, request_id):
+            return
+        call.ok = None
+        call.say(ALLOWED if choice == "once" else DECLINED)
+
+    async def answer(
+        self, run_id: str, request_id: str, choice: str, actor: str = "voice"
+    ) -> None:
+        if choice not in ("once", "deny"):
+            raise ValueError("Choose once or deny for this exact approval request")
+        approval_id = self.approvals.get((run_id, request_id))
+        if approval_id is None or self.task_manager is None:
+            await self.agent.approve(run_id, request_id, choice)
+            return
+        try:
+            self.task_manager.decide(approval_id, choice == "once", actor=actor)
+        except ApprovalClosed:
+            raise ValueError("This approval was already answered") from None
+
     async def ask_for_credential(
-        self, turn: Turn, task_id: str, credential: Credential, purpose: str
+        self,
+        turn: Turn,
+        task_id: str,
+        credential: Credential,
+        purpose: str,
+        site: str,
     ) -> bool:
         assert self.task_manager is not None
+        kind = SPOKEN_KINDS.get(credential.kind, credential.kind)
         summary = (
-            f"Use your {credential.service} {credential.kind} "
-            f"({credential.label}) to {purpose}"
+            f"Fill your {credential.service} {kind} ({credential.label}) "
+            f"on {site} to {purpose}"
         )
         try:
             approval = self.task_manager.request_approval(
@@ -261,6 +298,9 @@ class VoiceSession:
             return False
         key = (SLATE_RUN, approval.id)
         self.approvals[key] = approval.id
+        if (call := self.call) is not None:
+            call.ok = key
+            call.say(ok_question(summary))
         try:
             await self.publish(
                 turn,
@@ -273,6 +313,9 @@ class VoiceSession:
             decided = await self.task_manager.wait_for_decision(approval.id)
         finally:
             self.approvals.pop(key, None)
+        self.answered_elsewhere(
+            *key, "once" if decided.status == "approved" else "deny"
+        )
         await self.publish(
             turn,
             "approval_resolved",
@@ -425,19 +468,11 @@ class VoiceSession:
         try:
             if self.turn is None or message["turn_id"] != self.turn.id:
                 raise ValueError("This recording has ended")
-            if message["choice"] not in ("once", "deny"):
-                raise ValueError("Choose once or deny for this exact approval request")
-            approval_id = self.approvals.get((message["run_id"], message["request_id"]))
-            if approval_id is not None and self.task_manager is not None:
-                try:
-                    self.task_manager.decide(
-                        approval_id, message["choice"] == "once", actor="device"
-                    )
-                except ApprovalClosed:
-                    raise ValueError("This approval was already answered") from None
-                return
-            await self.agent.approve(
-                message["run_id"], message["request_id"], message["choice"]
+            await self.answer(
+                message["run_id"],
+                message["request_id"],
+                message["choice"],
+                actor="device",
             )
         except (ValueError, KeyError, TypeError) as error:
             logger.warning("Approval rejected: %s", error)
@@ -713,7 +748,7 @@ class VoiceSession:
             voice: asyncio.Queue[bytes] = asyncio.Queue()
             call = LiveCall(
                 delegate=self.handoff,
-                approve=self.agent.approve,
+                approve=self.answer,
                 speak=voice.put_nowait,
                 send=self.send,
                 background=lambda: len(self.agent.pending),
@@ -828,7 +863,7 @@ class VoiceSession:
         turn = Turn()
         turn.finish()
         self.turn = turn
-        self.track(turn, request)
+        self.track(turn, request.removeprefix(BACKEND_CONTEXT))
 
         async def relay(event: dict) -> None:
             await self.agent_progress(turn, event)

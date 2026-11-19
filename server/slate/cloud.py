@@ -74,6 +74,7 @@ image = (
         {
             "PYTHONPATH": "/opt/slate/server",
             "SLATE_HERMES_HOME": HOME,
+            "SLATE_HERMES_PYTHON": f"{SOURCE}/.venv/bin/python",
             "SLATE_HOME": str(SLATE_HOME),
             "HERMES_ALLOW_ROOT_GATEWAY": "1",
             "SLATE_DEVICE_URL": "http://127.0.0.1:8000",

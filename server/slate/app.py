@@ -8,9 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from slate.access import home
 from slate.access.credentials import CredentialStore
 from slate.access.devices import DeviceStore
+from slate.access.fill import Releases
 from slate.access.routes import agent_router
 from slate.access.routes import router as access_router
 from slate.access.vault import Keyring
+from slate.agent.vault import HermesVault
 from slate.device import router as device_router
 from slate.events import EventBus
 from slate.events import router as events_router
@@ -36,11 +38,15 @@ async def lifespan(app: FastAPI):
     app.state.tasks = TaskManager(
         tasks, app.state.events, describe_credential=app.state.credentials.describe
     )
+    app.state.releases = Releases(HermesVault())
+    app.state.tasks.finished.append(app.state.releases.finish)
+    await app.state.releases.purge()
     app.state.tasks.recover()
     app.state.devices = DeviceStore(data / "devices.sqlite3")
     app.state.voice = VoiceSessions(app.state.events, app.state.tasks)
     yield
     await app.state.voice.close()
+    await app.state.releases.close()
     app.state.tasks.close()
     app.state.devices.close()
     app.state.credentials.close()

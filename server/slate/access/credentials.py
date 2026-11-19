@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from slate.access.vault import DecryptError, Keyring, Sealed
 from slate.tasks.store import CredentialRef
@@ -19,6 +20,8 @@ KINDS: dict[str, tuple[str, ...]] = {
 }
 MAX_FIELDS = 8
 MAX_VALUE = 4096
+DEFAULT_PORTS = {"https": 443, "http": 80}
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS credentials (
@@ -27,6 +30,7 @@ CREATE TABLE IF NOT EXISTS credentials (
     label         TEXT NOT NULL,
     kind          TEXT NOT NULL,
     username      TEXT,
+    origin        TEXT,
     hint          TEXT,
     key_id        TEXT NOT NULL,
     nonce         BLOB NOT NULL,
@@ -58,6 +62,10 @@ class BadSecret(ValueError):
     pass
 
 
+class BadOrigin(BadSecret):
+    pass
+
+
 class AccessDenied(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -71,6 +79,7 @@ class Credential:
     label: str
     kind: str
     username: str | None
+    origin: str | None
     hint: str | None
     key_id: str
     created_at: float
@@ -85,6 +94,7 @@ class Credential:
             "label": self.label,
             "kind": self.kind,
             "username": self.username,
+            "origin": self.origin,
             "hint": self.hint,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -142,6 +152,24 @@ def check_secret(kind: str, values: Any) -> dict[str, str]:
     return dict(values)
 
 
+def origin_of(address: str) -> str:
+    parts = urlsplit(address.strip())
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    if not host:
+        raise BadOrigin("Give the site as an address like https://example.com")
+    if scheme != "https" and not (scheme == "http" and host in LOCAL_HOSTS):
+        raise BadOrigin("Slate fills credentials only on https sites")
+    try:
+        port = parts.port
+    except ValueError:
+        raise BadOrigin("The site address has an invalid port") from None
+    name = f"[{host}]" if ":" in host else host
+    if port is None or port == DEFAULT_PORTS[scheme]:
+        return f"{scheme}://{name}"
+    return f"{scheme}://{name}:{port}"
+
+
 def make_hint(kind: str, values: dict[str, str]) -> str | None:
     if kind == "card":
         digits = "".join(ch for ch in values["number"] if ch.isdigit())
@@ -179,6 +207,11 @@ class CredentialStore:
         }
         if "approval_id" not in columns:
             self.conn.execute("ALTER TABLE credential_uses ADD COLUMN approval_id TEXT")
+        saved = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(credentials)")
+        }
+        if "origin" not in saved:
+            self.conn.execute("ALTER TABLE credentials ADD COLUMN origin TEXT")
         self.path.chmod(0o600)
 
     def close(self) -> None:
@@ -191,8 +224,10 @@ class CredentialStore:
         kind: str,
         secret: Any,
         username: str | None = None,
+        origin: str | None = None,
     ) -> Credential:
         values = check_secret(kind, secret)
+        site = None if origin is None else origin_of(origin)
         credential_id = "cred_" + secrets.token_hex(8)
         sealed = self.keyring.seal(
             json.dumps(values).encode(), aad(credential_id, service, kind)
@@ -200,15 +235,16 @@ class CredentialStore:
         now = self.clock()
         with self.lock, self.conn:
             self.conn.execute(
-                "INSERT INTO credentials (id, service, label, kind, username, hint, "
-                "key_id, nonce, ciphertext, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO credentials (id, service, label, kind, username, origin, "
+                "hint, key_id, nonce, ciphertext, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     credential_id,
                     service,
                     label,
                     kind,
                     username,
+                    site,
                     make_hint(kind, values),
                     sealed.key_id,
                     sealed.nonce,
@@ -245,15 +281,18 @@ class CredentialStore:
         *,
         label: str | None = None,
         username: str | None = None,
+        origin: str | None = None,
     ) -> Credential:
         current = self.get(credential_id)
+        site = current.origin if origin is None else origin_of(origin)
         with self.lock, self.conn:
             self.conn.execute(
-                "UPDATE credentials SET label = ?, username = ?, updated_at = ? "
-                "WHERE id = ?",
+                "UPDATE credentials SET label = ?, username = ?, origin = ?, "
+                "updated_at = ? WHERE id = ?",
                 (
                     label if label is not None else current.label,
                     username if username is not None else current.username,
+                    site,
                     self.clock(),
                     credential_id,
                 ),
@@ -402,6 +441,7 @@ def _credential(row: sqlite3.Row) -> Credential:
         label=row["label"],
         kind=row["kind"],
         username=row["username"],
+        origin=row["origin"],
         hint=row["hint"],
         key_id=row["key_id"],
         created_at=row["created_at"],
