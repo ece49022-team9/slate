@@ -3,11 +3,12 @@ import asyncio
 
 from slate.board import ROOT
 from slate.link import open_board
-from slate.voice.device import cloud, socket_url, wifi_command
+from slate.voice.device import cloud, pair_device, socket_url, wifi_command
 
 
-async def provision(port: str, ssid: str, password: str) -> None:
-    url, token = cloud()
+async def provision(port: str, ssid: str, password: str, name: str) -> None:
+    url, owner = cloud()
+    token = await pair_device(url, owner, name)
     link, reader = await open_board(port, ROOT / ".local/bench-serial.log")
     try:
         online = asyncio.ensure_future(link.wait_for("slate.net: up", 30))
@@ -27,8 +28,9 @@ def main() -> None:
     parser.add_argument("port")
     parser.add_argument("--ssid", required=True)
     parser.add_argument("--password", required=True)
+    parser.add_argument("--name", default="Slate")
     args = parser.parse_args()
-    asyncio.run(provision(args.port, args.ssid, args.password))
+    asyncio.run(provision(args.port, args.ssid, args.password, args.name))
 
 
 if __name__ == "__main__":

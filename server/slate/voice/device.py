@@ -7,6 +7,7 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
 import numpy as np
 import soxr
 import websockets
@@ -35,6 +36,19 @@ def cloud() -> tuple[str, str]:
     if not url or not token:
         raise RuntimeError("slate.voice: no cloud settings; run make cloud-deploy")
     return url, token
+
+
+async def pair_device(url: str, owner: str, name: str) -> str:
+    async with httpx.AsyncClient(base_url=url, timeout=20) as client:
+        reply = await client.post(
+            "/api/devices",
+            json={"name": name},
+            headers={"Authorization": f"Bearer {owner}"},
+        )
+        reply.raise_for_status()
+    paired = reply.json()
+    print(f"slate.pair: registered {name} as {paired['device']['id']}")
+    return paired["token"]
 
 
 def socket_url(url: str) -> str:

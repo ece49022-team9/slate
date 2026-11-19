@@ -1,11 +1,10 @@
 import argparse
 import asyncio
 
-import httpx
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from slate.voice.device import cloud, socket_url, wifi_command
+from slate.voice.device import cloud, pair_device, socket_url, wifi_command
 
 SERVICE = "5a7e0001-6a1b-4c3e-9f5d-8b2c1e0d4a10"
 COMMAND = "5a7e0002-6a1b-4c3e-9f5d-8b2c1e0d4a10"
@@ -18,19 +17,6 @@ def in_setup(device: BLEDevice, advertisement: AdvertisementData) -> bool:
     return name.startswith("Slate-") or SERVICE in advertisement.service_uuids
 
 
-async def device_token(url: str, owner: str, name: str) -> str:
-    async with httpx.AsyncClient(base_url=url, timeout=20) as client:
-        reply = await client.post(
-            "/api/devices",
-            json={"name": name},
-            headers={"Authorization": f"Bearer {owner}"},
-        )
-        reply.raise_for_status()
-    paired = reply.json()
-    print(f"slate.pair: registered {name} as {paired['device']['id']}")
-    return paired["token"]
-
-
 async def set_up(ssid: str, password: str, scan_seconds: float) -> None:
     url, owner = cloud()
     device = await BleakScanner.find_device_by_filter(in_setup, timeout=scan_seconds)
@@ -39,7 +25,7 @@ async def set_up(ssid: str, password: str, scan_seconds: float) -> None:
             "slate.pair: no Slate in setup mode nearby; send !setup over serial or "
             "erase its saved cloud settings"
         )
-    token = await device_token(url, owner, device.name or "Slate")
+    token = await pair_device(url, owner, device.name or "Slate")
     statuses: asyncio.Queue[str] = asyncio.Queue()
     async with BleakClient(device) as client:
         print(
