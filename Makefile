@@ -1,4 +1,4 @@
-.PHONY: setup check web cloud-setup cloud-deploy cloud-logs voice-deploy voice-check dashboard browser-view agent-setup agent-login agent agent-check browser browser-stop board firmware flash monitor provision pair bench sim-setup sim sim-check sim-pair-check sim-voice device-code-check profile eval
+.PHONY: setup check web cloud-setup cloud-deploy cloud-logs voice-deploy voice-check dashboard browser-view agent-setup agent-login agent agent-check browser browser-stop board firmware flash monitor provision pair bench sim-setup sim sim-check sim-pair-check demo-local sim-voice device-code-check profile eval
 
 FIRMWARE_ENV ?= slate-s3-voice-test
 MODAL_PROFILE ?= sudarshan-1
@@ -116,6 +116,9 @@ sim-check:
 
 sim-pair-check:
 	uv run python scripts/check_pairing.py
+
+demo-local:
+	uv run python scripts/demo_local.py
 
 sim-voice:
 	$(MODAL) uv run python -m slate.voice firmware "$(INPUT)"
