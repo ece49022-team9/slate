@@ -18,11 +18,14 @@ from slate.agent.runtime import point_browser
 
 logger = logging.getLogger("slate.browser")
 TAGS = {"slate": "browser"}
+HERE = Path(__file__).parent
 IMAGE = (
     modal.Image.debian_slim(python_version="3.12")
-    .uv_pip_install("playwright==1.62.0", "aiohttp==3.13.3")
-    .run_commands("playwright install --with-deps chromium")
-    .add_local_file(Path(__file__).with_name("chromium.py"), "/browser.py")
+    .add_local_file(HERE / "machine.sh", "/opt/browser/machine.sh", copy=True)
+    .add_local_dir(HERE / "voxl", "/opt/browser/voxl", copy=True)
+    .run_commands("bash /opt/browser/machine.sh")
+    .uv_pip_install("aiohttp==3.13.3")
+    .add_local_python_source("slate")
 )
 
 
@@ -78,17 +81,21 @@ async def start() -> None:
     app = await modal.App.lookup.aio("slate-browser", create_if_missing=True)
     sandbox = await modal.Sandbox.create.aio(
         "python",
-        "/browser.py",
+        "-m",
+        "slate.browser.chromium",
         app=app,
         tags=TAGS,
         image=IMAGE,
+        workdir="/root",
+        cpu=4.0,
+        memory=4096,
         timeout=4 * 3600,
         experimental_options={"vm_runtime": True},
         readiness_probe=modal.Probe.with_exec("test", "-f", "/tmp/browser-ready"),
         env={"SLATE_BROWSER_TEST_CODE": secrets.token_hex(8)},
     )
     try:
-        await sandbox.wait_until_ready.aio(timeout=60)
+        await sandbox.wait_until_ready.aio(timeout=120)
         STATE.parent.mkdir(parents=True, exist_ok=True)
         STATE.write_text(json.dumps(await describe(sandbox)))
         point_browser()

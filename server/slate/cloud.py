@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -37,6 +38,9 @@ KEPT_DATABASES = ("state.db", "kanban.db", "response_store.db", "shared-state.db
 LOCAL = ROOT / ".local/cloud.json"
 APP = "slate"
 SECRET = "slate-cloud"
+DASHBOARD_PORT = 9119
+DASHBOARD_USER = "slate"
+WEB_DIST = "/opt/hermes-web"
 
 app = modal.App(APP, include_source=False)
 state = modal.Volume.from_name("slate-hermes", create_if_missing=True)
@@ -48,6 +52,7 @@ image = (
         "curl",
         "git",
         "libffi-dev",
+        "libopus0",
         "procps",
         "ripgrep",
     )
@@ -58,9 +63,10 @@ image = (
         f"mkdir -p {SOURCE}",
         f"tar -xzf /tmp/hermes.tgz -C {SOURCE} --strip-components=1",
         f"cd {SOURCE} && uv sync --frozen --python {HERMES['python']} --no-dev "
-        "--extra messaging --extra mcp",
+        "--extra messaging --extra mcp --extra web",
         f"cd {SOURCE} && HERMES_HOME={HOME} uv run --no-sync python -c "
-        "\"import pm; pm.sync_venv(['messaging', 'mcp', 'modal'], explicit=True)\"",
+        '"import pm; '
+        "pm.sync_venv(['messaging', 'mcp', 'modal', 'web'], explicit=True)\"",
         f"HERMES_HOME={HOME} {SOURCE}/.venv/bin/hermes pm install agent-browser",
     )
     .uv_sync(str(ROOT), extra_options="--python 3.12")
@@ -72,8 +78,10 @@ image = (
             "HERMES_ALLOW_ROOT_GATEWAY": "1",
             "SLATE_DEVICE_URL": "http://127.0.0.1:8000",
             "SLATE_DEVICE_MODE": os.environ.get("SLATE_DEVICE_MODE", "monty"),
+            "HERMES_WEB_DIST": WEB_DIST,
         }
     )
+    .add_local_dir(runtime.SOURCE / "hermes_cli/web_dist", WEB_DIST)
     .add_local_dir(ROOT / "server/slate", "/opt/slate/server/slate")
     .add_local_dir(ROOT / "hermes", "/opt/slate/hermes")
     .add_local_file(
@@ -211,6 +219,21 @@ class Slate:
         ]
         wait_for_port(8642, self.processes[0], 120)
         logger.info("slate.cloud: Hermes gateway ready")
+        key = os.environ["SLATE_AGENT_KEY"]
+        self.processes.append(
+            subprocess.Popen(
+                [*hermes, "dashboard", "--no-open", "--host", "0.0.0.0"]
+                + ["--port", str(DASHBOARD_PORT)],
+                env=env
+                | {
+                    "HERMES_DASHBOARD_BASIC_AUTH_USERNAME": DASHBOARD_USER,
+                    "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": key,
+                    "HERMES_DASHBOARD_BASIC_AUTH_SECRET": hashlib.sha256(
+                        f"slate-dashboard:{key}".encode()
+                    ).hexdigest(),
+                },
+            )
+        )
         asyncio.run(warm_up())
         self.stopping = threading.Event()
         self.saver = threading.Thread(target=keep_saving, args=(self.stopping,))
@@ -238,6 +261,10 @@ class Slate:
     @modal.web_server(8642, startup_timeout=60)
     def agent(self) -> None:
         logger.info("slate.cloud: exposing the Hermes API behind its key")
+
+    @modal.web_server(DASHBOARD_PORT, startup_timeout=180)
+    def dashboard(self) -> None:
+        logger.info("slate.cloud: exposing the Hermes dashboard behind its login")
 
     @modal.exit()
     def stop(self) -> None:
@@ -300,6 +327,7 @@ def deploy() -> None:
     service = modal.Cls.from_name(APP, "Slate")()
     url = service.serve.get_web_url()
     settings["agent_url"] = service.agent.get_web_url()
+    settings["dashboard_url"] = service.dashboard.get_web_url()
     if settings.get("url") != url:
         settings["url"] = url
         LOCAL.write_text(json.dumps(settings, indent=2))
@@ -310,10 +338,24 @@ def deploy() -> None:
     print(f"slate.cloud: deployed at {url}")
 
 
+def dashboard() -> None:
+    settings = local_settings()
+    if "dashboard_url" not in settings:
+        raise RuntimeError("slate.cloud: no dashboard URL; run make cloud-deploy")
+    subprocess.run(["pbcopy"], input=settings["agent_key"].encode(), check=True)
+    subprocess.run(["open", settings["dashboard_url"]], check=True)
+    print(
+        f"slate.cloud: opened {settings['dashboard_url']}; sign in as "
+        f"{DASHBOARD_USER} with the password now on the clipboard"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["setup", "deploy"])
-    {"setup": setup, "deploy": deploy}[parser.parse_args().command]()
+    parser.add_argument("command", choices=["setup", "deploy", "dashboard"])
+    {"setup": setup, "deploy": deploy, "dashboard": dashboard}[
+        parser.parse_args().command
+    ]()
 
 
 if __name__ == "__main__":

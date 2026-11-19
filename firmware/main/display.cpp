@@ -39,8 +39,9 @@ void display_snapshot(DisplayConfig& value) {
 }
 
 void display_set_state(SlateState state) {
-  current_state.store(state);
+  if (current_state.load() == state) return;
   audio_level.store(0);
+  current_state.store(state);
   revision.fetch_add(1);
 }
 
@@ -48,7 +49,7 @@ SlateState display_get_state() { return current_state.load(); }
 unsigned display_revision() { return revision.load(); }
 
 void display_submit_audio(float rms) {
-  unsigned target = rms > 60.0f ? std::min(1000u, unsigned((rms - 60.0f) * 2.0f)) : 0;
+  unsigned target = rms > 60.0f ? std::min(1000u, unsigned((rms - 60.0f) * 5.0f)) : 0;
   unsigned previous = audio_level.load();
   audio_level.store(target > previous ? (3 * target + previous) / 4
                                       : (target + 7 * previous) / 8);

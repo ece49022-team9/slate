@@ -6,7 +6,7 @@ import subprocess
 import tomllib
 from datetime import UTC, datetime
 
-from slate.board import ROOT, load
+from slate.board import BOARD, ROOT, load
 from slate.breadboard import breadboard, build_image, tone
 from slate.link import Link, open_board
 
@@ -14,7 +14,6 @@ CALIBRATION = ROOT / "firmware/sim_calibration.toml"
 SERIAL_LOG = ROOT / ".local/resources-serial.log"
 TIMERS = ("render", "spi", "audio")
 STACKS = ("loop", "control", "oled", "pdm", "cloud", "speaker")
-FRAME_US = 30_000
 HEAP_MIN = 32_768
 HEAP_BLOCK = 16_384
 STACK_MIN = 512
@@ -66,7 +65,7 @@ async def measure(link: Link, key: str, reports: int) -> dict:
 
 
 async def simulated(key: str, reports: int) -> dict:
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     rate = board["device"]["mic"]["sample_hz"]
     async with breadboard(connect_cloud=False) as bench:
         samples = tone(440, 12000, 2.5 * reports + 4, rate)
@@ -92,15 +91,16 @@ def factors() -> dict[str, float] | None:
 
 
 def check(target: str, report: dict, scale: dict[str, float] | None) -> list[str]:
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     mic = board["device"]["mic"]
     audio_us = 1_000_000 * BLOCK_SAMPLES // mic["sample_hz"]
+    frame_us = 1_000_000 // board["device"]["oled"]["frame_hz"]
     scale = scale or dict.fromkeys(TIMERS, 1.0)
     peak = {timer: report[f"{timer}_us"][1] * scale[timer] for timer in TIMERS}
     failures = []
     frame = peak["render"] + peak["spi"]
-    if frame > FRAME_US:
-        failures.append(f"frame takes {frame:.0f} us of a {FRAME_US} us budget")
+    if frame > frame_us:
+        failures.append(f"frame takes {frame:.0f} us of a {frame_us} us budget")
     if peak["audio"] > audio_us:
         failures.append(f"audio block takes {peak['audio']:.0f} us of {audio_us} us")
     if report["heap_min"] < HEAP_MIN:
@@ -115,7 +115,7 @@ def check(target: str, report: dict, scale: dict[str, float] | None) -> list[str
         if report[f"stack_{task}"] < STACK_MIN:
             failures.append(f"{task} stack has {report[f'stack_{task}']} bytes left")
     print(
-        f"slate.resources: {target} frame peak {frame:.0f}/{FRAME_US} us, audio peak "
+        f"slate.resources: {target} frame peak {frame:.0f}/{frame_us} us, audio peak "
         f"{peak['audio']:.0f}/{audio_us} us, heap min {report['heap_min']} of "
         f"{report['heap_total']} bytes, largest block {report['heap_block']}, "
         "stack left "
@@ -134,7 +134,7 @@ def calibrate(real: dict, sim: dict) -> dict[str, float]:
     revision = subprocess.check_output(
         ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True
     ).strip()
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     CALIBRATION.write_text(
         f"# Measured {datetime.now(UTC).date()} on {board['mcu']} at {revision}: "
         "hardware average / QEMU average\n[timing]\n"
@@ -144,7 +144,7 @@ def calibrate(real: dict, sim: dict) -> dict[str, float]:
 
 
 async def run(args: argparse.Namespace) -> None:
-    board, _ = load()
+    board, _ = load(BOARD.with_name("board-prototype.toml"))
     key = "lr"[["left", "right"].index(board["device"]["mic"]["slot"])]
     failures = []
     if args.port:
@@ -158,7 +158,8 @@ async def run(args: argparse.Namespace) -> None:
         scale = factors()
         if scale is None:
             print(
-                "slate.resources: QEMU timing is uncalibrated; run make calibrate-sim"
+                "slate.resources: QEMU timing is uncalibrated; "
+                "run make bench CALIBRATE=1"
             )
         failures += check("qemu", sim, scale)
     if failures:

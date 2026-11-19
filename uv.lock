@@ -1317,6 +1317,15 @@ wheels = [
 ]
 
 [[package]]
+name = "opuslib-next"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/8f/5c91b792689a70f3333e3569832c9a1263c3a736b69f81f43c7131494a8a/opuslib_next-1.3.1.tar.gz", hash = "sha256:fa22ed3934d9cf885e0e88fa52b0b0ea9d51895970e288c3831067f7713e1462", size = 28098, upload-time = "2026-08-10T03:13:33.369Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/af/037773144edf48fa4920592be2b91ec7cea5f5587fe1926a529e7de24270/opuslib_next-1.3.1-py3-none-any.whl", hash = "sha256:26a3eb057269bcafdcd363fbd2bae61a35ebe033cc91d264d54d408fe9fca0f6", size = 19499, upload-time = "2026-08-10T03:13:32.512Z" },
+]
+
+[[package]]
 name = "propcache"
 version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2005,6 +2014,7 @@ dependencies = [
     { name = "modal" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "opuslib-next" },
     { name = "pydantic-monty" },
     { name = "pyserial-asyncio-fast" },
     { name = "soxr" },
@@ -2030,6 +2040,7 @@ requires-dist = [
     { name = "modal", specifier = "==1.5.5" },
     { name = "numpy", specifier = ">=2.3" },
     { name = "openai", specifier = ">=3.14.0,<4" },
+    { name = "opuslib-next", specifier = ">=1.3.1" },
     { name = "pydantic-monty", specifier = "==1.0.0" },
     { name = "pyserial-asyncio-fast", specifier = ">=0.16" },
     { name = "soxr", specifier = ">=1.0" },

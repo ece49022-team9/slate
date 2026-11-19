@@ -4,7 +4,6 @@ import logging
 import os
 from collections.abc import Callable, Coroutine
 from contextlib import aclosing
-from functools import partial
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -12,7 +11,9 @@ import httpx
 import numpy as np
 import soxr
 from fastapi import WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from openai import APIError
+from opuslib_next import Decoder, OpusError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from slate.access.credentials import Credential
 from slate.agent import create_agent
@@ -24,7 +25,7 @@ from slate.tasks.manager import TaskManager
 from slate.tasks.store import ApprovalClosed, TaskNotFound
 from slate.voice.audio import SAMPLE_BYTES, SAMPLE_RATE
 from slate.voice.client import speak_stream, transcribe_stream
-from slate.voice.live import LiveCall
+from slate.voice.live import LiveCall, Progress, outcome
 from slate.voice.reply import Sentences
 from slate.voice.turn import Turn
 
@@ -33,6 +34,10 @@ SPOKEN_END = "\n---"
 REPLY_FRAME_BYTES = SAMPLE_RATE * SAMPLE_BYTES // 50
 REPLY_LEAD_SECONDS = 1.0
 CALL_LEAD_SECONDS = 0.2
+CALL_RATES = (16_000, 24_000)
+OPUS_RATES = (8_000, 12_000, 16_000, 24_000, 48_000)
+OPUS_MAX_MS = 120
+OFFER_LIMIT = 20_000
 RECEIPT_SECONDS = 5
 HANGUP_SECONDS = 5
 KEPT_REPORTS = 50
@@ -47,7 +52,14 @@ class Hello(BaseModel):
     type: Literal["hello"]
     rate: int = Field(default=16_000, ge=8_000, le=48_000)
     speaker_rate: int = Field(default=SAMPLE_RATE, ge=8_000, le=48_000)
+    codec: Literal["pcm", "opus"] = "pcm"
     profile: StrictBool = False
+
+    @model_validator(mode="after")
+    def opus_rate(self) -> "Hello":
+        if self.codec == "opus" and self.rate not in OPUS_RATES:
+            raise ValueError(f"Opus audio must use one of {OPUS_RATES} Hz")
+        return self
 
 
 def spoken_part(text: str, final: bool) -> tuple[str, bool]:
@@ -83,6 +95,9 @@ class VoiceSession:
         self.reports: dict[str, dict] = {}
         self.id = uuid4().hex
         self.agent = create_agent()
+        self.rate = hello.rate
+        self.speaker_rate = hello.speaker_rate
+        self.decoder = Decoder(hello.rate, 1) if hello.codec == "opus" else None
         self.resampler = (
             None
             if hello.rate == SAMPLE_RATE
@@ -104,6 +119,8 @@ class VoiceSession:
         self.watcher: asyncio.Task | None = None
         self.call: LiveCall | None = None
         self.call_task: asyncio.Task | None = None
+        self.call_input: soxr.ResampleStream | None = None
+        self.call_output: soxr.ResampleStream | None = None
         self.playhead = 0.0
 
     def spawn(self, work: Coroutine[Any, Any, None]) -> asyncio.Task:
@@ -289,15 +306,36 @@ class VoiceSession:
             await self.close()
 
     async def audio(self, pcm: bytes) -> None:
+        if self.decoder is not None:
+            try:
+                pcm = self.decoder.decode(pcm, self.rate * OPUS_MAX_MS // 1000)
+            except OpusError as error:
+                logger.warning(
+                    "slate.voice.opus: dropped a %s-byte packet from device %s: %s",
+                    len(pcm),
+                    self.id,
+                    error,
+                )
+                return
         call = self.call
+        if call is not None:
+            if call.session_id:
+                return
+            if len(pcm) % SAMPLE_BYTES:
+                logger.warning("Dropped partial samples in live call %s", call.id)
+                return
+            if self.call_input is not None:
+                pcm = self.call_input.resample_chunk(
+                    np.frombuffer(pcm, dtype="<i2")
+                ).tobytes()
+            if pcm:
+                call.push(pcm)
+            return
         turn = self.turn
-        if call is None and (turn is None or not turn.receiving or turn.announcement):
+        if turn is None or not turn.receiving or turn.announcement:
             return
         if self.resampler is not None:
             if len(pcm) % SAMPLE_BYTES:
-                if call is not None:
-                    logger.warning("Dropped partial samples in live call %s", call.id)
-                    return
                 await self.abort("Audio must contain complete 16-bit samples")
                 return
             pcm = self.resampler.resample_chunk(
@@ -305,9 +343,6 @@ class VoiceSession:
             ).tobytes()
             if not pcm:
                 return
-        if call is not None:
-            call.push(pcm)
-            return
         try:
             turn.push(pcm)
         except ValueError as error:
@@ -323,7 +358,7 @@ class VoiceSession:
         elif kind == "cancel":
             await self.abort()
         elif kind == "live":
-            await self.start_call()
+            await self.live(message.get("sdp"))
         elif kind == "hangup":
             await self.end_call()
         elif kind == "receipt":
@@ -647,21 +682,73 @@ class VoiceSession:
             if self.turn is turn:
                 self.turn = None
 
-    async def start_call(self) -> None:
+    async def live(self, offer: object) -> None:
+        if offer is not None and (
+            not isinstance(offer, str) or not 0 < len(offer) <= OFFER_LIMIT
+        ):
+            logger.warning("Device %s sent an invalid WebRTC offer", self.id)
+            await self.send(
+                {"type": "live", "state": "ended", "error": "Invalid WebRTC offer"}
+            )
+            return
+        try:
+            await self.start_call(offer)
+        except APIError as error:
+            logger.warning("OpenAI refused a call for device %s: %s", self.id, error)
+            await self.send(
+                {
+                    "type": "live",
+                    "state": "ended",
+                    "error": "OpenAI couldn't start the call. Try again.",
+                }
+            )
+
+    async def start_call(self, offer: str | None = None) -> LiveCall | None:
         async with self.turn_lock:
             if self.call is not None:
                 logger.warning("Device %s asked for a live call during one", self.id)
-                return
+                return None
             await self._abort()
+            rate = self.rate if self.rate in CALL_RATES else SAMPLE_RATE
             voice: asyncio.Queue[bytes] = asyncio.Queue()
             call = LiveCall(
-                delegate=self.handoff, speak=voice.put_nowait, send=self.send
+                delegate=self.handoff,
+                approve=self.agent.approve,
+                speak=voice.put_nowait,
+                send=self.send,
+                background=lambda: len(self.agent.pending),
+                rate=rate,
+            )
+            if offer is not None:
+                answer = await call.open(offer)
+                await self.send(
+                    {
+                        "type": "live",
+                        "state": "answer",
+                        "call_id": call.id,
+                        "sdp": answer,
+                    }
+                )
+            self.call_input = (
+                None
+                if rate == self.rate
+                else soxr.ResampleStream(self.rate, rate, 1, dtype="int16")
+            )
+            self.call_output = (
+                None
+                if rate == self.speaker_rate
+                else soxr.ResampleStream(rate, self.speaker_rate, 1, dtype="int16")
             )
             self.call = call
-            if self.resampler is not None:
-                self.resampler.clear()
             self.call_task = self.spawn(self.converse(call, voice))
-        logger.info("Live call %s started for device %s", call.id, self.id)
+        logger.info(
+            "Live call %s started for device %s over %s at %s Hz",
+            call.id,
+            self.id,
+            call.transport,
+            rate,
+        )
+        return call
 
     async def end_call(self) -> None:
         call = self.call
@@ -681,7 +768,7 @@ class VoiceSession:
             self.call_task.cancel()
 
     async def converse(self, call: LiveCall, voice: asyncio.Queue[bytes]) -> None:
-        player = self.spawn(self.speak_call(call, voice))
+        player = None if call.session_id else self.spawn(self.speak_call(call, voice))
         error = None
         try:
             await call.run()
@@ -692,7 +779,8 @@ class VoiceSession:
             logger.exception("Live call %s failed", call.id)
             error = "The live call failed. Try again."
         finally:
-            player.cancel()
+            if player is not None:
+                player.cancel()
             if self.call is call:
                 self.call = None
                 self.call_task = None
@@ -713,32 +801,43 @@ class VoiceSession:
             logger.info("Live call %s ended after %.1fs", call.id, call.seconds)
 
     async def speak_call(self, call: LiveCall, voice: asyncio.Queue[bytes]) -> None:
-        pending = b""
+        clock = asyncio.get_running_loop().time
+        frame = call.rate * SAMPLE_BYTES // 50
         while True:
-            pending += await voice.get()
-            whole = len(pending) - len(pending) % REPLY_FRAME_BYTES
-            if whole:
-                await self.play(
-                    pending[:whole], lambda: self.call is call, CALL_LEAD_SECONDS
+            pcm = await voice.get()
+            for offset in range(0, len(pcm), frame):
+                if self.closed or self.call is not call:
+                    return
+                piece = pcm[offset : offset + frame]
+                self.playhead = max(self.playhead, clock()) + len(piece) / (
+                    call.rate * SAMPLE_BYTES
                 )
-                pending = pending[whole:]
+                if self.call_output is not None:
+                    piece = self.call_output.resample_chunk(
+                        np.frombuffer(piece, dtype="<i2")
+                    ).tobytes()
+                await self.send_audio(piece)
+                await asyncio.sleep(max(0, self.playhead - clock() - CALL_LEAD_SECONDS))
 
     def remember(self, key: str, report: dict) -> None:
         self.reports[key] = report
         while len(self.reports) > KEPT_REPORTS:
             self.reports.pop(next(iter(self.reports)))
 
-    async def handoff(self, request: str) -> tuple[str, dict]:
+    async def handoff(self, request: str, progress: Progress) -> tuple[str, dict]:
         turn = Turn()
         turn.finish()
         self.turn = turn
         self.track(turn, request)
+
+        async def relay(event: dict) -> None:
+            await self.agent_progress(turn, event)
+            await progress(event)
+
         try:
             await self.publish(turn, "tool", tool="slate agent")
             reply = await self.agent.run(
-                request,
-                partial(self.agent_progress, turn),
-                device_context=agent_context(turn.scope),
+                request, relay, device_context=agent_context(turn.scope)
             )
             self.settle(turn, "succeed", reply)
         except asyncio.CancelledError:
@@ -755,6 +854,7 @@ class VoiceSession:
             "agent": self.agent.timings,
             "runtime": self.agent.last_run.get("runtime"),
         }
+        self.watch_background()
         return spoken_part(reply, final=True)[0].strip(), details
 
     def watch_background(self) -> None:
@@ -774,7 +874,8 @@ class VoiceSession:
                         logger.info("Background task %s had already finished", task_id)
             if (call := self.call) is not None:
                 reply = await self.agent.run(BACKGROUND_PROMPT)
-                await call.tell(spoken_part(reply, final=True)[0].strip())
+                call.refresh()
+                call.say(outcome(spoken_part(reply, final=True)[0].strip()))
                 continue
             while True:
                 async with self.turn_lock:

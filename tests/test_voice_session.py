@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import numpy as np
 from fastapi.testclient import TestClient
+from opuslib_next import APPLICATION_VOIP, Encoder
+from pydantic import ValidationError
 from slate.agent.agent import BACKGROUND_PROMPT
 from slate.app import app
 from slate.device import OrbRequest
@@ -68,6 +70,7 @@ class FakeAgent:
         self.last_run = {}
         self.messages = []
         self.receipts = []
+        self.approvals = []
 
     async def run(self, message, progress, *, device_context):
         self.messages.append(message)
@@ -85,6 +88,9 @@ class FakeAgent:
         await progress({"type": "reply.delta", "delta": self.reply})
         await progress({"type": "answer.complete", "text": self.reply})
         return self.reply
+
+    async def approve(self, run_id, request_id, choice):
+        self.approvals.append((run_id, request_id, choice))
 
     async def close(self):
         pass
@@ -175,6 +181,43 @@ class DeviceSocketTests(unittest.TestCase):
         transcript = [e for e in events if e["type"] == "transcript" and e["final"]]
         self.assertEqual(transcript[0]["text"], "What is seven plus five?")
         self.assertEqual(events[-1], {**events[-1], "text": "Twelve.", "final": True})
+
+    def test_opus_turn_decodes_each_packet_and_drops_a_corrupt_one(self):
+        agent, heard = FakeAgent(), []
+        encoder = Encoder(16_000, 1, APPLICATION_VOIP)
+        tone = (
+            8000 * np.sin(2 * np.pi * 440 * np.arange(16_000 // 5) / 16_000)
+        ).astype("<i2")
+        packets = [
+            encoder.encode(frame.tobytes(), 320) for frame in tone.reshape(-1, 320)
+        ]
+        with cloud(agent, heard) as client:
+            with client.websocket_connect("/api/device/socket", headers=AUTH) as socket:
+                socket.send_text(
+                    json.dumps({"type": "hello", "rate": 16000, "codec": "opus"})
+                )
+                socket.send_text(json.dumps({"type": "start"}))
+                self.assertEqual(json.loads(socket.receive_text())["type"], "turn")
+                for index, packet in enumerate(packets):
+                    socket.send_bytes(packet)
+                    if index == 4:
+                        socket.send_bytes(b"\xff\xff\xff")
+                socket.send_text(json.dumps({"type": "end"}))
+                receive_until_final(socket)
+        self.assertLess(max(map(len, packets)), 160)
+        self.assertEqual(agent.messages, ["What is seven plus five?"])
+        decoded = np.frombuffer(heard[0], dtype="<i2").astype(np.float64)
+        self.assertAlmostEqual(len(decoded) / (len(packets) * 320), 1.5, delta=0.1)
+        steady = decoded[len(decoded) // 4 :]
+        self.assertGreater(np.sqrt(np.mean(steady**2)), 3000)
+        spectrum = np.abs(np.fft.rfft(steady))
+        peak_hz = np.argmax(spectrum) * SAMPLE_RATE / len(steady)
+        self.assertAlmostEqual(peak_hz, 440, delta=20)
+
+    def test_opus_hello_needs_a_rate_opus_supports(self):
+        self.assertEqual(Hello(type="hello", codec="opus").rate, 16_000)
+        with self.assertRaises(ValidationError):
+            Hello(type="hello", codec="opus", rate=44_100)
 
     def test_reply_speech_arrives_at_the_device_speaker_rate(self):
         with cloud(FakeAgent()) as client:

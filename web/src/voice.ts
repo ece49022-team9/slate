@@ -1,9 +1,15 @@
 export type VoiceState = 'offline' | 'connecting' | 'ready' | 'starting' | 'recording' | 'transcribing' | 'responding'
 export type Approval = { run_id: string; request_id: string; command: string }
+export type CallState = 'idle' | 'connecting' | 'live'
+export type Call = { state: CallState; heard: string; said: string }
 
 type VoiceEvent = {
   type: string
   turn_id?: string
+  call_id?: string
+  state?: string
+  sdp?: string
+  error?: string
   text?: string
   final?: boolean
   announcement?: boolean
@@ -66,12 +72,16 @@ export class VoiceConnection {
   private speakers = new Set<AudioBufferSourceNode>()
   private closed = false
   private timer?: ReturnType<typeof setTimeout>
+  private peer?: RTCPeerConnection
+  private player?: HTMLAudioElement
+  private call: Call = { state: 'idle', heard: '', said: '' }
   private onState: (state: VoiceState) => void
   private onTranscript: (text: string, final: boolean) => void
   private onReply: (text: string) => void
   private onPlayback: (blocked: boolean) => void
   private onError: (message: string) => void
   private onAgent: (tool: string, approval?: Approval) => void
+  private onCall: (call: Call) => void
 
   constructor(
     onState: (state: VoiceState) => void,
@@ -80,6 +90,7 @@ export class VoiceConnection {
     onPlayback: (blocked: boolean) => void,
     onError: (message: string) => void,
     onAgent: (tool: string, approval?: Approval) => void,
+    onCall: (call: Call) => void = () => {},
   ) {
     this.onState = onState
     this.onTranscript = onTranscript
@@ -87,6 +98,7 @@ export class VoiceConnection {
     this.onPlayback = onPlayback
     this.onError = onError
     this.onAgent = onAgent
+    this.onCall = onCall
   }
 
   async connect(): Promise<void> {
@@ -182,6 +194,7 @@ export class VoiceConnection {
         this.send({ type: 'receipt', request_id: event.request_id, error: 'This client has no display' })
         return
       }
+      if (this.live(event)) return
       if (event.type === 'turn') {
         if (typeof event.turn_id !== 'string') return
         const pending = this.pendingTurns.shift()
@@ -243,6 +256,90 @@ export class VoiceConnection {
     this.microphone?.getAudioTracks().forEach(track => { track.enabled = open })
   }
 
+  private updateCall(change: Partial<Call>): void {
+    this.call = { ...this.call, ...change }
+    this.onCall(this.call)
+  }
+
+  private live(event: VoiceEvent): boolean {
+    if (event.type === 'live') {
+      if (event.state === 'answer' && typeof event.sdp === 'string') {
+        this.peer?.setRemoteDescription({ type: 'answer', sdp: event.sdp }).catch(error => void this.hangUp(error))
+      } else if (event.state === 'started') {
+        this.updateCall({ state: 'live' })
+      } else if (event.state === 'ended') {
+        if (event.error) this.onError(event.error)
+        this.endCall()
+      }
+      return true
+    }
+    if (event.type === 'heard' && event.call_id) {
+      this.updateCall({ heard: this.call.heard + (event.text ?? '') })
+      return true
+    }
+    if (event.type === 'said' && event.call_id) {
+      this.updateCall({ said: this.call.said + (event.text ?? '') })
+      return true
+    }
+    return false
+  }
+
+  async startCall(): Promise<void> {
+    const track = this.microphone?.getAudioTracks()[0]
+    if (this.peer || this.closed || !track || !this.microphone) return
+    this.endTurn()
+    this.clearAudio()
+    this.onError('')
+    this.updateCall({ state: 'connecting', heard: '', said: '' })
+    const peer = this.peer = new RTCPeerConnection()
+    const player = this.player = new Audio()
+    player.autoplay = true
+    peer.ontrack = ({ streams, track: voice }) => { player.srcObject = streams[0] ?? new MediaStream([voice]) }
+    peer.onconnectionstatechange = () => {
+      if (peer === this.peer && peer.connectionState === 'failed') void this.hangUp(new Error('The call connection failed. Try again.'))
+    }
+    const channel = peer.createDataChannel('oai-events')
+    channel.onmessage = ({ data }) => {
+      try {
+        if ((JSON.parse(String(data)) as VoiceEvent).type === 'session.closed' && peer === this.peer) this.endCall()
+      } catch (error) {
+        console.error('[slate.voice] Invalid call event', error)
+      }
+    }
+    this.setMicrophone(true)
+    peer.addTrack(track, this.microphone)
+    try {
+      await peer.setLocalDescription(await peer.createOffer())
+      this.send({ type: 'live', sdp: peer.localDescription?.sdp })
+    } catch (error) {
+      await this.hangUp(error)
+    }
+  }
+
+  async hangUp(error?: unknown): Promise<void> {
+    if (!this.peer) return
+    if (error) {
+      console.error('[slate.voice] Call failed', error)
+      this.onError(error instanceof Error ? error.message : 'The call failed')
+    }
+    try {
+      this.send({ type: 'hangup' })
+    } catch (failure) {
+      console.error('[slate.voice] Hang-up was not sent', failure)
+    }
+    this.endCall()
+  }
+
+  private endCall(): void {
+    const peer = this.peer
+    this.peer = undefined
+    peer?.close()
+    if (this.player) this.player.srcObject = null
+    this.player = undefined
+    if (peer) this.setMicrophone(false)
+    if (this.call.state !== 'idle') this.updateCall({ state: 'idle' })
+  }
+
   private clearAudio(): void {
     this.playback = false
     this.playhead = 0
@@ -287,7 +384,7 @@ export class VoiceConnection {
   }
 
   async start(): Promise<void> {
-    if (this.starting || this.recording || this.closed) return
+    if (this.starting || this.recording || this.closed || this.peer) return
     this.endTurn()
     const generation = this.generation
     this.clearAudio()
@@ -375,6 +472,7 @@ export class VoiceConnection {
   async disconnect(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.endCall()
     this.endTurn()
     this.pendingTurns = []
     this.clearAudio()
